@@ -1,0 +1,1610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Components Setup</title>
+  <style>
+    :root {
+      --figma-color-bg: #ffffff;
+      --figma-color-bg-secondary: #f8fafc;
+      --figma-color-bg-tertiary: #f1f5f9;
+      --figma-color-text: #1e1e1e;
+      --figma-color-text-secondary: #757575;
+      --figma-color-text-tertiary: #94a3b8;
+      --figma-color-border: #e6e6e6;
+      --figma-color-border-hover: #cbd5e1;
+      --figma-color-hover: #f5f5f5;
+      
+      --figma-color-purple: #7c3aed;
+      --figma-color-purple-light: #f3e8ff;
+      --figma-color-blue: #0d99ff;
+      --figma-color-blue-hover: #0088ed;
+
+      --accent-spark-start: #6366f1;
+      --accent-spark-mid: #8b5cf6;
+      --accent-spark-end: #ec4899;
+
+      --status-green: #10b981;
+      --status-green-light: #ecfdf5;
+      --status-red: #ef4444;
+      --status-red-light: #fef2f2;
+
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --radius-full: 9999px;
+
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 10px rgba(0, 0, 0, 0.1);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --figma-color-bg: #2c2c2c;
+        --figma-color-bg-secondary: #242424;
+        --figma-color-bg-tertiary: #383838;
+        --figma-color-text: #ffffff;
+        --figma-color-text-secondary: #b3b3b3;
+        --figma-color-text-tertiary: #64748b;
+        --figma-color-border: #383838;
+        --figma-color-border-hover: #4e4e4e;
+        --figma-color-hover: #383838;
+        
+        --figma-color-purple: #c084fc;
+        --figma-color-purple-light: #3b0764;
+        
+        --status-green-light: #064e3b;
+        --status-red-light: #450a0a;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 11px;
+      color: var(--figma-color-text);
+      background-color: var(--figma-color-bg);
+      user-select: none;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Header Controls */
+    .header {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--figma-color-border);
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      background: var(--figma-color-bg);
+      z-index: 10;
+      flex-wrap: wrap;
+    }
+
+    .btn-group-main {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .component-set-btn {
+      height: 28px;
+      padding: 0 10px;
+      border: 1px solid var(--figma-color-purple);
+      border-radius: var(--radius-sm);
+      background: var(--figma-color-purple-light);
+      color: var(--figma-color-purple);
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+      outline: none;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    .component-set-btn:hover {
+      background: var(--figma-color-purple);
+      color: #ffffff;
+    }
+
+    .component-set-btn:active {
+      transform: scale(0.97);
+    }
+
+    .arrange-btn {
+      height: 28px;
+      padding: 0 10px;
+      border: 1px solid var(--figma-color-border);
+      border-radius: var(--radius-sm);
+      background: var(--figma-color-bg-secondary);
+      color: var(--figma-color-text);
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+      outline: none;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    .arrange-btn:hover {
+      background: var(--figma-color-hover);
+      border-color: var(--figma-color-border-hover);
+      color: var(--figma-color-blue);
+    }
+
+    .arrange-btn:active {
+      transform: scale(0.97);
+    }
+
+    /* AI Description Action Button - placed right next to first button */
+    .ai-desc-btn {
+      height: 28px;
+      padding: 0 11px;
+      border: none;
+      border-radius: var(--radius-sm);
+      background: linear-gradient(135deg, var(--accent-spark-start), var(--accent-spark-mid), var(--accent-spark-end));
+      background-size: 200% 200%;
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+      outline: none;
+      box-shadow: 0 2px 6px rgba(99, 102, 241, 0.35);
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    .ai-desc-btn:hover {
+      background-position: right center;
+      box-shadow: 0 3px 10px rgba(236, 72, 153, 0.45);
+    }
+
+    .ai-desc-btn:active {
+      transform: scale(0.97);
+    }
+
+    .search-input {
+      flex: 1;
+      min-width: 110px;
+      height: 28px;
+      padding: 0 10px;
+      border: 1px solid var(--figma-color-border);
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--figma-color-text);
+      font-size: 11px;
+      outline: none;
+    }
+
+    .search-input:focus {
+      border-color: var(--figma-color-blue);
+    }
+
+    .scope-select {
+      height: 28px;
+      padding: 0 6px;
+      border: 1px solid var(--figma-color-border);
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--figma-color-text);
+      font-size: 11px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .auth-pill {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 8px;
+      border-radius: var(--radius-full);
+      font-size: 10.5px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--figma-color-border);
+      background: var(--figma-color-bg-secondary);
+      color: var(--figma-color-text-secondary);
+      transition: all 0.2s ease;
+      flex-shrink: 0;
+    }
+
+    .auth-pill:hover {
+      border-color: var(--figma-color-border-hover);
+      color: var(--figma-color-text);
+    }
+
+    .auth-pill.connected {
+      border-color: rgba(16, 185, 129, 0.3);
+      background: var(--status-green-light);
+      color: #059669;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: var(--figma-color-text-tertiary);
+    }
+
+    .auth-pill.connected .status-dot {
+      background-color: var(--status-green);
+      box-shadow: 0 0 5px var(--status-green);
+    }
+
+    /* AI Description Workspace Drawer / Banner */
+    .ai-drawer {
+      background: var(--figma-color-bg-secondary);
+      border-bottom: 1px solid var(--figma-color-border);
+      padding: 10px 12px;
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      animation: slideDown 0.2s ease;
+    }
+
+    .ai-drawer.open {
+      display: flex;
+    }
+
+    @keyframes slideDown {
+      from { opacity: 0; transform: translateY(-8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .ai-drawer-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .selection-info-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 7px;
+      border-radius: var(--radius-full);
+      font-size: 10.5px;
+      font-weight: 600;
+      background: var(--figma-color-bg-tertiary);
+      color: var(--figma-color-text);
+    }
+
+    .selection-info-badge.component-set {
+      background: var(--figma-color-purple-light);
+      color: var(--figma-color-purple);
+    }
+
+    .selection-info-badge.variant {
+      background: #e0f2fe;
+      color: #0284c7;
+    }
+
+    .auto-save-tag {
+      font-size: 10px;
+      color: var(--status-green);
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .desc-textarea {
+      width: 100%;
+      min-height: 64px;
+      padding: 8px 10px;
+      font-size: 11px;
+      line-height: 1.45;
+      background: var(--figma-color-bg);
+      color: var(--figma-color-text);
+      border: 1px solid var(--figma-color-border);
+      border-radius: var(--radius-sm);
+      resize: vertical;
+      outline: none;
+    }
+
+    .desc-textarea:focus {
+      border-color: var(--accent-spark-mid);
+    }
+
+    .drawer-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .btn-action-small {
+      height: 24px;
+      padding: 0 8px;
+      font-size: 10.5px;
+      font-weight: 600;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--figma-color-border);
+      background: var(--figma-color-bg);
+      color: var(--figma-color-text);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .btn-action-small:hover {
+      background: var(--figma-color-hover);
+    }
+
+    /* Content Table Container */
+    .content-container {
+      flex: 1;
+      overflow-y: auto;
+      position: relative;
+    }
+
+    .var-block {
+      display: flex;
+      border-bottom: 1px solid var(--figma-color-border);
+    }
+
+    .left-col {
+      flex: 1;
+      padding: 10px 12px;
+      border-right: 1px solid var(--figma-color-border);
+    }
+
+    .right-col {
+      width: 120px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-start;
+      color: var(--figma-color-text);
+      font-weight: 500;
+      font-size: 11px;
+      word-break: break-all;
+    }
+
+    .var-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--figma-color-purple);
+      font-weight: 600;
+      font-size: 11.5px;
+      padding: 2px 0 5px 0;
+      cursor: pointer;
+    }
+
+    .var-header:hover {
+      opacity: 0.8;
+    }
+
+    .var-icon {
+      font-weight: 700;
+      font-size: 11px;
+    }
+
+    .var-header.is-missing {
+      color: #ef4444;
+    }
+
+    .missing-badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: var(--radius-sm);
+      background-color: #fef2f2;
+      color: #dc2626;
+      font-weight: 600;
+      font-size: 10px;
+    }
+
+    .category-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 4px;
+    }
+
+    .category-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 600;
+      font-size: 10.5px;
+      color: var(--figma-color-text-secondary);
+      padding: 2px 4px;
+      cursor: pointer;
+      border-radius: var(--radius-sm);
+    }
+
+    .category-header:hover {
+      background: var(--figma-color-hover);
+      color: var(--figma-color-text);
+    }
+
+    .arrow-icon {
+      font-size: 9px;
+      transition: transform 0.15s ease;
+      display: inline-block;
+      width: 10px;
+    }
+
+    .category-group.expanded .arrow-icon {
+      transform: rotate(90deg);
+    }
+
+    .sub-list {
+      display: none;
+      flex-direction: column;
+      gap: 3px;
+      padding-left: 16px;
+      margin-top: 2px;
+    }
+
+    .category-group.expanded .sub-list {
+      display: flex;
+    }
+
+    .sub-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      color: var(--figma-color-text-secondary);
+      padding: 2px 4px;
+      cursor: pointer;
+      border-radius: var(--radius-sm);
+    }
+
+    .sub-row:hover {
+      background: var(--figma-color-hover);
+      color: var(--figma-color-text);
+    }
+
+    .layer-icon {
+      width: 12px;
+      height: 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Floating Action Refresh Button */
+    .fab-refresh {
+      position: absolute;
+      right: 14px;
+      bottom: 54px;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--figma-color-text);
+      color: var(--figma-color-bg);
+      border: none;
+      box-shadow: var(--shadow-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      outline: none;
+      z-index: 20;
+      transition: all 0.15s ease;
+    }
+
+    .fab-refresh:hover {
+      transform: scale(1.05);
+    }
+
+    .fab-refresh svg {
+      width: 15px;
+      height: 15px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+    }
+
+    .fab-refresh.spinning svg {
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      100% { transform: rotate(360deg); }
+    }
+
+    /* Empty state */
+    .empty-state {
+      padding: 40px 20px;
+      text-align: center;
+      color: var(--figma-color-text-secondary);
+    }
+
+    .empty-state h3 {
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: var(--figma-color-text);
+    }
+
+    /* Toast Notification Banner */
+    .toast-banner {
+      padding: 6px 12px;
+      font-size: 11px;
+      display: none;
+      align-items: center;
+      gap: 6px;
+      background: var(--status-green-light);
+      color: #047857;
+      border-bottom: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .toast-banner.error {
+      background: var(--status-red-light);
+      color: #b91c1c;
+      border-bottom-color: rgba(239, 68, 68, 0.3);
+    }
+
+    /* Bottom Google Gemini Models Bar */
+    .bottom-bar {
+      padding: 8px 12px;
+      background: var(--figma-color-bg-secondary);
+      border-top: 1px solid var(--figma-color-border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .bottom-label {
+      font-size: 10.5px;
+      font-weight: 600;
+      color: var(--figma-color-text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      white-space: nowrap;
+    }
+
+    .model-select-dropdown {
+      flex: 1;
+      height: 26px;
+      padding: 0 8px;
+      font-size: 10.5px;
+      font-weight: 500;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--figma-color-border);
+      background: var(--figma-color-bg);
+      color: var(--figma-color-text);
+      outline: none;
+      cursor: pointer;
+    }
+
+    .btn-icon-tiny {
+      width: 26px;
+      height: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--figma-color-border);
+      background: var(--figma-color-bg);
+      color: var(--figma-color-text-secondary);
+      cursor: pointer;
+    }
+
+    .btn-icon-tiny:hover {
+      color: var(--figma-color-text);
+      border-color: var(--figma-color-border-hover);
+    }
+
+    /* Google Connect Modal */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(2px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 100;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal-card {
+      background: var(--figma-color-bg);
+      border: 1px solid var(--figma-color-border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-md);
+      width: 100%;
+      max-width: 380px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .close-btn {
+      background: transparent;
+      border: none;
+      color: var(--figma-color-text-secondary);
+      cursor: pointer;
+      font-size: 16px;
+    }
+
+    .step-box {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      font-size: 11px;
+    }
+
+    .api-key-input {
+      width: 100%;
+      height: 32px;
+      padding: 0 10px;
+      font-size: 11px;
+      border: 1px solid var(--figma-color-border);
+      border-radius: var(--radius-sm);
+      background: var(--figma-color-bg-secondary);
+      color: var(--figma-color-text);
+      outline: none;
+      font-family: monospace;
+    }
+
+    .modal-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+
+    .btn-connect-save {
+      height: 28px;
+      padding: 0 14px;
+      font-size: 11px;
+      font-weight: 600;
+      border-radius: var(--radius-sm);
+      background: var(--figma-color-text);
+      color: var(--figma-color-bg);
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header Controls -->
+  <div class="header">
+    <div class="btn-group-main">
+      <!-- Button 1 (Existing): Component Set -->
+      <button id="componentSetBtn" class="component-set-btn" title="Apply metric variables to selection">
+        <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
+          <rect x="1.5" y="1.5" width="4" height="4" rx="0.5"/>
+          <rect x="8.5" y="1.5" width="4" height="4" rx="0.5"/>
+          <rect x="1.5" y="8.5" width="4" height="4" rx="0.5"/>
+          <rect x="8.5" y="8.5" width="4" height="4" rx="0.5"/>
+        </svg>
+        Component Set
+      </button>
+
+      <!-- Button 2: Arrange / Tidy Grid -->
+      <button id="btnArrangeGrid" class="arrange-btn" title="Arrange elements alphabetically in grid (272px X, 272px Y) grouped by slash">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="7"></rect>
+          <rect x="14" y="3" width="7" height="7"></rect>
+          <rect x="14" y="14" width="7" height="7"></rect>
+          <rect x="3" y="14" width="7" height="7"></rect>
+        </svg>
+        Arrange
+      </button>
+
+      <!-- Button 3 (New): AI Description (Next to the first button) -->
+      <button id="btnAiDescription" class="ai-desc-btn" title="Generate AI description and auto-apply directly to Figma description">
+        <span id="aiBtnIcon">✨</span>
+        <span id="aiBtnText">AI Description</span>
+      </button>
+    </div>
+
+    <input type="text" id="searchInput" class="search-input" placeholder="Search variables...">
+    <select id="scopeSelect" class="scope-select" title="Scan scope">
+      <option value="page">Current Page</option>
+      <option value="document">Entire Document</option>
+    </select>
+
+    <div id="authPill" class="auth-pill" title="Click to manage Google Gemini connection">
+      <span class="status-dot"></span>
+      <span id="authPillText">Connect Google</span>
+    </div>
+  </div>
+
+  <!-- Toast Notification Banner -->
+  <div id="toastBanner" class="toast-banner">
+    <span id="toastIcon">⚡</span>
+    <span id="toastMessage">Ready</span>
+  </div>
+
+  <!-- AI Description Workspace Drawer -->
+  <div id="aiDrawer" class="ai-drawer">
+    <div class="ai-drawer-header">
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <span id="selectionBadge" class="selection-info-badge">Select Component</span>
+        <span id="selectionName" style="font-weight: 600; font-size: 11px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
+      </div>
+      <span class="auto-save-tag"><span>✓</span> Auto-saved to Figma</span>
+    </div>
+
+    <textarea
+      id="descTextarea"
+      class="desc-textarea"
+      placeholder="Generating AI description for the selected component or variant..."
+    ></textarea>
+
+    <div class="drawer-toolbar">
+      <div style="display: flex; align-items: center; gap: 4px;">
+        <button id="btnCopyDesc" class="btn-action-small" title="Copy to clipboard">
+          <span>📋</span> Copy
+        </button>
+        <button id="btnRegenerateDesc" class="btn-action-small" title="Regenerate with Gemini">
+          <span>🔄</span> Regenerate
+        </button>
+        <button id="btnBatchDesc" class="btn-action-small" style="display: none;" title="Generate and auto-apply for all variants in set">
+          <span>⚡</span> Batch All Variants
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Content Table Container -->
+  <div id="content" class="content-container">
+    <div class="empty-state">
+      <h3>Scanning variables...</h3>
+      <p>Please wait while numeric variables are loaded.</p>
+    </div>
+  </div>
+
+  <!-- Floating Refresh Button -->
+  <button id="refreshBtn" class="fab-refresh" title="Refresh variable scanner">
+    <svg viewBox="0 0 24 24">
+      <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+    </svg>
+  </button>
+
+  <!-- Bottom Google Gemini Models Bar (Dynamically populated from user's account) -->
+  <div class="bottom-bar">
+    <div class="bottom-label">
+      <span>🤖</span>
+      <span>Gemini Model:</span>
+    </div>
+    <select id="modelSelect" class="model-select-dropdown" title="Select Gemini model available on your account">
+      <option value="">(Connect Google account to load models)</option>
+    </select>
+    <button id="btnRefreshModels" class="btn-icon-tiny" title="Reload models from your Google account">
+      🔄
+    </button>
+    <button id="btnSettingsModal" class="btn-icon-tiny" title="Google Gemini API Settings">
+      ⚙️
+    </button>
+  </div>
+
+  <!-- Google Gemini Connect Modal Overlay -->
+  <div id="connectModal" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span>🔑 Connect Google Gemini</span>
+        <button id="btnCloseModal" class="close-btn">&times;</button>
+      </div>
+
+      <div class="step-box">
+        <div>
+          <strong>1. Get your API Key:</strong>
+          <div style="margin-top: 4px;">
+            <button id="btnOpenStudio" class="btn-action-small" style="color: var(--figma-color-purple);">
+              🌐 Open Google AI Studio in Browser
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <strong>2. Paste API Key:</strong>
+          <input type="password" id="apiKeyInput" class="api-key-input" placeholder="AIzaSy..." autocomplete="off">
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button id="btnDisconnect" class="btn-action-small" style="display: none; color: var(--status-red);">
+          Disconnect
+        </button>
+        <button id="btnSaveConnect" class="btn-connect-save">
+          <span>⚡</span> Connect & Load Models
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // State management
+    const state = {
+      apiKey: '',
+      selectedModel: '',
+      modelsList: [],
+      selection: null,
+      isConnected: false,
+      isGenerating: false
+    };
+
+    // DOM Elements
+    const contentEl = document.getElementById('content');
+    const searchInput = document.getElementById('searchInput');
+    const scopeSelect = document.getElementById('scopeSelect');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const componentSetBtn = document.getElementById('componentSetBtn');
+    const btnArrangeGrid = document.getElementById('btnArrangeGrid');
+    const btnAiDescription = document.getElementById('btnAiDescription');
+    const aiBtnIcon = document.getElementById('aiBtnIcon');
+    const aiBtnText = document.getElementById('aiBtnText');
+    const authPill = document.getElementById('authPill');
+    const authPillText = document.getElementById('authPillText');
+    const toastBanner = document.getElementById('toastBanner');
+    const toastIcon = document.getElementById('toastIcon');
+    const toastMessage = document.getElementById('toastMessage');
+
+    const aiDrawer = document.getElementById('aiDrawer');
+    const selectionBadge = document.getElementById('selectionBadge');
+    const selectionName = document.getElementById('selectionName');
+    const descTextarea = document.getElementById('descTextarea');
+    const btnCopyDesc = document.getElementById('btnCopyDesc');
+    const btnRegenerateDesc = document.getElementById('btnRegenerateDesc');
+    const btnBatchDesc = document.getElementById('btnBatchDesc');
+
+    const modelSelect = document.getElementById('modelSelect');
+    const btnRefreshModels = document.getElementById('btnRefreshModels');
+    const btnSettingsModal = document.getElementById('btnSettingsModal');
+
+    const connectModal = document.getElementById('connectModal');
+    const btnCloseModal = document.getElementById('btnCloseModal');
+    const btnOpenStudio = document.getElementById('btnOpenStudio');
+    const apiKeyInput = document.getElementById('apiKeyInput');
+    const btnSaveConnect = document.getElementById('btnSaveConnect');
+    const btnDisconnect = document.getElementById('btnDisconnect');
+
+    let allVariables = [];
+
+    // Toast notification
+    function showToast(msg, isError = false) {
+      toastBanner.className = `toast-banner ${isError ? 'error' : ''}`;
+      toastIcon.textContent = isError ? '⚠️' : '⚡';
+      toastMessage.textContent = msg;
+      toastBanner.style.display = 'flex';
+      setTimeout(() => {
+        toastBanner.style.display = 'none';
+      }, 4000);
+    }
+
+    // Update connection status in UI
+    function updateAuthStatus(connected, modelCount = 0) {
+      state.isConnected = connected;
+      if (connected) {
+        authPill.className = 'auth-pill connected';
+        authPillText.textContent = 'Google Active';
+        btnDisconnect.style.display = 'inline-flex';
+      } else {
+        authPill.className = 'auth-pill';
+        authPillText.textContent = 'Connect Google';
+        btnDisconnect.style.display = 'none';
+        modelSelect.innerHTML = '<option value="">(Connect Google account to load models)</option>';
+      }
+    }
+
+    // Modal controls
+    function showModal() {
+      connectModal.classList.add('active');
+      if (state.apiKey) apiKeyInput.value = state.apiKey;
+    }
+
+    function hideModal() {
+      connectModal.classList.remove('active');
+    }
+
+    // Update Selection Inspector
+    function updateSelection(sel) {
+      state.selection = sel;
+      if (!sel || !sel.hasSelection) {
+        selectionBadge.className = 'selection-info-badge';
+        selectionBadge.textContent = 'Canvas';
+        selectionName.textContent = 'No selection';
+        btnBatchDesc.style.display = 'none';
+        return;
+      }
+
+      selectionName.textContent = sel.name || 'Selected Layer';
+
+      if (sel.type === 'COMPONENT_SET') {
+        selectionBadge.className = 'selection-info-badge component-set';
+        selectionBadge.textContent = `📦 Component Set (${sel.variants ? sel.variants.length : 0})`;
+        btnBatchDesc.style.display = (sel.variants && sel.variants.length > 0) ? 'inline-flex' : 'none';
+        if (sel.description && !descTextarea.value) {
+          descTextarea.value = sel.description;
+        }
+      } else if (sel.type === 'VARIANT') {
+        selectionBadge.className = 'selection-info-badge variant';
+        selectionBadge.textContent = '🏷️ Variant';
+        btnBatchDesc.style.display = 'none';
+        if (sel.description && !descTextarea.value) {
+          descTextarea.value = sel.description;
+        }
+      } else if (sel.type === 'COMPONENT') {
+        selectionBadge.className = 'selection-info-badge component-set';
+        selectionBadge.textContent = '🧩 Component';
+        btnBatchDesc.style.display = 'none';
+        if (sel.description && !descTextarea.value) {
+          descTextarea.value = sel.description;
+        }
+      } else {
+        selectionBadge.className = 'selection-info-badge';
+        selectionBadge.textContent = sel.typeName || 'Layer';
+        btnBatchDesc.style.display = 'none';
+      }
+    }
+
+    // Query real models from Google Gemini API
+    async function fetchAccountModels(apiKey) {
+      if (!apiKey) return [];
+      try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error?.message || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        const raw = data.models || [];
+        return raw.filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'));
+      } catch (err) {
+        console.error('Error loading Gemini models:', err);
+        throw err;
+      }
+    }
+
+    function populateModelsDropdown(models, savedModel) {
+      modelSelect.innerHTML = '';
+      if (!models || models.length === 0) {
+        modelSelect.innerHTML = '<option value="">No generation models found</option>';
+        return;
+      }
+
+      const priorityOrder = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-pro'];
+
+      const sorted = [...models].sort((a, b) => {
+        const cleanA = a.name.replace('models/', '');
+        const cleanB = b.name.replace('models/', '');
+        const idxA = priorityOrder.findIndex(p => cleanA.includes(p));
+        const idxB = priorityOrder.findIndex(p => cleanB.includes(p));
+        const weightA = idxA !== -1 ? idxA : 99;
+        const weightB = idxB !== -1 ? idxB : 99;
+        return weightA - weightB;
+      });
+
+      let chosen = savedModel || '';
+
+      sorted.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.name;
+        const clean = m.displayName || m.name.replace('models/', '');
+        opt.textContent = `${clean} (${m.version || 'v1'})`;
+        modelSelect.appendChild(opt);
+        if (!chosen && (m.name.includes('flash') || m.name.includes('2.0') || m.name.includes('1.5'))) {
+          chosen = m.name;
+        }
+      });
+
+      if (savedModel && sorted.some(m => m.name === savedModel)) {
+        modelSelect.value = savedModel;
+      } else if (chosen) {
+        modelSelect.value = chosen;
+        state.selectedModel = chosen;
+      }
+
+      state.modelsList = sorted;
+    }
+
+    // Call Google Gemini API
+    async function generateWithGemini(promptText) {
+      if (!state.apiKey) throw new Error('API key missing. Connect Google first.');
+
+      const activeModel = modelSelect.value || state.selectedModel || 'models/gemini-1.5-flash';
+      const cleanModel = activeModel.startsWith('models/') ? activeModel : `models/${activeModel}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/${cleanModel}:generateContent?key=${state.apiKey}`;
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: promptText }] }],
+          generationConfig: {
+            temperature: 0.3,
+            maxOutputTokens: 140
+          }
+        })
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error?.message || `HTTP ${res.status}`);
+      }
+
+      const resData = await res.json();
+      const candidate = resData.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!candidate) throw new Error('Empty response from Gemini.');
+      return candidate.trim();
+    }
+
+    function buildPrompt(sel) {
+      const lengthRule = 'Provide strictly 2 clear, well-structured sentences in plain English (approx. 30-40 words total). Do not include markdown headings, titles, bullet points, or quotes.';
+
+      const namingConventionRule = `Component Naming Architecture Rules:
+1. Leading Underscore ("_"): If a component or path segment begins with "_", it signifies an internal, non-public sub-component / building block designed for composition within parent components, rather than a standalone published library component.
+2. Slash Hierarchy ("/"): Slashes indicate nested structure paths. All segments before the final slash represent the parent component context/container, while the LAST segment after the final slash defines the actual core identity and primary function of the component (e.g., "_alertDialog/media" is an internal sub-component handling media/icons inside the "alertDialog" parent component; "_alertDialog/body/content" is an internal content block inside the body of "alertDialog").`;
+
+      // Variant selected
+      if (sel.type === 'VARIANT') {
+        const propsStr = sel.variantProperties
+          ? Object.entries(sel.variantProperties).map(([k, v]) => `${k}="${v}"`).join(', ')
+          : 'default';
+
+        const parentName = sel.parentComponentSetName || sel.name || 'Component';
+
+        return `You are a Principal Design System Architect and UX Writer.
+Write a precise component variant description in English for a Figma variant of "${parentName}".
+
+Variant Properties: ${propsStr}.
+Variant Name: "${sel.name}".
+
+${namingConventionRule}
+
+Instructions:
+- Parse the component path and name according to the naming rules above.
+- Explain the specific purpose of this variant state and how it should be used in UI design.
+- ${lengthRule}
+- Output ONLY the 2-sentence description text ready for Figma.`;
+      }
+
+      // Whole Component Set or Component selected
+      const compName = sel.name || 'Component';
+      const variantInfo = sel.variants && sel.variants.length > 0 ? `Component set has ${sel.variants.length} variants.` : '';
+
+      return `You are a Principal Design System Architect and UX Writer.
+Write a standardized component description in English for the Figma component "${compName}".
+${variantInfo}
+
+${namingConventionRule}
+
+Instructions:
+- Parse the component path and name according to the naming rules above.
+- Explain the component's core identity, parent context, internal status (if "_"), and interface role.
+- ${lengthRule}
+- Output ONLY the 2-sentence description text ready for Figma.`;
+    }
+
+    // Trigger AI description generation & AUTOMATICALLY apply to Figma node description
+    async function handleGenerate() {
+      // First-click requirement: If not connected to Google, open connect modal immediately!
+      if (!state.apiKey) {
+        showModal();
+        showToast('Please connect your Google Gemini API key to continue.', false);
+        return;
+      }
+
+      if (!state.selection || !state.selection.hasSelection) {
+        showToast('Select a Component, Variant, or Component Set on canvas.', true);
+        return;
+      }
+
+      aiDrawer.classList.add('open');
+      setLoading(true);
+
+      try {
+        const prompt = buildPrompt(state.selection);
+        const generated = await generateWithGemini(prompt);
+        descTextarea.value = generated;
+
+        // AUTOMATIC ASSIGNMENT: Directly write to Figma node.description immediately!
+        parent.postMessage({
+          pluginMessage: {
+            type: 'save-description',
+            nodeId: state.selection.nodeId,
+            description: generated
+          }
+        }, '*');
+
+        showToast(`✨ Generated & applied description to "${state.selection.name}"!`, false);
+      } catch (err) {
+        console.error(err);
+        showToast(err.message || 'Failed to generate', true);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    // Batch generation for all variants with automatic assignment
+    async function handleBatchGenerate() {
+      if (!state.apiKey) {
+        showModal();
+        return;
+      }
+
+      const sel = state.selection;
+      if (!sel || sel.type !== 'COMPONENT_SET' || !sel.variants || sel.variants.length === 0) {
+        showToast('Select a Component Set with variants.', true);
+        return;
+      }
+
+      setLoading(true, `Applying to ${sel.variants.length} variants...`);
+      const itemsToSave = [];
+
+      try {
+        for (let i = 0; i < sel.variants.length; i++) {
+          const v = sel.variants[i];
+          aiBtnText.textContent = `Variant ${i + 1}/${sel.variants.length}...`;
+
+          const variantPseudoSel = {
+            type: 'VARIANT',
+            name: v.name,
+            parentComponentSetName: sel.name,
+            variantProperties: v.variantProperties
+          };
+
+          const prompt = buildPrompt(variantPseudoSel);
+          const desc = await generateWithGemini(prompt);
+          itemsToSave.push({ nodeId: v.id, description: desc });
+        }
+
+        // AUTOMATIC BATCH ASSIGNMENT: Directly write all descriptions to Figma!
+        parent.postMessage({
+          pluginMessage: {
+            type: 'save-batch-descriptions',
+            items: itemsToSave
+          }
+        }, '*');
+
+        showToast(`✨ Applied descriptions to all ${itemsToSave.length} variants!`, false);
+      } catch (err) {
+        console.error(err);
+        showToast(`Batch error: ${err.message}`, true);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    function setLoading(isLoading, text = null) {
+      state.isGenerating = isLoading;
+      if (isLoading) {
+        aiBtnIcon.textContent = '⏳';
+        aiBtnText.textContent = text || 'Generating...';
+      } else {
+        aiBtnIcon.textContent = '✨';
+        aiBtnText.textContent = 'AI Description';
+      }
+    }
+
+    // SVG icons matching Figma layer types
+    function getLayerIconSvg(layerTypeKey) {
+      switch (layerTypeKey) {
+        case 'SECTION':
+          return `<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
+            <rect x="1.5" y="1.5" width="11" height="11" rx="1" stroke-dasharray="2 2"/>
+            <line x1="1.5" y1="4.5" x2="12.5" y2="4.5"/>
+          </svg>`;
+        case 'INSTANCE':
+          return `<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
+            <polygon points="7 1.5 12.5 7 7 12.5 1.5 7"/>
+          </svg>`;
+        case 'COMPONENT':
+          return `<svg viewBox="0 0 14 14" fill="currentColor">
+            <polygon points="7 1.5 9.5 4 7 6.5 4.5 4"/>
+            <polygon points="12.5 7 10 9.5 7.5 7 10 4.5"/>
+            <polygon points="7 12.5 4.5 10 7 7.5 9.5 10"/>
+            <polygon points="1.5 7 4 4.5 6.5 7 4 9.5"/>
+          </svg>`;
+        case 'COMPONENT_SET':
+          return `<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
+            <rect x="1.5" y="1.5" width="4" height="4" rx="0.5"/>
+            <rect x="8.5" y="1.5" width="4" height="4" rx="0.5"/>
+            <rect x="1.5" y="8.5" width="4" height="4" rx="0.5"/>
+            <rect x="8.5" y="8.5" width="4" height="4" rx="0.5"/>
+          </svg>`;
+        case 'RECTANGLE':
+          return `<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
+            <rect x="2" y="2" width="10" height="10" rx="0.5"/>
+          </svg>`;
+        case 'FRAME':
+          return `<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
+            <line x1="4.5" y1="1.5" x2="4.5" y2="12.5"/>
+            <line x1="9.5" y1="1.5" x2="9.5" y2="12.5"/>
+            <line x1="1.5" y1="4.5" x2="12.5" y2="4.5"/>
+            <line x1="1.5" y1="9.5" x2="12.5" y2="9.5"/>
+          </svg>`;
+        case 'VECTOR':
+          return `<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
+            <path d="M2.5 11.5L6 3.5L11.5 7"/>
+            <circle cx="2.5" cy="11.5" r="1" fill="currentColor"/>
+            <circle cx="6" cy="3.5" r="1" fill="currentColor"/>
+            <circle cx="11.5" cy="7" r="1" fill="currentColor"/>
+          </svg>`;
+        case 'TEXT':
+          return `<svg viewBox="0 0 14 14" fill="currentColor">
+            <path d="M2.5 3.5h9v2h-3.25v6h-2.5v-6h-3.25v-2z"/>
+          </svg>`;
+        default:
+          return `<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
+            <rect x="2.5" y="2.5" width="9" height="9" rx="1"/>
+          </svg>`;
+      }
+    }
+
+    function renderVariables(variables) {
+      const query = searchInput.value.toLowerCase().trim();
+
+      const filtered = variables.filter(item => {
+        if (!query) return true;
+        if (item.name.toLowerCase().includes(query)) return true;
+        return item.categories.some(c => 
+          c.categoryName.toLowerCase().includes(query) ||
+          c.subGroups.some(s => s.layerTypeName.toLowerCase().includes(query) || s.subProperty.toLowerCase().includes(query))
+        );
+      });
+
+      if (filtered.length === 0) {
+        contentEl.innerHTML = `
+          <div class="empty-state">
+            <h3>No numeric variables found</h3>
+            <p>${variables.length === 0 ? 'No layer bindings found in the current scope.' : 'No variables match your search.'}</p>
+          </div>
+        `;
+        return;
+      }
+
+      let html = '';
+
+      filtered.forEach(item => {
+        const allCategoryNodeIds = item.categories.flatMap(c => c.allNodeIds);
+        const nodeIdsAttr = JSON.stringify(allCategoryNodeIds).replace(/"/g, '&quot;');
+        const isMissing = !!item.isMissing;
+
+        html += `
+          <div class="var-block">
+            <div class="left-col">
+              <div class="var-header ${isMissing ? 'is-missing' : ''}" data-node-ids="${nodeIdsAttr}" title="Click to select all layers with this variable">
+                <span class="var-icon">${isMissing ? '⚠️' : '#'}</span>
+                <span class="var-name">${escapeHtml(item.name)}</span>
+              </div>
+              <div class="category-list">
+        `;
+
+        item.categories.forEach(cat => {
+          const catNodeIdsAttr = JSON.stringify(cat.allNodeIds).replace(/"/g, '&quot;');
+          html += `
+            <div class="category-group">
+              <div class="category-header" data-node-ids="${catNodeIdsAttr}" title="Click to select all ${cat.totalCount} layers in ${escapeHtml(cat.categoryName)}">
+                <span class="arrow-icon" title="Toggle expand/collapse">▶</span>
+                <span class="category-title">${escapeHtml(cat.categoryName)}</span>
+                <span class="category-count">${cat.totalCount} layer${cat.totalCount > 1 ? 's' : ''}</span>
+              </div>
+              <div class="sub-list">
+          `;
+
+          cat.subGroups.forEach(sub => {
+            const subNodeIdsAttr = JSON.stringify(sub.nodeIds).replace(/"/g, '&quot;');
+            const subPropName = sub.subProperty ? `${escapeHtml(sub.subProperty)} · ` : '';
+            html += `
+              <div class="sub-row" data-node-ids="${subNodeIdsAttr}" title="Click to select these ${sub.count} layers">
+                <span class="layer-icon">${getLayerIconSvg(sub.layerTypeKey)}</span>
+                <span class="sub-label"><span class="sub-prop-label">${subPropName}</span>${escapeHtml(sub.layerTypeName)} - ${sub.count}</span>
+              </div>
+            `;
+          });
+
+          html += `
+              </div>
+            </div>
+          `;
+        });
+
+        html += `
+              </div>
+            </div>
+            <div class="right-col">
+              ${isMissing ? `<span class="missing-badge">Missing</span>` : `<span>${escapeHtml(String(item.value))}</span>`}
+            </div>
+          </div>
+        `;
+      });
+
+      contentEl.innerHTML = html;
+
+      // Add click listeners for accordion toggle and row selection
+      contentEl.querySelectorAll('.category-header').forEach(header => {
+        const arrow = header.querySelector('.arrow-icon');
+        const group = header.closest('.category-group');
+
+        arrow.addEventListener('click', (e) => {
+          e.stopPropagation();
+          group.classList.toggle('expanded');
+        });
+
+        header.addEventListener('click', (e) => {
+          const nodeIdsStr = header.getAttribute('data-node-ids');
+          if (nodeIdsStr) {
+            try {
+              const nodeIds = JSON.parse(nodeIdsStr);
+              parent.postMessage({
+                pluginMessage: {
+                  type: 'select-nodes',
+                  nodeIds
+                }
+              }, '*');
+            } catch (err) {
+              console.error('Failed to parse nodeIds', err);
+            }
+          }
+        });
+      });
+
+      contentEl.querySelectorAll('.var-header, .sub-row').forEach(el => {
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const nodeIdsStr = el.getAttribute('data-node-ids');
+          if (nodeIdsStr) {
+            try {
+              const nodeIds = JSON.parse(nodeIdsStr);
+              parent.postMessage({
+                pluginMessage: {
+                  type: 'select-nodes',
+                  nodeIds
+                }
+              }, '*');
+            } catch (err) {
+              console.error('Failed to parse nodeIds', err);
+            }
+          }
+        });
+      });
+    }
+
+    function triggerScan() {
+      refreshBtn.classList.add('spinning');
+      parent.postMessage({
+        pluginMessage: {
+          type: 'scan',
+          scope: scopeSelect.value
+        }
+      }, '*');
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    // Event listeners
+    refreshBtn.addEventListener('click', triggerScan);
+    scopeSelect.addEventListener('change', triggerScan);
+    searchInput.addEventListener('input', () => renderVariables(allVariables));
+
+    componentSetBtn.addEventListener('click', () => {
+      parent.postMessage({ pluginMessage: { type: 'run-component-set' } }, '*');
+    });
+
+    btnArrangeGrid.addEventListener('click', () => {
+      parent.postMessage({ pluginMessage: { type: 'arrange-grid' } }, '*');
+    });
+
+    btnAiDescription.addEventListener('click', handleGenerate);
+    btnRegenerateDesc.addEventListener('click', handleGenerate);
+    btnBatchDesc.addEventListener('click', handleBatchGenerate);
+
+    function copyTextToClipboard(text) {
+      if (!text) return;
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      textArea.style.top = '-999999px';
+      textArea.setAttribute('readonly', '');
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      
+      let successful = false;
+      try {
+        successful = document.execCommand('copy');
+      } catch (err) {
+        console.warn('execCommand copy failed:', err);
+      }
+      document.body.removeChild(textArea);
+
+      if (successful) {
+        showToast('Copied description to clipboard! 📋', false);
+      } else if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+          showToast('Copied description to clipboard! 📋', false);
+        }).catch(() => {
+          showToast('Description generated & applied! ✨', false);
+        });
+      }
+    }
+
+    btnCopyDesc.addEventListener('click', () => {
+      copyTextToClipboard(descTextarea.value);
+    });
+
+    // If user manually edits textarea, auto-sync back to node
+    descTextarea.addEventListener('change', () => {
+      if (state.selection && descTextarea.value.trim()) {
+        parent.postMessage({
+          pluginMessage: {
+            type: 'save-description',
+            nodeId: state.selection.nodeId,
+            description: descTextarea.value.trim()
+          }
+        }, '*');
+      }
+    });
+
+    authPill.addEventListener('click', showModal);
+    btnSettingsModal.addEventListener('click', showModal);
+    btnCloseModal.addEventListener('click', hideModal);
+
+    btnOpenStudio.addEventListener('click', () => {
+      window.open('https://aistudio.google.com/app/apikey', '_blank');
+    });
+
+    // Save & Connect Google Key
+    btnSaveConnect.addEventListener('click', async () => {
+      const key = apiKeyInput.value.trim();
+      if (!key) {
+        showToast('Enter a valid Gemini API key.', true);
+        return;
+      }
+
+      btnSaveConnect.disabled = true;
+      btnSaveConnect.textContent = 'Connecting...';
+
+      try {
+        const models = await fetchAccountModels(key);
+        if (models.length === 0) throw new Error('No supported models found.');
+
+        state.apiKey = key;
+        populateModelsDropdown(models, state.selectedModel);
+        updateAuthStatus(true, models.length);
+
+        parent.postMessage({
+          pluginMessage: {
+            type: 'save-api-config',
+            apiKey: key,
+            selectedModel: modelSelect.value
+          }
+        }, '*');
+
+        showToast(`Connected! Loaded ${models.length} Google Gemini models. ⚡`, false);
+        hideModal();
+      } catch (err) {
+        showToast(`Connection error: ${err.message}`, true);
+      } finally {
+        btnSaveConnect.disabled = false;
+        btnSaveConnect.innerHTML = '<span>⚡</span> Connect & Load Models';
+      }
+    });
+
+    // Disconnect
+    btnDisconnect.addEventListener('click', () => {
+      state.apiKey = '';
+      state.selectedModel = '';
+      apiKeyInput.value = '';
+      updateAuthStatus(false);
+      parent.postMessage({ pluginMessage: { type: 'clear-api-config' } }, '*');
+      showToast('Disconnected from Google Gemini.', false);
+      hideModal();
+    });
+
+    // Refresh Models
+    btnRefreshModels.addEventListener('click', async () => {
+      if (!state.apiKey) {
+        showModal();
+        return;
+      }
+      try {
+        const models = await fetchAccountModels(state.apiKey);
+        populateModelsDropdown(models, state.selectedModel);
+        updateAuthStatus(true, models.length);
+        showToast(`Loaded ${models.length} models from your account! ⚡`, false);
+      } catch (err) {
+        showToast(`Model refresh failed: ${err.message}`, true);
+      }
+    });
+
+    modelSelect.addEventListener('change', () => {
+      state.selectedModel = modelSelect.value;
+      if (state.apiKey) {
+        parent.postMessage({
+          pluginMessage: {
+            type: 'save-api-config',
+            selectedModel: state.selectedModel
+          }
+        }, '*');
+      }
+    });
+
+    // Message handler from plugin backend
+    window.onmessage = async (event) => {
+      const msg = event.data.pluginMessage;
+      if (!msg) return;
+
+      if (msg.type === 'init-data') {
+        state.apiKey = msg.apiKey || '';
+        state.selectedModel = msg.selectedModel || '';
+
+        updateSelection(msg.selection);
+
+        if (state.apiKey) {
+          try {
+            const models = await fetchAccountModels(state.apiKey);
+            populateModelsDropdown(models, state.selectedModel);
+            updateAuthStatus(true, models.length);
+          } catch (e) {
+            console.warn('Initial models load failed:', e);
+            updateAuthStatus(false);
+          }
+        } else {
+          updateAuthStatus(false);
+        }
+      } else if (msg.type === 'selection-change') {
+        updateSelection(msg.selection);
+      } else if (msg.type === 'scan-results' || msg.type === 'variables-data') {
+        refreshBtn.classList.remove('spinning');
+        allVariables = msg.variables || [];
+        renderVariables(allVariables);
+      } else if (msg.type === 'description-saved') {
+        if (msg.success) {
+          showToast(`Description applied to "${msg.name}" ✨`, false);
+        }
+      }
+    };
+  </script>
+</body>
+</html>
