@@ -86,151 +86,73 @@
       align-items: center;
       background: var(--figma-color-bg);
       z-index: 10;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
     }
 
     .btn-group-main {
       display: flex;
       align-items: center;
       gap: 6px;
+      flex: 1;
     }
 
-    .component-set-btn {
-      height: 28px;
-      padding: 0 10px;
-      border: 1px solid var(--figma-color-purple);
-      border-radius: var(--radius-sm);
-      background: var(--figma-color-purple-light);
-      color: var(--figma-color-purple);
-      font-size: 11px;
-      font-weight: 600;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      white-space: nowrap;
-      outline: none;
-      transition: all 0.15s ease;
-      flex-shrink: 0;
-    }
-
-    .component-set-btn:hover {
-      background: var(--figma-color-purple);
-      color: #ffffff;
-    }
-
-    .component-set-btn:active {
-      transform: scale(0.97);
-    }
-
-    .arrange-btn {
-      height: 28px;
+    .header-btn {
+      height: 32px;
       padding: 0 10px;
       border: 1px solid var(--figma-color-border);
-      border-radius: var(--radius-sm);
+      border-radius: var(--radius-md);
       background: var(--figma-color-bg-secondary);
       color: var(--figma-color-text);
       font-size: 11px;
       font-weight: 600;
       cursor: pointer;
-      display: flex;
+      display: inline-flex;
       align-items: center;
-      gap: 5px;
+      justify-content: center;
+      gap: 6px;
       white-space: nowrap;
       outline: none;
       transition: all 0.15s ease;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .header-btn svg {
       flex-shrink: 0;
     }
 
-    .arrange-btn:hover {
+    .header-btn:hover {
       background: var(--figma-color-hover);
       border-color: var(--figma-color-border-hover);
       color: var(--figma-color-blue);
+      box-shadow: var(--shadow-sm);
     }
 
-    .arrange-btn:active {
+    .header-btn:active {
       transform: scale(0.97);
-    }
-
-    /* AI Description Action Button - placed right next to first button */
-    .ai-desc-btn {
-      height: 28px;
-      padding: 0 11px;
-      border: none;
-      border-radius: var(--radius-sm);
-      background: linear-gradient(135deg, var(--accent-spark-start), var(--accent-spark-mid), var(--accent-spark-end));
-      background-size: 200% 200%;
-      color: #ffffff;
-      font-size: 11px;
-      font-weight: 600;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      white-space: nowrap;
-      outline: none;
-      box-shadow: 0 2px 6px rgba(99, 102, 241, 0.35);
-      transition: all 0.15s ease;
-      flex-shrink: 0;
-    }
-
-    .ai-desc-btn:hover {
-      background-position: right center;
-      box-shadow: 0 3px 10px rgba(236, 72, 153, 0.45);
-    }
-
-    .ai-desc-btn:active {
-      transform: scale(0.97);
-    }
-
-    .search-input {
-      flex: 1;
-      min-width: 110px;
-      height: 28px;
-      padding: 0 10px;
-      border: 1px solid var(--figma-color-border);
-      border-radius: var(--radius-sm);
-      background: transparent;
-      color: var(--figma-color-text);
-      font-size: 11px;
-      outline: none;
-    }
-
-    .search-input:focus {
-      border-color: var(--figma-color-blue);
-    }
-
-    .scope-select {
-      height: 28px;
-      padding: 0 6px;
-      border: 1px solid var(--figma-color-border);
-      border-radius: var(--radius-sm);
-      background: transparent;
-      color: var(--figma-color-text);
-      font-size: 11px;
-      outline: none;
-      cursor: pointer;
     }
 
     .auth-pill {
+      height: 32px;
       display: flex;
       align-items: center;
-      gap: 5px;
-      padding: 4px 8px;
-      border-radius: var(--radius-full);
-      font-size: 10.5px;
+      gap: 6px;
+      padding: 0 10px;
+      border-radius: var(--radius-md);
+      font-size: 11px;
       font-weight: 600;
       cursor: pointer;
       border: 1px solid var(--figma-color-border);
       background: var(--figma-color-bg-secondary);
       color: var(--figma-color-text-secondary);
-      transition: all 0.2s ease;
+      transition: all 0.15s ease;
       flex-shrink: 0;
     }
 
     .auth-pill:hover {
       border-color: var(--figma-color-border-hover);
       color: var(--figma-color-text);
+      background: var(--figma-color-hover);
     }
 
     .auth-pill.connected {
@@ -562,30 +484,33 @@
 
     /* Bottom Google Gemini Models Bar */
     .bottom-bar {
-      padding: 8px 12px;
+      padding: 10px 12px;
       background: var(--figma-color-bg-secondary);
       border-top: 1px solid var(--figma-color-border);
       display: flex;
-      align-items: center;
-      gap: 8px;
+      flex-direction: column;
+      gap: 6px;
       flex-shrink: 0;
     }
 
     .bottom-label {
-      font-size: 10.5px;
+      font-size: 11px;
       font-weight: 600;
       color: var(--figma-color-text-secondary);
+      line-height: 1;
+    }
+
+    .bottom-controls-row {
       display: flex;
       align-items: center;
-      gap: 4px;
-      white-space: nowrap;
+      gap: 6px;
     }
 
     .model-select-dropdown {
       flex: 1;
-      height: 26px;
+      height: 28px;
       padding: 0 8px;
-      font-size: 10.5px;
+      font-size: 11px;
       font-weight: 500;
       border-radius: var(--radius-sm);
       border: 1px solid var(--figma-color-border);
@@ -593,11 +518,12 @@
       color: var(--figma-color-text);
       outline: none;
       cursor: pointer;
+      min-width: 0;
     }
 
     .btn-icon-tiny {
-      width: 26px;
-      height: 26px;
+      width: 28px;
+      height: 28px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -606,11 +532,15 @@
       background: var(--figma-color-bg);
       color: var(--figma-color-text-secondary);
       cursor: pointer;
+      flex-shrink: 0;
+      font-size: 12px;
+      transition: all 0.15s ease;
     }
 
     .btn-icon-tiny:hover {
       color: var(--figma-color-text);
       border-color: var(--figma-color-border-hover);
+      background: var(--figma-color-hover);
     }
 
     /* Google Connect Modal */
@@ -710,44 +640,41 @@
   <!-- Top Header Controls -->
   <div class="header">
     <div class="btn-group-main">
-      <!-- Button 1 (Existing): Component Set -->
-      <button id="componentSetBtn" class="component-set-btn" title="Apply metric variables to selection">
-        <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2">
+      <!-- Button 1: Apply -->
+      <button id="componentSetBtn" class="header-btn" onclick="handleRunComponentSet()" title="Apply metric variables & Auto Layout to selection">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
           <rect x="1.5" y="1.5" width="4" height="4" rx="0.5"/>
           <rect x="8.5" y="1.5" width="4" height="4" rx="0.5"/>
           <rect x="1.5" y="8.5" width="4" height="4" rx="0.5"/>
           <rect x="8.5" y="8.5" width="4" height="4" rx="0.5"/>
         </svg>
-        Component Set
+        <span>Apply</span>
       </button>
 
-      <!-- Button 2: Arrange / Tidy Grid -->
-      <button id="btnArrangeGrid" class="arrange-btn" title="Arrange elements alphabetically in grid (272px X, 272px Y) grouped by slash">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <!-- Button 2: Move -->
+      <button id="btnMoveToComponents" class="header-btn" onclick="handleMoveToComponents()" title="Move selected Component Set to '    🔷 components' page">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12h14M12 5l7 7-7 7"/>
+        </svg>
+        <span>Move</span>
+      </button>
+
+      <!-- Button 3: Arrange -->
+      <button id="btnArrangeGrid" class="header-btn" onclick="handleArrangeGrid()" title="Arrange elements alphabetically in grid (272px X, 272px Y) grouped by slash">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="3" width="7" height="7"></rect>
           <rect x="14" y="3" width="7" height="7"></rect>
           <rect x="14" y="14" width="7" height="7"></rect>
           <rect x="3" y="14" width="7" height="7"></rect>
         </svg>
-        Arrange
+        <span>Arrange</span>
       </button>
 
-      <!-- Button 3 (New): AI Description (Next to the first button) -->
-      <button id="btnAiDescription" class="ai-desc-btn" title="Generate AI description and auto-apply directly to Figma description">
-        <span id="aiBtnIcon">✨</span>
+      <!-- Button 4: AI Description -->
+      <button id="btnAiDescription" class="header-btn" onclick="handleGenerate()" title="Generate AI description and auto-apply directly to Figma description">
+        <span id="aiBtnIcon" style="font-size: 12px; line-height: 1;">✨</span>
         <span id="aiBtnText">AI Description</span>
       </button>
-    </div>
-
-    <input type="text" id="searchInput" class="search-input" placeholder="Search variables...">
-    <select id="scopeSelect" class="scope-select" title="Scan scope">
-      <option value="page">Current Page</option>
-      <option value="document">Entire Document</option>
-    </select>
-
-    <div id="authPill" class="auth-pill" title="Click to manage Google Gemini connection">
-      <span class="status-dot"></span>
-      <span id="authPillText">Connect Google</span>
     </div>
   </div>
 
@@ -805,19 +732,22 @@
 
   <!-- Bottom Google Gemini Models Bar (Dynamically populated from user's account) -->
   <div class="bottom-bar">
-    <div class="bottom-label">
-      <span>🤖</span>
-      <span>Gemini Model:</span>
+    <div class="bottom-label">Gemini Model</div>
+    <div class="bottom-controls-row">
+      <select id="modelSelect" class="model-select-dropdown" title="Select Gemini model available on your account">
+        <option value="">(Connect Google account to load models)</option>
+      </select>
+      <button id="btnRefreshModels" class="btn-icon-tiny" title="Reload models from your Google account">
+        🔄
+      </button>
+      <button id="btnSettingsModal" class="btn-icon-tiny" title="Google Gemini API Settings">
+        ⚙️
+      </button>
+      <div id="authPill" class="auth-pill" title="Click to manage Google Gemini connection">
+        <span class="status-dot"></span>
+        <span id="authPillText">Connect Google</span>
+      </div>
     </div>
-    <select id="modelSelect" class="model-select-dropdown" title="Select Gemini model available on your account">
-      <option value="">(Connect Google account to load models)</option>
-    </select>
-    <button id="btnRefreshModels" class="btn-icon-tiny" title="Reload models from your Google account">
-      🔄
-    </button>
-    <button id="btnSettingsModal" class="btn-icon-tiny" title="Google Gemini API Settings">
-      ⚙️
-    </button>
   </div>
 
   <!-- Google Gemini Connect Modal Overlay -->
@@ -868,8 +798,7 @@
 
     // DOM Elements
     const contentEl = document.getElementById('content');
-    const searchInput = document.getElementById('searchInput');
-    const scopeSelect = document.getElementById('scopeSelect');
+    const btnMoveToComponents = document.getElementById('btnMoveToComponents');
     const refreshBtn = document.getElementById('refreshBtn');
     const componentSetBtn = document.getElementById('componentSetBtn');
     const btnArrangeGrid = document.getElementById('btnArrangeGrid');
@@ -912,6 +841,21 @@
       setTimeout(() => {
         toastBanner.style.display = 'none';
       }, 4000);
+    }
+
+    function handleMoveToComponents() {
+      showToast('Moving to "    🔷 components" page... 🚀', false);
+      parent.postMessage({ pluginMessage: { type: 'move-to-components-page' } }, '*');
+    }
+
+    function handleRunComponentSet() {
+      showToast('Applying Auto Layout & Variables... ⚡', false);
+      parent.postMessage({ pluginMessage: { type: 'run-component-set' } }, '*');
+    }
+
+    function handleArrangeGrid() {
+      showToast('Arranging in grid... 📐', false);
+      parent.postMessage({ pluginMessage: { type: 'arrange-grid' } }, '*');
     }
 
     // Update connection status in UI
@@ -1275,26 +1219,17 @@ Instructions:
     }
 
     function renderVariables(variables) {
-      const query = searchInput.value.toLowerCase().trim();
-
-      const filtered = variables.filter(item => {
-        if (!query) return true;
-        if (item.name.toLowerCase().includes(query)) return true;
-        return item.categories.some(c => 
-          c.categoryName.toLowerCase().includes(query) ||
-          c.subGroups.some(s => s.layerTypeName.toLowerCase().includes(query) || s.subProperty.toLowerCase().includes(query))
-        );
-      });
-
-      if (filtered.length === 0) {
+      if (!variables || variables.length === 0) {
         contentEl.innerHTML = `
           <div class="empty-state">
             <h3>No numeric variables found</h3>
-            <p>${variables.length === 0 ? 'No layer bindings found in the current scope.' : 'No variables match your search.'}</p>
+            <p>No layer bindings found in the current scope.</p>
           </div>
         `;
         return;
       }
+
+      const filtered = variables;
 
       let html = '';
 
@@ -1408,7 +1343,7 @@ Instructions:
       parent.postMessage({
         pluginMessage: {
           type: 'scan',
-          scope: scopeSelect.value
+          scope: 'page'
         }
       }, '*');
     }
@@ -1423,8 +1358,12 @@ Instructions:
 
     // Event listeners
     refreshBtn.addEventListener('click', triggerScan);
-    scopeSelect.addEventListener('change', triggerScan);
-    searchInput.addEventListener('input', () => renderVariables(allVariables));
+
+    if (btnMoveToComponents) {
+      btnMoveToComponents.addEventListener('click', () => {
+        parent.postMessage({ pluginMessage: { type: 'move-to-components-page' } }, '*');
+      });
+    }
 
     componentSetBtn.addEventListener('click', () => {
       parent.postMessage({ pluginMessage: { type: 'run-component-set' } }, '*');

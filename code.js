@@ -1,5 +1,4 @@
-"use strict";
-/// <reference types="../component-set/node_modules/@figma/plugin-typings" />
+/// <reference types="@figma/plugin-typings" />
 // Window size expanded in width and height for a spacious, modern UI
 figma.showUI(__html__, { width: 520, height: 720, themeColors: true });
 const NON_NUMERIC_PROP_KEYS = new Set([
@@ -664,6 +663,82 @@ async function getAllRelevantVariablesForComponentSet() {
     }
     return allVariables;
 }
+function cleanHiddenWhiteFills(node) {
+    if ('fills' in node && Array.isArray(node.fills)) {
+        try {
+            const fills = node.fills;
+            const filteredFills = fills.filter((paint) => {
+                if (paint.type === 'SOLID') {
+                    const isHidden = paint.visible === false;
+                    const isWhite = Math.abs(paint.color.r - 1) < 0.002 &&
+                        Math.abs(paint.color.g - 1) < 0.002 &&
+                        Math.abs(paint.color.b - 1) < 0.002;
+                    if (isHidden && isWhite) {
+                        return false;
+                    }
+                }
+                return true;
+            });
+            if (filteredFills.length !== fills.length) {
+                node.fills = filteredFills;
+            }
+        }
+        catch (err) {
+            console.warn('Could not clean hidden white fills on node:', node.name, err);
+        }
+    }
+}
+function isFieldBound(node, fieldName) {
+    if (!('boundVariables' in node))
+        return false;
+    const bound = node.boundVariables;
+    if (!bound)
+        return false;
+    return bound[fieldName] !== undefined && bound[fieldName] !== null;
+}
+function bindIfNotBound(node, fieldName, variable) {
+    if (!variable)
+        return;
+    if (isFieldBound(node, fieldName))
+        return; // Keep existing bound variable!
+    if ('setBoundVariable' in node) {
+        try {
+            node.setBoundVariable(fieldName, variable);
+        }
+        catch (e) {
+            console.warn(`Could not bind variable to ${fieldName}:`, e);
+        }
+    }
+}
+function bindRadiusIfNotBound(node, radiusVariable) {
+    if (!radiusVariable)
+        return;
+    const hasCornerRadiusBound = isFieldBound(node, 'cornerRadius');
+    const hasIndividualBound = isFieldBound(node, 'topLeftRadius') ||
+        isFieldBound(node, 'topRightRadius') ||
+        isFieldBound(node, 'bottomLeftRadius') ||
+        isFieldBound(node, 'bottomRightRadius');
+    if (hasCornerRadiusBound || hasIndividualBound) {
+        // Keep existing radius variable!
+        return;
+    }
+    if ('cornerRadius' in node && 'setBoundVariable' in node) {
+        try {
+            node.setBoundVariable('cornerRadius', radiusVariable);
+            return;
+        }
+        catch (e) { }
+    }
+    if ('topLeftRadius' in node && 'setBoundVariable' in node) {
+        try {
+            node.setBoundVariable('topLeftRadius', radiusVariable);
+            node.setBoundVariable('topRightRadius', radiusVariable);
+            node.setBoundVariable('bottomLeftRadius', radiusVariable);
+            node.setBoundVariable('bottomRightRadius', radiusVariable);
+        }
+        catch (e) { }
+    }
+}
 async function setupComponentSets(nodes) {
     const allVars = await getAllRelevantVariablesForComponentSet();
     const metricsVars = allVars.filter((item) => item.collectionName.toLowerCase() === 'metrics');
@@ -732,6 +807,7 @@ async function setupComponentSets(nodes) {
     let totalSuccess = 0;
     const errors = [];
     for (const node of nodes) {
+        cleanHiddenWhiteFills(node);
         if ('name' in node && typeof node.name === 'string') {
             if (/^frame(\s*\d+)?$/i.test(node.name.trim())) {
                 node.name = 'container';
@@ -785,6 +861,41 @@ async function setupComponentSets(nodes) {
         }
         catch (e) {
             errors.push(`${node.name} [strokes] -> ${e.message}`);
+        }
+        // Ensure all child variants have Auto Layout configured
+        for (const child of node.children) {
+            cleanHiddenWhiteFills(child);
+            if (child.type === 'COMPONENT') {
+                if (child.layoutMode === 'NONE') {
+                    try {
+                        child.layoutMode = 'HORIZONTAL';
+                        child.primaryAxisSizingMode = 'AUTO';
+                        child.counterAxisSizingMode = 'AUTO';
+                    }
+                    catch (e) {
+                        console.warn(`Could not set auto layout on variant "${child.name}":`, e);
+                    }
+                }
+                if (varNone) {
+                    try {
+                        if (child.layoutMode !== 'NONE') {
+                            bindIfNotBound(child, 'itemSpacing', varNone);
+                            bindIfNotBound(child, 'counterAxisSpacing', varNone);
+                            bindIfNotBound(child, 'paddingTop', varNone);
+                            bindIfNotBound(child, 'paddingBottom', varNone);
+                            bindIfNotBound(child, 'paddingLeft', varNone);
+                            bindIfNotBound(child, 'paddingRight', varNone);
+                        }
+                        bindRadiusIfNotBound(child, varNone);
+                        if ('cornerSmoothing' in child) {
+                            child.cornerSmoothing = 0.6;
+                        }
+                    }
+                    catch (e) {
+                        console.warn(`Could not bind varNone on variant "${child.name}":`, e);
+                    }
+                }
+            }
         }
         totalSuccess++;
     }
@@ -901,6 +1012,7 @@ async function applyVariantMetrics(selection) {
     }
     let count = 0;
     for (const node of selection) {
+        cleanHiddenWhiteFills(node);
         if ('name' in node && typeof node.name === 'string') {
             if (/^frame(\s*\d+)?$/i.test(node.name.trim())) {
                 node.name = 'container';
@@ -1124,26 +1236,23 @@ async function applyVariantMetrics(selection) {
                 console.error("Error configuring 'screen' frame:", e);
             }
         }
-        else if (node.type === 'COMPONENT' && node.parent && node.parent.type === 'COMPONENT_SET') {
+        else if (node.type === 'COMPONENT') {
             try {
+                if ('layoutMode' in node && node.layoutMode === 'NONE') {
+                    node.layoutMode = 'HORIZONTAL';
+                    node.primaryAxisSizingMode = 'AUTO';
+                    node.counterAxisSizingMode = 'AUTO';
+                }
                 if (varNone) {
                     if ('layoutMode' in node && node.layoutMode !== 'NONE') {
-                        node.setBoundVariable('itemSpacing', varNone);
-                        node.setBoundVariable('counterAxisSpacing', varNone);
-                        node.setBoundVariable('paddingTop', varNone);
-                        node.setBoundVariable('paddingBottom', varNone);
-                        node.setBoundVariable('paddingLeft', varNone);
-                        node.setBoundVariable('paddingRight', varNone);
+                        bindIfNotBound(node, 'itemSpacing', varNone);
+                        bindIfNotBound(node, 'counterAxisSpacing', varNone);
+                        bindIfNotBound(node, 'paddingTop', varNone);
+                        bindIfNotBound(node, 'paddingBottom', varNone);
+                        bindIfNotBound(node, 'paddingLeft', varNone);
+                        bindIfNotBound(node, 'paddingRight', varNone);
                     }
-                    if ('cornerRadius' in node) {
-                        node.setBoundVariable('cornerRadius', varNone);
-                    }
-                    if ('topLeftRadius' in node) {
-                        node.setBoundVariable('topLeftRadius', varNone);
-                        node.setBoundVariable('topRightRadius', varNone);
-                        node.setBoundVariable('bottomLeftRadius', varNone);
-                        node.setBoundVariable('bottomRightRadius', varNone);
-                    }
+                    bindRadiusIfNotBound(node, varNone);
                     if ('cornerSmoothing' in node) {
                         node.cornerSmoothing = 0.6;
                     }
@@ -1158,24 +1267,16 @@ async function applyVariantMetrics(selection) {
             try {
                 if ('layoutMode' in node && node.layoutMode !== 'NONE') {
                     if (varNone) {
-                        node.setBoundVariable('itemSpacing', varNone);
-                        node.setBoundVariable('counterAxisSpacing', varNone);
-                        node.setBoundVariable('paddingTop', varNone);
-                        node.setBoundVariable('paddingBottom', varNone);
-                        node.setBoundVariable('paddingLeft', varNone);
-                        node.setBoundVariable('paddingRight', varNone);
+                        bindIfNotBound(node, 'itemSpacing', varNone);
+                        bindIfNotBound(node, 'counterAxisSpacing', varNone);
+                        bindIfNotBound(node, 'paddingTop', varNone);
+                        bindIfNotBound(node, 'paddingBottom', varNone);
+                        bindIfNotBound(node, 'paddingLeft', varNone);
+                        bindIfNotBound(node, 'paddingRight', varNone);
                     }
                 }
                 if (varNone) {
-                    if ('cornerRadius' in node) {
-                        node.setBoundVariable('cornerRadius', varNone);
-                    }
-                    if ('topLeftRadius' in node) {
-                        node.setBoundVariable('topLeftRadius', varNone);
-                        node.setBoundVariable('topRightRadius', varNone);
-                        node.setBoundVariable('bottomLeftRadius', varNone);
-                        node.setBoundVariable('bottomRightRadius', varNone);
-                    }
+                    bindRadiusIfNotBound(node, varNone);
                     if ('cornerSmoothing' in node) {
                         node.cornerSmoothing = 0.6;
                     }
@@ -1198,7 +1299,9 @@ async function runComponentSetLogic() {
     // 1. Identify standalone components that are not already part of a component set
     const standaloneComponents = selection.filter((node) => node.type === 'COMPONENT' && (!node.parent || node.parent.type !== 'COMPONENT_SET'));
     const newlyCreatedComponentSets = [];
+    const newlyCreatedVariants = [];
     for (const comp of standaloneComponents) {
+        cleanHiddenWhiteFills(comp);
         try {
             let originalName = comp.name.trim();
             if (/^frame(\s*\d+)?$/i.test(originalName)) {
@@ -1208,7 +1311,13 @@ async function runComponentSetLogic() {
             const compSet = figma.combineAsVariants([comp], parent);
             compSet.name = originalName.toLowerCase();
             comp.name = 'type=default';
+            if (comp.layoutMode === 'NONE') {
+                comp.layoutMode = 'HORIZONTAL';
+                comp.primaryAxisSizingMode = 'AUTO';
+                comp.counterAxisSizingMode = 'AUTO';
+            }
             newlyCreatedComponentSets.push(compSet);
+            newlyCreatedVariants.push(comp);
         }
         catch (err) {
             console.error('Error combining component into component set:', err);
@@ -1221,10 +1330,11 @@ async function runComponentSetLogic() {
     if (allComponentSets.length > 0) {
         await setupComponentSets(allComponentSets);
     }
-    // 3. Other nodes (excluding component sets and standalone components that were converted)
+    // 3. Other nodes (excluding component sets and standalone components that were converted) + newly created variants
     const otherNodes = selection.filter((node) => node.type !== 'COMPONENT_SET' && !standaloneComponents.includes(node));
-    if (otherNodes.length > 0) {
-        await applyVariantMetrics(otherNodes);
+    const nodesToApplyVariantMetrics = [...otherNodes, ...newlyCreatedVariants];
+    if (nodesToApplyVariantMetrics.length > 0) {
+        await applyVariantMetrics(nodesToApplyVariantMetrics);
     }
     // If new component sets were created, select them and update UI inspector
     if (newlyCreatedComponentSets.length > 0) {
@@ -1232,10 +1342,10 @@ async function runComponentSetLogic() {
         await sendSelectionToUI();
     }
 }
-async function organizeElementsOnCanvas() {
+async function organizeElementsOnCanvas(forceAll = false) {
     const selection = figma.currentPage.selection;
     let nodes = [];
-    if (selection.length > 1) {
+    if (!forceAll && selection.length > 1) {
         nodes = Array.from(selection);
     }
     else {
@@ -1311,6 +1421,141 @@ async function organizeElementsOnCanvas() {
     await sendSelectionToUI();
     figma.notify(`Arranged ${nodes.length} element${nodes.length > 1 ? 's' : ''} in ${sortedGroups.length} column group${sortedGroups.length > 1 ? 's' : ''} & collapsed layers! 📐`);
 }
+function getOrCreateTargetPage(pageType) {
+    const isScreens = pageType === 'screens';
+    const TARGET_PAGE_NAME = isScreens ? '    🔷 screens' : '    🔷 components';
+    // 1. Exact match (including leading spaces)
+    let targetPage = figma.root.children.find((p) => p.name === TARGET_PAGE_NAME);
+    // 2. Trimmed match: "🔷 screens" / "🔷 components" (case-insensitive)
+    if (!targetPage) {
+        const targetTrimmed = isScreens ? '🔷 screens' : '🔷 components';
+        const targetNoSpace = isScreens ? '🔷screens' : '🔷components';
+        targetPage = figma.root.children.find((p) => {
+            const clean = p.name.trim().toLowerCase();
+            return clean === targetTrimmed || clean === targetNoSpace;
+        });
+    }
+    // 3. Page containing both "🔷" and ("screen" or "component")
+    if (!targetPage) {
+        const keyword = isScreens ? 'screen' : 'component';
+        targetPage = figma.root.children.find((p) => {
+            const lower = p.name.toLowerCase();
+            return lower.includes('🔷') && lower.includes(keyword);
+        });
+    }
+    // 4. Exact trimmed "screens" / "components" (case-insensitive)
+    if (!targetPage) {
+        const keyword = isScreens ? 'screens' : 'components';
+        targetPage = figma.root.children.find((p) => p.name.trim().toLowerCase() === keyword);
+    }
+    // 5. Create new page if not found
+    if (!targetPage) {
+        targetPage = figma.createPage();
+        targetPage.name = TARGET_PAGE_NAME;
+    }
+    return targetPage;
+}
+async function moveSelectedToComponentsPage() {
+    if (typeof figma.loadAllPagesAsync === 'function') {
+        await figma.loadAllPagesAsync();
+    }
+    const selection = figma.currentPage.selection;
+    if (!selection || selection.length === 0) {
+        figma.notify('Please select a Component or Component Set to move.', { error: true });
+        return;
+    }
+    // Find all target nodes to move:
+    // - If variant of a ComponentSet, move the parent ComponentSet
+    // - If ComponentSet, move it
+    // - If standalone Component, Frame, Section, or top-level node, move it
+    const nodesToMove = new Set();
+    for (const node of selection) {
+        let curr = node;
+        let enclosingCompSet = null;
+        while (curr && curr.type !== 'PAGE') {
+            if (curr.type === 'COMPONENT_SET') {
+                enclosingCompSet = curr;
+                break;
+            }
+            curr = curr.parent;
+        }
+        if (enclosingCompSet) {
+            nodesToMove.add(enclosingCompSet);
+        }
+        else {
+            // Find top-level scene node on current page
+            let topNode = node;
+            while (topNode && topNode.parent && topNode.parent.type !== 'PAGE') {
+                topNode = topNode.parent;
+            }
+            if (topNode && topNode.type !== 'PAGE') {
+                nodesToMove.add(topNode);
+            }
+        }
+    }
+    if (nodesToMove.size === 0) {
+        figma.notify('No element found in selection to move.', { error: true });
+        return;
+    }
+    // Group nodes by their target page:
+    // If name starts with "screen" (case-insensitive) -> "    🔷 screens", otherwise -> "    🔷 components"
+    const screensTargetPage = getOrCreateTargetPage('screens');
+    const componentsTargetPage = getOrCreateTargetPage('components');
+    const movesByTargetPage = new Map();
+    for (const node of nodesToMove) {
+        const rawName = (node.name || '').trim().toLowerCase();
+        const isScreen = rawName.startsWith('screen');
+        const targetPage = isScreen ? screensTargetPage : componentsTargetPage;
+        // Check if node is already on this target page
+        let nodePage = node;
+        while (nodePage && nodePage.type !== 'PAGE') {
+            nodePage = nodePage.parent;
+        }
+        if (nodePage && nodePage.id === targetPage.id) {
+            // Already on target page
+            continue;
+        }
+        if (!movesByTargetPage.has(targetPage)) {
+            movesByTargetPage.set(targetPage, []);
+        }
+        movesByTargetPage.get(targetPage).push(node);
+    }
+    if (movesByTargetPage.size === 0) {
+        figma.notify('Selected element(s) are already on their target page! ℹ️');
+        await organizeElementsOnCanvas(true);
+        return;
+    }
+    let totalMoved = 0;
+    let lastTargetPage = null;
+    const allSuccessfullyMoved = [];
+    for (const [targetPage, nodes] of movesByTargetPage.entries()) {
+        figma.currentPage = targetPage;
+        lastTargetPage = targetPage;
+        for (const nodeToMove of nodes) {
+            try {
+                targetPage.appendChild(nodeToMove);
+                totalMoved++;
+                allSuccessfullyMoved.push(nodeToMove);
+            }
+            catch (err) {
+                console.error(`Could not move "${nodeToMove.name}" to "${targetPage.name}":`, err);
+                figma.notify(`Could not move "${nodeToMove.name}": ${err.message || err}`, { error: true });
+            }
+        }
+        // Organize elements in tidy grid on the target page
+        await organizeElementsOnCanvas(true);
+    }
+    if (lastTargetPage) {
+        figma.currentPage = lastTargetPage;
+        const selectionOnLastPage = allSuccessfullyMoved.filter((n) => n.parent && n.parent.id === lastTargetPage.id);
+        if (selectionOnLastPage.length > 0) {
+            figma.currentPage.selection = selectionOnLastPage;
+            figma.viewport.scrollAndZoomIntoView(selectionOnLastPage);
+        }
+        await sendSelectionToUI();
+        figma.notify(`Moved ${totalMoved} element${totalMoved > 1 ? 's' : ''} & arranged grid! 🚀📐`);
+    }
+}
 // Message Router
 figma.ui.onmessage = async (msg) => {
     var _a, _b;
@@ -1319,6 +1564,10 @@ figma.ui.onmessage = async (msg) => {
     }
     else if (msg.type === 'arrange-grid') {
         await organizeElementsOnCanvas();
+    }
+    else if (msg.type === 'move-to-components-page') {
+        await moveSelectedToComponentsPage();
+        await scanDocument('page');
     }
     else if (msg.type === 'get-selection') {
         sendSelectionToUI();

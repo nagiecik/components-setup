@@ -2,7 +2,9 @@
   "compilerOptions": {
     "target": "es2017",
     "lib": ["es2017"],
-    "typeRoots": ["../component-set/node_modules/@figma", "../component-set/node_modules/@types"],
-    "strict": true
+    "typeRoots": [
+      "./node_modules/@types",
+      "./node_modules/@figma"
+    ]
   }
 }
