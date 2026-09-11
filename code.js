@@ -623,43 +623,61 @@ async function sendInitialData() {
 }
 sendInitialData();
 async function getAllRelevantVariablesForComponentSet() {
-    const localCollections = await figma.variables.getLocalVariableCollectionsAsync();
-    let libraryCollections = [];
+    const allVariables = [];
     try {
-        libraryCollections = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
+        const localCollections = await figma.variables.getLocalVariableCollectionsAsync();
+        const colMap = new Map();
+        for (const c of localCollections) {
+            colMap.set(c.id, c.name);
+        }
+        const localVars = await figma.variables.getLocalVariablesAsync();
+        for (const v of localVars) {
+            const colName = colMap.get(v.variableCollectionId) || '';
+            allVariables.push({
+                variable: v,
+                collectionName: colName,
+            });
+        }
+    }
+    catch (err) {
+        console.warn('Error fetching local variables:', err);
+    }
+    // Check team libraries if available
+    try {
+        const libraryCollections = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
+        for (const libCollection of libraryCollections) {
+            try {
+                const varsDescriptors = await figma.teamLibrary.getVariablesInLibraryCollectionAsync(libCollection.key);
+                const relevantDescriptors = varsDescriptors.filter((d) => {
+                    const lower = d.name.toLowerCase();
+                    return (lower.includes('layout') ||
+                        lower.includes('base') ||
+                        lower.includes('radius') ||
+                        lower.includes('constant') ||
+                        lower.includes('outline') ||
+                        lower.includes('border') ||
+                        lower.includes('surface') ||
+                        lower.includes('background') ||
+                        lower.includes('screen') ||
+                        lower.includes('none'));
+                });
+                const importedVars = await Promise.all(relevantDescriptors.map((v) => figma.variables.importVariableByKeyAsync(v.key).catch(() => null)));
+                for (const v of importedVars) {
+                    if (v) {
+                        allVariables.push({
+                            variable: v,
+                            collectionName: libCollection.name,
+                        });
+                    }
+                }
+            }
+            catch (e) {
+                console.warn(`Error importing from library ${libCollection.name}:`, e);
+            }
+        }
     }
     catch (e) {
-        console.warn('Error fetching team library collections:', e);
-    }
-    const localVariablesNested = await Promise.all(localCollections.map(async (collection) => {
-        const vars = await Promise.all(collection.variableIds.map((id) => figma.variables.getVariableByIdAsync(id)));
-        const validVars = vars.filter((v) => v !== null);
-        return validVars.map((v) => ({
-            variable: v,
-            collectionName: collection.name,
-        }));
-    }));
-    const libraryVariablesNested = await Promise.all(libraryCollections.map(async (libCollection) => {
-        try {
-            const varsDescriptors = await figma.teamLibrary.getVariablesInLibraryCollectionAsync(libCollection.key);
-            const importedVars = await Promise.all(varsDescriptors.map((v) => figma.variables.importVariableByKeyAsync(v.key)));
-            const validVars = importedVars.filter((v) => v !== null);
-            return validVars.map((v) => ({
-                variable: v,
-                collectionName: libCollection.name,
-            }));
-        }
-        catch (e) {
-            console.warn(`Error importing from library ${libCollection.name}:`, e);
-            return [];
-        }
-    }));
-    const allVariables = [];
-    for (const group of localVariablesNested) {
-        allVariables.push(...group);
-    }
-    for (const group of libraryVariablesNested) {
-        allVariables.push(...group);
+        // teamLibrary might not be supported on all plans
     }
     return allVariables;
 }
@@ -688,114 +706,632 @@ function cleanHiddenWhiteFills(node) {
         }
     }
 }
-function isFieldBound(node, fieldName) {
-    if (!('boundVariables' in node))
+function isTemporaryCollection(name) {
+    if (!name)
         return false;
-    const bound = node.boundVariables;
-    if (!bound)
-        return false;
-    return bound[fieldName] !== undefined && bound[fieldName] !== null;
+    const lower = name.toLowerCase().trim();
+    return lower.startsWith('_');
 }
-function bindIfNotBound(node, fieldName, variable) {
-    if (!variable)
-        return;
-    if (isFieldBound(node, fieldName))
-        return; // Keep existing bound variable!
-    if ('setBoundVariable' in node) {
+function isDefaultCollection(name) {
+    if (!name)
+        return false;
+    return !isTemporaryCollection(name);
+}
+function isAllowedCollection(name) {
+    if (!name)
+        return false;
+    const lower = name.toLowerCase().trim();
+    if (!lower.startsWith('_'))
+        return true;
+    return lower === '_metrics' || lower === '_schemes' || lower === '_layout' || lower === '_temporary' || lower === '_temp';
+}
+function findVariableWithPriority(allVars, varName, preferredCol = 'metrics') {
+    const preferredTempCol = `_${preferredCol}`;
+    const baseName = varName.split('/').pop() || varName;
+    // 1. PRIORITY 1: Default collection (collection that does NOT start with '_')
+    let found = allVars.find((item) => isDefaultCollection(item.collectionName) &&
+        item.collectionName.toLowerCase() === preferredCol &&
+        (item.variable.name === varName ||
+            item.variable.name === `${preferredCol}/${varName}` ||
+            item.variable.name.endsWith(`/${varName}`)));
+    if (found)
+        return found.variable;
+    found = allVars.find((item) => isDefaultCollection(item.collectionName) &&
+        (item.variable.name === varName ||
+            item.variable.name === `${preferredCol}/${varName}` ||
+            item.variable.name.endsWith(`/${varName}`)));
+    if (found)
+        return found.variable;
+    found = allVars.find((item) => isDefaultCollection(item.collectionName) &&
+        (item.variable.name === baseName ||
+            item.variable.name.endsWith(`/${baseName}`)));
+    if (found)
+        return found.variable;
+    // 2. PRIORITY 2: Temporary collection (starts with '_', e.g. '_metrics', '_layout')
+    found = allVars.find((item) => isTemporaryCollection(item.collectionName) &&
+        (item.variable.name === varName ||
+            item.variable.name === `${preferredCol}/${varName}` ||
+            item.variable.name === `${preferredTempCol}/${varName}` ||
+            item.variable.name.endsWith(`/${varName}`) ||
+            item.variable.name === baseName ||
+            item.variable.name.endsWith(`/${baseName}`)));
+    if (found)
+        return found.variable;
+    // 3. Fallback: exact match in any collection
+    found = allVars.find((item) => item.variable.name === varName || item.variable.name.endsWith(`/${varName}`));
+    return found ? found.variable : undefined;
+}
+function findColorVariableWithPriority(allVars, colorNames) {
+    // 1. PRIORITY 1: Default collections (not starting with '_')
+    for (const name of colorNames) {
+        const found = allVars.find((item) => isDefaultCollection(item.collectionName) &&
+            (item.variable.name === name ||
+                item.variable.name === `schemes/${name}` ||
+                item.variable.name.endsWith(`/${name}`)));
+        if (found)
+            return found.variable;
+    }
+    // 2. PRIORITY 2: Temporary collections (starting with '_', e.g. '_schemes', '_metrics')
+    for (const name of colorNames) {
+        const found = allVars.find((item) => isTemporaryCollection(item.collectionName) &&
+            (item.variable.name === name ||
+                item.variable.name === `_schemes/${name}` ||
+                item.variable.name === `_metrics/${name}` ||
+                item.variable.name.endsWith(`/${name}`)));
+        if (found)
+            return found.variable;
+    }
+    // 3. Fallback: Any collection
+    for (const name of colorNames) {
+        const found = allVars.find((item) => item.variable.name === name ||
+            item.variable.name.endsWith(`/${name}`));
+        if (found)
+            return found.variable;
+    }
+    return undefined;
+}
+async function isVariableFromAllowedCollection(varId, varCollectionCache) {
+    let colName = varCollectionCache.get(varId);
+    if (!colName) {
         try {
-            node.setBoundVariable(fieldName, variable);
+            const v = await figma.variables.getVariableByIdAsync(varId);
+            if (v) {
+                const col = await figma.variables.getVariableCollectionByIdAsync(v.variableCollectionId);
+                if (col) {
+                    colName = col.name;
+                    varCollectionCache.set(varId, col.name);
+                }
+            }
+        }
+        catch (e) { }
+    }
+    if (!colName)
+        return false;
+    return isAllowedCollection(colName);
+}
+async function bindOrReplaceField(node, fieldName, targetVariable, varCollectionCache) {
+    if (!('setBoundVariable' in node))
+        return;
+    const boundVars = node.boundVariables;
+    const currentBinding = boundVars ? boundVars[fieldName] : undefined;
+    if (currentBinding && currentBinding.type === 'VARIABLE_ALIAS' && currentBinding.id) {
+        const isAllowed = await isVariableFromAllowedCollection(currentBinding.id, varCollectionCache);
+        if (!isAllowed) {
+            // It's a foreign variable: replace with target default/_metrics variable or unbind
+            if (targetVariable) {
+                try {
+                    node.setBoundVariable(fieldName, targetVariable);
+                }
+                catch (e) {
+                    console.warn(`Could not replace foreign variable on ${fieldName}:`, e);
+                }
+            }
+            else {
+                try {
+                    node.setBoundVariable(fieldName, null);
+                }
+                catch (e) {
+                    console.warn(`Could not unbind foreign variable on ${fieldName}:`, e);
+                }
+            }
+        }
+        return;
+    }
+    // Not currently bound: bind targetVariable if provided
+    if (targetVariable) {
+        try {
+            node.setBoundVariable(fieldName, targetVariable);
         }
         catch (e) {
-            console.warn(`Could not bind variable to ${fieldName}:`, e);
+            console.warn(`Could not bind ${fieldName}:`, e);
         }
     }
 }
-function bindRadiusIfNotBound(node, radiusVariable) {
-    if (!radiusVariable)
+async function bindRadiusOrReplaceForeign(node, targetRadiusVariable, varCollectionCache) {
+    if (!('setBoundVariable' in node))
         return;
-    const hasCornerRadiusBound = isFieldBound(node, 'cornerRadius');
-    const hasIndividualBound = isFieldBound(node, 'topLeftRadius') ||
-        isFieldBound(node, 'topRightRadius') ||
-        isFieldBound(node, 'bottomLeftRadius') ||
-        isFieldBound(node, 'bottomRightRadius');
-    if (hasCornerRadiusBound || hasIndividualBound) {
-        // Keep existing radius variable!
-        return;
+    const boundVars = node.boundVariables;
+    const radiusFields = ['cornerRadius', 'topLeftRadius', 'topRightRadius', 'bottomLeftRadius', 'bottomRightRadius'];
+    let hasForeignRadius = false;
+    let hasAllowedRadius = false;
+    if (boundVars) {
+        for (const field of radiusFields) {
+            const binding = boundVars[field];
+            if (binding && binding.type === 'VARIABLE_ALIAS' && binding.id) {
+                const isAllowed = await isVariableFromAllowedCollection(binding.id, varCollectionCache);
+                if (!isAllowed) {
+                    hasForeignRadius = true;
+                    try {
+                        node.setBoundVariable(field, null);
+                    }
+                    catch (e) { }
+                }
+                else {
+                    hasAllowedRadius = true;
+                }
+            }
+        }
     }
-    if ('cornerRadius' in node && 'setBoundVariable' in node) {
+    if (hasForeignRadius || !hasAllowedRadius) {
+        if (targetRadiusVariable) {
+            if ('cornerRadius' in node) {
+                try {
+                    node.setBoundVariable('cornerRadius', targetRadiusVariable);
+                    return;
+                }
+                catch (e) { }
+            }
+            if ('topLeftRadius' in node) {
+                try {
+                    node.setBoundVariable('topLeftRadius', targetRadiusVariable);
+                    node.setBoundVariable('topRightRadius', targetRadiusVariable);
+                    node.setBoundVariable('bottomLeftRadius', targetRadiusVariable);
+                    node.setBoundVariable('bottomRightRadius', targetRadiusVariable);
+                }
+                catch (e) { }
+            }
+        }
+    }
+}
+async function stripForeignVariablesFromNode(node, varCollectionCache, fallbackVars) {
+    if (!node)
+        return;
+    if ('boundVariables' in node && node.boundVariables) {
+        const bound = node.boundVariables;
+        for (const field of Object.keys(bound)) {
+            const binding = bound[field];
+            if (binding && binding.type === 'VARIABLE_ALIAS' && binding.id) {
+                const isAllowed = await isVariableFromAllowedCollection(binding.id, varCollectionCache);
+                if (!isAllowed) {
+                    if ((field.includes('Spacing') || field.includes('padding') || field.includes('Radius')) &&
+                        fallbackVars.varNone &&
+                        'setBoundVariable' in node) {
+                        try {
+                            node.setBoundVariable(field, fallbackVars.varNone);
+                        }
+                        catch (e) {
+                            try {
+                                node.setBoundVariable(field, null);
+                            }
+                            catch (e2) { }
+                        }
+                    }
+                    else if ('setBoundVariable' in node) {
+                        try {
+                            node.setBoundVariable(field, null);
+                        }
+                        catch (e) { }
+                    }
+                }
+            }
+        }
+    }
+    if ('fills' in node && Array.isArray(node.fills)) {
         try {
-            node.setBoundVariable('cornerRadius', radiusVariable);
+            const fills = node.fills;
+            let fillsChanged = false;
+            const newFills = fills.map((paint) => {
+                if (paint.boundVariables?.color) {
+                    const varId = paint.boundVariables.color.id;
+                    const colName = varCollectionCache.get(varId);
+                    if (colName && !isAllowedCollection(colName)) {
+                        fillsChanged = true;
+                        if (fallbackVars.varSurfaceBackground && paint.type === 'SOLID') {
+                            return figma.variables.setBoundVariableForPaint(paint, 'color', fallbackVars.varSurfaceBackground);
+                        }
+                        else {
+                            const p = { ...paint };
+                            delete p.boundVariables;
+                            return p;
+                        }
+                    }
+                }
+                return paint;
+            });
+            if (fillsChanged) {
+                node.fills = newFills;
+            }
+        }
+        catch (e) { }
+    }
+    if ('strokes' in node && Array.isArray(node.strokes)) {
+        try {
+            const strokes = node.strokes;
+            let strokesChanged = false;
+            const newStrokes = strokes.map((paint) => {
+                if (paint.boundVariables?.color) {
+                    const varId = paint.boundVariables.color.id;
+                    const colName = varCollectionCache.get(varId);
+                    if (colName && !isAllowedCollection(colName)) {
+                        strokesChanged = true;
+                        if (fallbackVars.varBorderColor && paint.type === 'SOLID') {
+                            return figma.variables.setBoundVariableForPaint(paint, 'color', fallbackVars.varBorderColor);
+                        }
+                        else {
+                            const p = { ...paint };
+                            delete p.boundVariables;
+                            return p;
+                        }
+                    }
+                }
+                return paint;
+            });
+            if (strokesChanged) {
+                node.strokes = newStrokes;
+            }
+        }
+        catch (e) { }
+    }
+    if ('children' in node && node.type !== 'INSTANCE') {
+        for (const child of node.children) {
+            await stripForeignVariablesFromNode(child, varCollectionCache, fallbackVars);
+        }
+    }
+}
+function toCamelCase(str) {
+    if (!str)
+        return str;
+    const withoutId = str.split('#')[0];
+    const normalized = withoutId.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const cleaned = normalized.replace(/[^a-zA-Z0-9\s\-_]/g, ' ').trim();
+    if (!cleaned)
+        return str;
+    if (/^[a-z][a-zA-Z0-9]*$/.test(cleaned)) {
+        return cleaned;
+    }
+    if (/^[A-Z][a-zA-Z0-9]*$/.test(cleaned)) {
+        return cleaned.charAt(0).toLowerCase() + cleaned.slice(1);
+    }
+    const words = cleaned.split(/[\s\-_]+/).filter(Boolean);
+    if (words.length === 0)
+        return cleaned;
+    return words
+        .map((word, index) => {
+        const lower = word.toLowerCase();
+        if (index === 0) {
+            return lower;
+        }
+        return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+        .join('');
+}
+function collectComponentTargets(nodes) {
+    const targets = new Set();
+    function addComponentWithRelations(comp) {
+        targets.add(comp);
+        if (comp.parent && comp.parent.type === 'COMPONENT_SET') {
+            targets.add(comp.parent);
+            for (const sibling of comp.parent.children) {
+                if (sibling.type === 'COMPONENT') {
+                    targets.add(sibling);
+                }
+            }
+        }
+    }
+    function addComponentSetWithRelations(compSet) {
+        targets.add(compSet);
+        for (const child of compSet.children) {
+            if (child.type === 'COMPONENT') {
+                targets.add(child);
+            }
+        }
+    }
+    function inspectNode(node) {
+        if (!node)
             return;
+        if (node.type === 'COMPONENT_SET') {
+            addComponentSetWithRelations(node);
         }
-        catch (e) { }
+        else if (node.type === 'COMPONENT') {
+            addComponentWithRelations(node);
+        }
+        else if (node.type === 'INSTANCE') {
+            const main = node.mainComponent;
+            if (main) {
+                addComponentWithRelations(main);
+            }
+        }
+        let curr = node.parent;
+        while (curr && curr.type !== 'PAGE' && curr.type !== 'DOCUMENT') {
+            if (curr.type === 'COMPONENT_SET') {
+                addComponentSetWithRelations(curr);
+                break;
+            }
+            else if (curr.type === 'COMPONENT') {
+                addComponentWithRelations(curr);
+                break;
+            }
+            else if (curr.type === 'INSTANCE') {
+                const main = curr.mainComponent;
+                if (main) {
+                    addComponentWithRelations(main);
+                }
+                break;
+            }
+            curr = curr.parent;
+        }
+        if ('children' in node && (node.type === 'FRAME' || node.type === 'SECTION' || node.type === 'GROUP')) {
+            for (const child of node.children) {
+                inspectNode(child);
+            }
+        }
     }
-    if ('topLeftRadius' in node && 'setBoundVariable' in node) {
+    for (const n of nodes) {
+        inspectNode(n);
+    }
+    return targets;
+}
+function sanitizeComponentProperties(root) {
+    if (!root)
+        return 0;
+    const nodes = Array.isArray(root) ? root : [root];
+    const targets = collectComponentTargets(nodes);
+    let totalRenamed = 0;
+    for (const target of targets) {
+        if (!target)
+            continue;
+        // 1. If it's a ComponentSetNode, sanitize variant keys in all child variant names to camelCase and values to lowercase
+        if (target.type === 'COMPONENT_SET') {
+            for (const child of target.children) {
+                if (child.type === 'COMPONENT' && child.name) {
+                    const parts = child.name.split(',').map((part) => {
+                        const eqIdx = part.indexOf('=');
+                        if (eqIdx === -1) {
+                            return part.trim().toLowerCase();
+                        }
+                        const k = part.substring(0, eqIdx).trim();
+                        const v = part.substring(eqIdx + 1).trim();
+                        const camelK = toCamelCase(k);
+                        const lowerV = v.toLowerCase();
+                        return camelK ? `${camelK}=${lowerV}` : `${k}=${lowerV}`;
+                    });
+                    const newName = parts.join(', ');
+                    if (child.name !== newName) {
+                        child.name = newName;
+                        totalRenamed++;
+                    }
+                }
+            }
+        }
+        // 2. Edit component property definitions on ComponentSetNode or standalone ComponentNode
+        if (typeof target.editComponentProperty === 'function') {
+            // If it's a variant child of a set, don't edit directly - parent set owns the definitions
+            if (target.type === 'COMPONENT' && target.parent && target.parent.type === 'COMPONENT_SET') {
+                continue;
+            }
+            let changed = true;
+            let iterations = 0;
+            while (changed && iterations < 30) {
+                changed = false;
+                iterations++;
+                const defs = target.componentPropertyDefinitions;
+                if (!defs)
+                    break;
+                for (const propKey of Object.keys(defs)) {
+                    const def = defs[propKey];
+                    const rawName = propKey.split('#')[0].trim();
+                    const camelName = toCamelCase(rawName);
+                    const needsNameChange = camelName && camelName !== rawName;
+                    const needsValueChange = def &&
+                        def.type === 'VARIANT' &&
+                        typeof def.defaultValue === 'string' &&
+                        def.defaultValue !== def.defaultValue.toLowerCase();
+                    if (needsNameChange || needsValueChange) {
+                        const updatePayload = {};
+                        if (needsNameChange)
+                            updatePayload.name = camelName;
+                        if (needsValueChange)
+                            updatePayload.defaultValue = def.defaultValue.toLowerCase();
+                        let success = false;
+                        try {
+                            target.editComponentProperty(propKey, updatePayload);
+                            success = true;
+                        }
+                        catch (err1) {
+                            try {
+                                target.editComponentProperty(rawName, updatePayload);
+                                success = true;
+                            }
+                            catch (err2) {
+                                if (needsNameChange && updatePayload.defaultValue) {
+                                    try {
+                                        target.editComponentProperty(propKey, { name: camelName });
+                                        success = true;
+                                    }
+                                    catch (err3) {
+                                        try {
+                                            target.editComponentProperty(rawName, { name: camelName });
+                                            success = true;
+                                        }
+                                        catch (err4) {
+                                            console.warn(`Could not rename component property "${propKey}" to "${camelName}" on "${target.name}":`, err4);
+                                        }
+                                    }
+                                }
+                                else {
+                                    console.warn(`Could not rename component property "${propKey}" to "${camelName}" on "${target.name}":`, err2);
+                                }
+                            }
+                        }
+                        if (success) {
+                            totalRenamed++;
+                            changed = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return totalRenamed;
+}
+function sanitizeLayerNames(node) {
+    if (!node)
+        return;
+    if (node.type === 'INSTANCE') {
+        return;
+    }
+    if ('name' in node && typeof node.name === 'string') {
+        const rawName = node.name.trim();
+        if (rawName) {
+            const isVariantInSet = node.type === 'COMPONENT' && node.parent && node.parent.type === 'COMPONENT_SET';
+            if (!isVariantInSet) {
+                if (/^frame(\s*\d+)?$/i.test(rawName)) {
+                    node.name = 'container';
+                }
+                else {
+                    const lower = rawName.toLowerCase();
+                    if (node.name !== lower) {
+                        node.name = lower;
+                    }
+                }
+            }
+        }
+    }
+    if ('children' in node && node.children) {
+        for (const child of node.children) {
+            sanitizeLayerNames(child);
+        }
+    }
+}
+async function ensureTemporaryMetricsCollection() {
+    const localCollections = await figma.variables.getLocalVariableCollectionsAsync();
+    const allVars = await getAllRelevantVariablesForComponentSet();
+    // Check if DEFAULT settings exist (priority!)
+    const hasDefaultLayout = !!allVars.find((v) => isDefaultCollection(v.collectionName) && (v.variable.name === 'layout/base' || v.variable.name.endsWith('/layout/base')));
+    const hasDefaultRadius = !!allVars.find((v) => isDefaultCollection(v.collectionName) && (v.variable.name === 'radius/container/base' || v.variable.name.endsWith('/radius/container/base')));
+    const hasDefaultBorder = !!allVars.find((v) => isDefaultCollection(v.collectionName) && (v.variable.name === 'constant/one' || v.variable.name === 'constant/1' || v.variable.name.endsWith('/constant/one')));
+    const hasDefaultNone = !!allVars.find((v) => isDefaultCollection(v.collectionName) && (v.variable.name === 'constant/none' || v.variable.name === 'none' || v.variable.name.endsWith('/constant/none')));
+    const hasDefaultColor = !!allVars.find((v) => isDefaultCollection(v.collectionName) && (v.variable.name === 'outlineBase' || v.variable.name === 'outlineHighest' || v.variable.name.endsWith('outlineBase')));
+    // If default variable settings exist, we use them - do not create _metrics!
+    if (hasDefaultLayout && hasDefaultRadius && hasDefaultBorder && hasDefaultNone && hasDefaultColor) {
+        return;
+    }
+    // If default is missing, check if _metrics already exists locally
+    let targetCol = localCollections.find((c) => c.name === '_metrics' || c.name === '_temporary' || c.name === '_temp');
+    if (!targetCol) {
+        targetCol = localCollections.find((c) => c.name === 'metrics');
+    }
+    if (!targetCol) {
         try {
-            node.setBoundVariable('topLeftRadius', radiusVariable);
-            node.setBoundVariable('topRightRadius', radiusVariable);
-            node.setBoundVariable('bottomLeftRadius', radiusVariable);
-            node.setBoundVariable('bottomRightRadius', radiusVariable);
+            targetCol = figma.variables.createVariableCollection('_metrics');
         }
-        catch (e) { }
+        catch (e) {
+            console.warn('Could not create collection _metrics:', e);
+            if (localCollections.length > 0) {
+                targetCol = localCollections[0];
+            }
+            else {
+                return;
+            }
+        }
     }
+    const defaultModeId = targetCol.modes[0].modeId;
+    // Query variables in targetCol directly so we never throw duplicate errors
+    const existingVarsInCol = await Promise.all(targetCol.variableIds.map((id) => figma.variables.getVariableByIdAsync(id)));
+    const colVarMap = new Map();
+    for (const v of existingVarsInCol) {
+        if (v) {
+            colVarMap.set(v.name.toLowerCase(), v);
+        }
+    }
+    const ensureVar = (name, type, val, scopes, description) => {
+        const inCol = colVarMap.get(name.toLowerCase());
+        if (inCol)
+            return inCol;
+        const existing = allVars.find((v) => (v.variable.name === name ||
+            v.variable.name === `_metrics/${name}` ||
+            v.variable.name.endsWith(`/${name}`)) &&
+            isAllowedCollection(v.collectionName));
+        if (existing)
+            return existing.variable;
+        try {
+            const v = figma.variables.createVariable(name, targetCol, type);
+            v.setValueForMode(defaultModeId, val);
+            try {
+                if (scopes && scopes.length > 0) {
+                    v.scopes = scopes;
+                }
+            }
+            catch (scopeErr) {
+                console.warn(`Could not set scopes on ${name}:`, scopeErr);
+            }
+            if (description) {
+                v.description = description;
+            }
+            colVarMap.set(name.toLowerCase(), v);
+            return v;
+        }
+        catch (err) {
+            console.warn(`Could not create variable ${name}:`, err);
+            return undefined;
+        }
+    };
+    ensureVar('constant/none', 'FLOAT', 0, ['GAP', 'CORNER_RADIUS', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], 'Constant 0px');
+    ensureVar('constant/one', 'FLOAT', 1, ['STROKE_FLOAT', 'GAP', 'CORNER_RADIUS', 'WIDTH_HEIGHT'], 'Constant 1px border');
+    ensureVar('layout/base', 'FLOAT', 12, ['GAP'], 'Base spacing (12px)');
+    ensureVar('layout/large', 'FLOAT', 24, ['GAP'], 'Large spacing (24px)');
+    ensureVar('layout/massive', 'FLOAT', 56, ['GAP'], 'Massive spacing (56px)');
+    ensureVar('radius/container/base', 'FLOAT', 12, ['CORNER_RADIUS'], 'Base container radius (12px)');
+    ensureVar('radius/container/extraLarge', 'FLOAT', 32, ['CORNER_RADIUS'], 'Extra large container radius (32px)');
+    ensureVar('radius/container/huge', 'FLOAT', 40, ['CORNER_RADIUS'], 'Huge container radius (40px)');
+    ensureVar('radius/container/extraHuge', 'FLOAT', 48, ['CORNER_RADIUS'], 'Extra huge container radius (48px)');
+    ensureVar('outlineBase', 'COLOR', { r: 0.85, g: 0.85, b: 0.85, a: 1 }, ['STROKE_COLOR'], 'Baseline component outline');
+    ensureVar('surfaceBackground', 'COLOR', { r: 1, g: 1, b: 1, a: 1 }, ['FRAME_FILL'], 'Baseline surface background');
+    ensureVar('maxWidth/screen', 'FLOAT', 1440, ['WIDTH_HEIGHT'], 'Max screen width');
+    ensureVar('maxHeight/screen', 'FLOAT', 900, ['WIDTH_HEIGHT'], 'Max screen height');
 }
 async function setupComponentSets(nodes) {
-    const allVars = await getAllRelevantVariablesForComponentSet();
-    const metricsVars = allVars.filter((item) => item.collectionName.toLowerCase() === 'metrics');
-    const getMetricsVar = (varName) => {
-        let found = metricsVars.find((item) => item.variable.name === varName ||
-            item.variable.name === `metrics/${varName}` ||
-            item.variable.name.endsWith(`/${varName}`));
-        if (!found) {
-            found = allVars.find((item) => item.variable.name === `metrics/${varName}` ||
-                item.variable.name === varName ||
-                item.variable.name.endsWith(`/${varName}`));
-        }
-        return found ? found.variable : undefined;
-    };
-    const varGap = getMetricsVar('layout/base');
-    const varPadding = getMetricsVar('layout/base');
-    const varRadius = getMetricsVar('radius/container/base');
-    const varBorder = getMetricsVar('constant/one');
-    const varNone = getMetricsVar('constant/none');
-    const schemesVars = allVars.filter((item) => item.collectionName.toLowerCase() === 'schemes');
-    const foundBorderColor = schemesVars.find((item) => item.variable.name === 'outlineBase' ||
-        item.variable.name === 'schemes/outlineBase' ||
-        item.variable.name.endsWith('outlineBase') ||
-        item.variable.name === 'outlineHighest' ||
-        item.variable.name === 'schemes/outlineHighest' ||
-        item.variable.name.endsWith('outlineHighest')) ||
-        allVars.find((item) => item.variable.name === 'outlineBase' ||
-            item.variable.name.endsWith('outlineBase') ||
-            item.variable.name === 'outlineHighest' ||
-            item.variable.name.endsWith('outlineHighest'));
-    const varBorderColor = foundBorderColor ? foundBorderColor.variable : undefined;
-    if (!varGap || !varPadding || !varRadius || !varBorder || !varBorderColor) {
-        const missing = [];
-        if (!varGap)
-            missing.push('layout/base (metrics)');
-        if (!varPadding)
-            missing.push('layout/base (metrics)');
-        if (!varRadius)
-            missing.push('radius/container/base (metrics)');
-        if (!varBorder)
-            missing.push('constant/one (metrics)');
-        if (!varBorderColor)
-            missing.push('outlineBase / outlineHighest (schemes)');
-        figma.notify(`Missing variables: ${missing.join(', ')}.`, { error: true });
-        return;
+    await ensureTemporaryMetricsCollection();
+    let allVars = await getAllRelevantVariablesForComponentSet();
+    let varGap = findVariableWithPriority(allVars, 'layout/base', 'metrics');
+    let varPadding = findVariableWithPriority(allVars, 'layout/base', 'metrics');
+    let varRadius = findVariableWithPriority(allVars, 'radius/container/base', 'metrics');
+    let varBorder = findVariableWithPriority(allVars, 'constant/one', 'metrics') || findVariableWithPriority(allVars, 'constant/1', 'metrics');
+    let varNone = findVariableWithPriority(allVars, 'constant/none', 'metrics') || findVariableWithPriority(allVars, 'none', 'metrics') || findVariableWithPriority(allVars, 'constant/zero', 'metrics');
+    let varBorderColor = findColorVariableWithPriority(allVars, ['outlineBase', 'outlineHighest', 'outline']);
+    const varCollectionCache = new Map();
+    for (const item of allVars) {
+        varCollectionCache.set(item.variable.id, item.collectionName);
     }
     const ensureScope = (variable, requiredScope) => {
         if (variable.scopes.indexOf(requiredScope) === -1 &&
             variable.scopes.indexOf('ALL_SCOPES') === -1) {
-            variable.scopes = [...variable.scopes, requiredScope];
+            try {
+                variable.scopes = [...variable.scopes, requiredScope];
+            }
+            catch (e) { }
         }
     };
     try {
-        ensureScope(varGap, 'GAP');
-        ensureScope(varPadding, 'GAP');
-        ensureScope(varRadius, 'CORNER_RADIUS');
-        ensureScope(varBorder, 'STROKE_FLOAT');
+        if (varGap)
+            ensureScope(varGap, 'GAP');
+        if (varPadding)
+            ensureScope(varPadding, 'GAP');
+        if (varRadius)
+            ensureScope(varRadius, 'CORNER_RADIUS');
+        if (varBorder)
+            ensureScope(varBorder, 'STROKE_FLOAT');
         if (varNone) {
             ensureScope(varNone, 'GAP');
             ensureScope(varNone, 'CORNER_RADIUS');
@@ -808,25 +1344,21 @@ async function setupComponentSets(nodes) {
     const errors = [];
     for (const node of nodes) {
         cleanHiddenWhiteFills(node);
-        if ('name' in node && typeof node.name === 'string') {
-            if (/^frame(\s*\d+)?$/i.test(node.name.trim())) {
-                node.name = 'container';
-            }
-            else {
-                const lower = node.name.toLowerCase();
-                if (node.name !== lower) {
-                    node.name = lower;
-                }
-            }
-        }
-        if (node.layoutMode === 'NONE') {
-            node.layoutMode = 'HORIZONTAL';
-            node.layoutWrap = 'WRAP';
-            node.primaryAxisSizingMode = 'AUTO';
-            node.counterAxisSizingMode = 'AUTO';
-            node.fills = [];
-        }
+        sanitizeComponentProperties(node);
+        sanitizeLayerNames(node);
+        // Strip any foreign variables on this component set and its nested layers
+        await stripForeignVariablesFromNode(node, varCollectionCache, {
+            varNone,
+            varBorderColor,
+        });
+        node.layoutMode = 'HORIZONTAL';
+        node.layoutWrap = 'WRAP';
+        node.primaryAxisSizingMode = 'AUTO';
+        node.counterAxisSizingMode = 'AUTO';
+        node.fills = [];
         const safeBind = (prop, variable) => {
+            if (!variable)
+                return;
             try {
                 node.setBoundVariable(prop, variable);
             }
@@ -840,31 +1372,44 @@ async function setupComponentSets(nodes) {
         safeBind('paddingBottom', varPadding);
         safeBind('paddingLeft', varPadding);
         safeBind('paddingRight', varPadding);
-        safeBind('topLeftRadius', varRadius);
-        safeBind('topRightRadius', varRadius);
-        safeBind('bottomLeftRadius', varRadius);
-        safeBind('bottomRightRadius', varRadius);
+        if (varRadius) {
+            try {
+                node.setBoundVariable('cornerRadius', varRadius);
+            }
+            catch (err) {
+                safeBind('topLeftRadius', varRadius);
+                safeBind('topRightRadius', varRadius);
+                safeBind('bottomLeftRadius', varRadius);
+                safeBind('bottomRightRadius', varRadius);
+            }
+        }
         if ('cornerSmoothing' in node) {
             node.cornerSmoothing = 0.6;
         }
         try {
             node.dashPattern = [4, 4];
-            node.strokes = [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }];
-            const newStrokes = [...node.strokes].map((paint) => {
-                if (paint.type === 'SOLID') {
-                    return figma.variables.setBoundVariableForPaint(paint, 'color', varBorderColor);
-                }
-                return paint;
-            });
-            node.strokes = newStrokes;
-            safeBind('strokeWeight', varBorder);
+            node.strokes = [{ type: 'SOLID', color: { r: 0.85, g: 0.85, b: 0.85 } }];
+            if (varBorderColor) {
+                const newStrokes = [...node.strokes].map((paint) => {
+                    if (paint.type === 'SOLID') {
+                        return figma.variables.setBoundVariableForPaint(paint, 'color', varBorderColor);
+                    }
+                    return paint;
+                });
+                node.strokes = newStrokes;
+            }
+            if (varBorder) {
+                safeBind('strokeWeight', varBorder);
+            }
         }
         catch (e) {
             errors.push(`${node.name} [strokes] -> ${e.message}`);
         }
-        // Ensure all child variants have Auto Layout configured
+        // Ensure all child variants have Auto Layout configured and variables checked
         for (const child of node.children) {
             cleanHiddenWhiteFills(child);
+            sanitizeComponentProperties(child);
+            sanitizeLayerNames(child);
             if (child.type === 'COMPONENT') {
                 if (child.layoutMode === 'NONE') {
                     try {
@@ -879,14 +1424,14 @@ async function setupComponentSets(nodes) {
                 if (varNone) {
                     try {
                         if (child.layoutMode !== 'NONE') {
-                            bindIfNotBound(child, 'itemSpacing', varNone);
-                            bindIfNotBound(child, 'counterAxisSpacing', varNone);
-                            bindIfNotBound(child, 'paddingTop', varNone);
-                            bindIfNotBound(child, 'paddingBottom', varNone);
-                            bindIfNotBound(child, 'paddingLeft', varNone);
-                            bindIfNotBound(child, 'paddingRight', varNone);
+                            await bindOrReplaceField(child, 'itemSpacing', varNone, varCollectionCache);
+                            await bindOrReplaceField(child, 'counterAxisSpacing', varNone, varCollectionCache);
+                            await bindOrReplaceField(child, 'paddingTop', varNone, varCollectionCache);
+                            await bindOrReplaceField(child, 'paddingBottom', varNone, varCollectionCache);
+                            await bindOrReplaceField(child, 'paddingLeft', varNone, varCollectionCache);
+                            await bindOrReplaceField(child, 'paddingRight', varNone, varCollectionCache);
                         }
-                        bindRadiusIfNotBound(child, varNone);
+                        await bindRadiusOrReplaceForeign(child, varNone, varCollectionCache);
                         if ('cornerSmoothing' in child) {
                             child.cornerSmoothing = 0.6;
                         }
@@ -907,80 +1452,32 @@ async function setupComponentSets(nodes) {
     }
 }
 async function applyVariantMetrics(selection) {
-    const allVars = await getAllRelevantVariablesForComponentSet();
-    const metricsVars = allVars.filter((item) => item.collectionName.toLowerCase() === 'metrics');
-    const getMetricsVar = (varName) => {
-        let found = metricsVars.find((item) => item.variable.name === varName ||
-            item.variable.name === `metrics/${varName}` ||
-            item.variable.name.endsWith(`/${varName}`));
-        if (!found) {
-            found = allVars.find((item) => item.variable.name === `metrics/${varName}` ||
-                item.variable.name === varName ||
-                item.variable.name.endsWith(`/${varName}`));
-        }
-        return found ? found.variable : undefined;
-    };
-    const varNone = getMetricsVar('constant/none') || getMetricsVar('none') || getMetricsVar('constant/zero') || getMetricsVar('zero');
-    const varLayoutBase = getMetricsVar('layout/base');
-    const varLayoutMassive = getMetricsVar('layout/massive');
-    const varLayoutLarge = getMetricsVar('layout/large');
-    const varRadiusBase = getMetricsVar('radius/container/base');
-    const varRadiusExtraHuge = getMetricsVar('radius/container/extraHuge');
-    const varRadiusExtraLarge = getMetricsVar('radius/container/extraLarge');
-    const varRadiusHuge = getMetricsVar('radius/container/huge') || getMetricsVar('radius/huge');
-    const varBorderOne = getMetricsVar('constant/one');
-    const schemesVars = allVars.filter((item) => item.collectionName.toLowerCase() === 'schemes');
-    const foundOutlineBase = schemesVars.find((item) => item.variable.name === 'outlineBase' ||
-        item.variable.name === 'schemes/outlineBase' ||
-        item.variable.name.endsWith('outlineBase') ||
-        item.variable.name === 'outlineHighest' ||
-        item.variable.name === 'schemes/outlineHighest' ||
-        item.variable.name.endsWith('outlineHighest')) ||
-        allVars.find((item) => item.variable.name === 'outlineBase' ||
-            item.variable.name.endsWith('outlineBase') ||
-            item.variable.name === 'outlineHighest' ||
-            item.variable.name.endsWith('outlineHighest'));
-    const varOutlineBase = foundOutlineBase ? foundOutlineBase.variable : undefined;
-    const foundSurfaceBackground = schemesVars.find((item) => item.variable.name === 'surfaceBackground' ||
-        item.variable.name === 'schemes/surfaceBackground' ||
-        item.variable.name.endsWith('surfaceBackground') ||
-        item.variable.name === 'background' ||
-        item.variable.name === 'schemes/background' ||
-        item.variable.name.endsWith('background')) ||
-        allVars.find((item) => item.variable.name === 'surfaceBackground' ||
-            item.variable.name.endsWith('surfaceBackground') ||
-            item.variable.name === 'background' ||
-            item.variable.name.endsWith('background'));
-    const varSurfaceBackground = foundSurfaceBackground ? foundSurfaceBackground.variable : undefined;
-    const layoutVars = allVars.filter((item) => item.collectionName.toLowerCase() === 'layout' || item.collectionName.toLowerCase() === '_layout');
-    const getLayoutVar = (varName) => {
-        let found = layoutVars.find((item) => item.variable.name === varName ||
-            item.variable.name === `layout/${varName}` ||
-            item.variable.name === `_layout/${varName}` ||
-            item.variable.name.endsWith(`/${varName}`));
-        if (!found) {
-            found = allVars.find((item) => item.variable.name === varName ||
-                item.variable.name === `layout/${varName}` ||
-                item.variable.name === `_layout/${varName}` ||
-                item.variable.name.endsWith(`/${varName}`));
-        }
-        return found ? found.variable : undefined;
-    };
-    const varMaxWidthScreen = getLayoutVar('maxWidth/screen');
-    const varMaxHeightScreen = getLayoutVar('maxHeight/screen');
-    if (!varLayoutBase || !varRadiusBase) {
-        const missing = [];
-        if (!varLayoutBase)
-            missing.push('layout/base (metrics)');
-        if (!varRadiusBase)
-            missing.push('radius/container/base (metrics)');
-        figma.notify(`Missing variables: ${missing.join(', ')}.`, { error: true });
-        return;
+    await ensureTemporaryMetricsCollection();
+    let allVars = await getAllRelevantVariablesForComponentSet();
+    let varNone = findVariableWithPriority(allVars, 'constant/none', 'metrics') || findVariableWithPriority(allVars, 'none', 'metrics') || findVariableWithPriority(allVars, 'constant/zero', 'metrics');
+    let varLayoutBase = findVariableWithPriority(allVars, 'layout/base', 'metrics');
+    let varLayoutMassive = findVariableWithPriority(allVars, 'layout/massive', 'metrics');
+    let varLayoutLarge = findVariableWithPriority(allVars, 'layout/large', 'metrics');
+    let varRadiusBase = findVariableWithPriority(allVars, 'radius/container/base', 'metrics');
+    let varRadiusExtraHuge = findVariableWithPriority(allVars, 'radius/container/extraHuge', 'metrics');
+    let varRadiusExtraLarge = findVariableWithPriority(allVars, 'radius/container/extraLarge', 'metrics');
+    let varRadiusHuge = findVariableWithPriority(allVars, 'radius/container/huge', 'metrics');
+    let varBorderOne = findVariableWithPriority(allVars, 'constant/one', 'metrics') || findVariableWithPriority(allVars, 'constant/1', 'metrics');
+    let varOutlineBase = findColorVariableWithPriority(allVars, ['outlineBase', 'outlineHighest', 'outline']);
+    let varSurfaceBackground = findColorVariableWithPriority(allVars, ['surfaceBackground', 'background', 'surface']);
+    let varMaxWidthScreen = findVariableWithPriority(allVars, 'maxWidth/screen', 'layout');
+    let varMaxHeightScreen = findVariableWithPriority(allVars, 'maxHeight/screen', 'layout');
+    const varCollectionCache = new Map();
+    for (const item of allVars) {
+        varCollectionCache.set(item.variable.id, item.collectionName);
     }
     const ensureScope = (variable, requiredScope) => {
         if (variable.scopes.indexOf(requiredScope) === -1 &&
             variable.scopes.indexOf('ALL_SCOPES') === -1) {
-            variable.scopes = [...variable.scopes, requiredScope];
+            try {
+                variable.scopes = [...variable.scopes, requiredScope];
+            }
+            catch (e) { }
         }
     };
     try {
@@ -1013,17 +1510,14 @@ async function applyVariantMetrics(selection) {
     let count = 0;
     for (const node of selection) {
         cleanHiddenWhiteFills(node);
-        if ('name' in node && typeof node.name === 'string') {
-            if (/^frame(\s*\d+)?$/i.test(node.name.trim())) {
-                node.name = 'container';
-            }
-            else {
-                const lower = node.name.toLowerCase();
-                if (node.name !== lower) {
-                    node.name = lower;
-                }
-            }
-        }
+        sanitizeComponentProperties(node);
+        sanitizeLayerNames(node);
+        // Strip foreign variables from this node and all sublayers
+        await stripForeignVariablesFromNode(node, varCollectionCache, {
+            varNone,
+            varBorderColor: varOutlineBase,
+            varSurfaceBackground,
+        });
         const isFigmaSection = node.type === 'SECTION';
         const isFrameSection = node.type === 'FRAME' && node.name.trim().toLowerCase() === 'section';
         const isMainLayer = node.type === 'FRAME' && node.name.trim().toLowerCase() === 'main';
@@ -1032,10 +1526,10 @@ async function applyVariantMetrics(selection) {
         if (isFigmaSection) {
             const radiusToUse = varRadiusExtraHuge || varRadiusBase;
             try {
-                if ('setBoundVariable' in node) {
+                if ('setBoundVariable' in node && radiusToUse) {
                     node.setBoundVariable('cornerRadius', radiusToUse);
                 }
-                if ('topLeftRadius' in node) {
+                if ('topLeftRadius' in node && radiusToUse) {
                     node.setBoundVariable('topLeftRadius', radiusToUse);
                     node.setBoundVariable('topRightRadius', radiusToUse);
                     node.setBoundVariable('bottomLeftRadius', radiusToUse);
@@ -1069,7 +1563,7 @@ async function applyVariantMetrics(selection) {
         else if (isFrameSection) {
             try {
                 const layoutToUse = varLayoutMassive || varLayoutBase;
-                if ('layoutMode' in node && node.layoutMode !== 'NONE') {
+                if ('layoutMode' in node && node.layoutMode !== 'NONE' && layoutToUse) {
                     node.setBoundVariable('itemSpacing', layoutToUse);
                     node.setBoundVariable('counterAxisSpacing', layoutToUse);
                     node.setBoundVariable('paddingTop', layoutToUse);
@@ -1121,7 +1615,7 @@ async function applyVariantMetrics(selection) {
                     node.setBoundVariable('paddingRight', varNone);
                 }
                 const radiusToUse = varRadiusExtraLarge || varRadiusBase;
-                if ('topLeftRadius' in node) {
+                if ('topLeftRadius' in node && radiusToUse) {
                     node.setBoundVariable('topLeftRadius', radiusToUse);
                     node.setBoundVariable('topRightRadius', radiusToUse);
                     node.setBoundVariable('bottomLeftRadius', radiusToUse);
@@ -1150,7 +1644,7 @@ async function applyVariantMetrics(selection) {
         else if (isComponentLayer) {
             try {
                 const gapToUse = varLayoutLarge || varLayoutBase;
-                if ('layoutMode' in node && node.layoutMode !== 'NONE') {
+                if ('layoutMode' in node && node.layoutMode !== 'NONE' && gapToUse) {
                     node.setBoundVariable('itemSpacing', gapToUse);
                     node.setBoundVariable('counterAxisSpacing', gapToUse);
                     if (varNone) {
@@ -1245,14 +1739,14 @@ async function applyVariantMetrics(selection) {
                 }
                 if (varNone) {
                     if ('layoutMode' in node && node.layoutMode !== 'NONE') {
-                        bindIfNotBound(node, 'itemSpacing', varNone);
-                        bindIfNotBound(node, 'counterAxisSpacing', varNone);
-                        bindIfNotBound(node, 'paddingTop', varNone);
-                        bindIfNotBound(node, 'paddingBottom', varNone);
-                        bindIfNotBound(node, 'paddingLeft', varNone);
-                        bindIfNotBound(node, 'paddingRight', varNone);
+                        await bindOrReplaceField(node, 'itemSpacing', varNone, varCollectionCache);
+                        await bindOrReplaceField(node, 'counterAxisSpacing', varNone, varCollectionCache);
+                        await bindOrReplaceField(node, 'paddingTop', varNone, varCollectionCache);
+                        await bindOrReplaceField(node, 'paddingBottom', varNone, varCollectionCache);
+                        await bindOrReplaceField(node, 'paddingLeft', varNone, varCollectionCache);
+                        await bindOrReplaceField(node, 'paddingRight', varNone, varCollectionCache);
                     }
-                    bindRadiusIfNotBound(node, varNone);
+                    await bindRadiusOrReplaceForeign(node, varNone, varCollectionCache);
                     if ('cornerSmoothing' in node) {
                         node.cornerSmoothing = 0.6;
                     }
@@ -1267,16 +1761,16 @@ async function applyVariantMetrics(selection) {
             try {
                 if ('layoutMode' in node && node.layoutMode !== 'NONE') {
                     if (varNone) {
-                        bindIfNotBound(node, 'itemSpacing', varNone);
-                        bindIfNotBound(node, 'counterAxisSpacing', varNone);
-                        bindIfNotBound(node, 'paddingTop', varNone);
-                        bindIfNotBound(node, 'paddingBottom', varNone);
-                        bindIfNotBound(node, 'paddingLeft', varNone);
-                        bindIfNotBound(node, 'paddingRight', varNone);
+                        await bindOrReplaceField(node, 'itemSpacing', varNone, varCollectionCache);
+                        await bindOrReplaceField(node, 'counterAxisSpacing', varNone, varCollectionCache);
+                        await bindOrReplaceField(node, 'paddingTop', varNone, varCollectionCache);
+                        await bindOrReplaceField(node, 'paddingBottom', varNone, varCollectionCache);
+                        await bindOrReplaceField(node, 'paddingLeft', varNone, varCollectionCache);
+                        await bindOrReplaceField(node, 'paddingRight', varNone, varCollectionCache);
                     }
                 }
                 if (varNone) {
-                    bindRadiusIfNotBound(node, varNone);
+                    await bindRadiusOrReplaceForeign(node, varNone, varCollectionCache);
                     if ('cornerSmoothing' in node) {
                         node.cornerSmoothing = 0.6;
                     }
@@ -1296,6 +1790,8 @@ async function runComponentSetLogic() {
         figma.notify('Please select something on the canvas to configure Component Set.', { error: true });
         return;
     }
+    // Pre-emptively ensure temporary collection with metrics and baseline tokens if variables are missing
+    await ensureTemporaryMetricsCollection();
     // 1. Identify standalone components that are not already part of a component set
     const standaloneComponents = selection.filter((node) => node.type === 'COMPONENT' && (!node.parent || node.parent.type !== 'COMPONENT_SET'));
     const newlyCreatedComponentSets = [];
@@ -1324,9 +1820,17 @@ async function runComponentSetLogic() {
             figma.notify(`Could not convert "${comp.name}" to Component Set: ${err.message}`, { error: true });
         }
     }
-    // 2. Existing component sets selected directly
-    const existingComponentSets = selection.filter((node) => node.type === 'COMPONENT_SET');
-    const allComponentSets = [...existingComponentSets, ...newlyCreatedComponentSets];
+    // 2. Existing component sets selected directly or via child variant
+    const existingComponentSets = new Set();
+    for (const node of selection) {
+        if (node.type === 'COMPONENT_SET') {
+            existingComponentSets.add(node);
+        }
+        else if (node.type === 'COMPONENT' && node.parent && node.parent.type === 'COMPONENT_SET') {
+            existingComponentSets.add(node.parent);
+        }
+    }
+    const allComponentSets = [...Array.from(existingComponentSets), ...newlyCreatedComponentSets];
     if (allComponentSets.length > 0) {
         await setupComponentSets(allComponentSets);
     }
@@ -1336,9 +1840,32 @@ async function runComponentSetLogic() {
     if (nodesToApplyVariantMetrics.length > 0) {
         await applyVariantMetrics(nodesToApplyVariantMetrics);
     }
+    // 4. Sanitize component properties and layer names on all affected sets and nodes
+    for (const cs of allComponentSets) {
+        sanitizeComponentProperties(cs);
+        sanitizeLayerNames(cs);
+    }
+    for (const n of selection) {
+        sanitizeComponentProperties(n);
+        sanitizeLayerNames(n);
+    }
     // If new component sets were created, select them and update UI inspector
     if (newlyCreatedComponentSets.length > 0) {
         figma.currentPage.selection = allComponentSets;
+        await sendSelectionToUI();
+    }
+    else {
+        // Re-trigger selection to force Figma inspector panel to refresh property names immediately
+        try {
+            const currentSelection = [...figma.currentPage.selection];
+            if (currentSelection.length > 0) {
+                figma.currentPage.selection = [];
+                figma.currentPage.selection = currentSelection;
+            }
+        }
+        catch (e) {
+            // ignore
+        }
         await sendSelectionToUI();
     }
 }
