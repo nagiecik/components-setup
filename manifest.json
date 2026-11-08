@@ -1,9 +1,22 @@
 {
-  "name": "Components Setup",
+  "name": "Components Setup & DS Generator",
   "id": "components-setup",
   "api": "1.0.0",
   "main": "code.js",
-  "ui": "ui.html",
+  "ui": {
+    "components": "ui.html",
+    "generator": "ui-generator.html"
+  },
+  "menu": [
+    {
+      "name": "Components Setup",
+      "command": "components"
+    },
+    {
+      "name": "Design System Generator",
+      "command": "generator"
+    }
+  ],
   "capabilities": [],
   "permissions": [
     "teamlibrary"
@@ -17,8 +30,13 @@
       "https://generativelanguage.googleapis.com",
       "https://accounts.google.com",
       "https://oauth2.googleapis.com",
-      "https://aistudio.google.com"
+      "https://aistudio.google.com",
+      "https://api.groq.com"
     ],
-    "reasoning": "Google Gemini AI description generation and model discovery"
+    "devAllowedDomains": [
+      "http://localhost:3050",
+      "http://localhost:4055"
+    ],
+    "reasoning": "Google Gemini AI description generation and local development bridges"
   }
 }

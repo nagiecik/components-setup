@@ -4,11 +4,25 @@
   "description": "Figma plugin for Component Set setup, canvas arrangement, and variable inspection",
   "main": "code.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "watch": "tsc -p tsconfig.json --watch"
+    "build": "node build.js",
+    "watch": "node build.js --watch",
+    "typecheck": "tsc --noEmit",
+    "bridge": "node bridge/server.js",
+    "bridge:silent": "wscript bridge/start-silent.vbs",
+    "autostart": "node bridge/register-autostart.js",
+    "figma:push": "node bridge/cli.js push",
+    "figma:pull": "node bridge/cli.js pull",
+    "figma:status": "node bridge/cli.js status",
+    "figma:lint": "node bridge/cli.js lint",
+    "remote": "\"%LOCALAPPDATA%\\agy\\bin\\agy.exe\" --remote-control"
   },
   "devDependencies": {
     "@figma/plugin-typings": "*",
+    "esbuild": "^0.28.2",
     "typescript": "^5.3.2"
+  },
+  "dependencies": {
+    "chokidar": "^5.0.0",
+    "ws": "^8.21.3"
   }
 }

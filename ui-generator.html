@@ -1,0 +1,3623 @@
+<!doctype html>
+<html>
+
+<head>
+  <style>
+    /* --- GŁÓWNY STYL (FIGMA UI3 / RAYCAST DARK) --- */
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: #18181B;
+      color: #F4F4F5;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      letter-spacing: -0.01em;
+    }
+
+    .launcher-top-bar {
+      padding: 12px 14px 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+      background: #18181B;
+      flex-shrink: 0;
+    }
+
+    .mode-switcher-segmented {
+      display: flex;
+      gap: 4px;
+      background: #141417;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      padding: 3px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .mode-switcher-btn {
+      flex: 1;
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: none;
+      background: transparent;
+      color: #8E8E93;
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+
+    .mode-switcher-btn:hover:not(.active) {
+      color: #F4F4F5;
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .mode-switcher-btn.active {
+      background: #2E2E34;
+      color: #FFFFFF;
+      font-weight: 600;
+      cursor: default;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    }
+
+    .launcher-brand-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .launcher-brand {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .brand-icon {
+      font-size: 13px;
+      color: #F04248;
+    }
+
+    .brand-name {
+      font-size: 12px;
+      font-weight: 700;
+      color: #F4F4F5;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-version {
+      font-size: 9px;
+      font-weight: 600;
+      color: #71717A;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+
+    .launcher-status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      font-weight: 600;
+      color: #A1A1AA;
+      background: rgba(255, 255, 255, 0.04);
+      padding: 2px 7px;
+      border-radius: 9999px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .status-dot.online {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #10B981;
+      box-shadow: 0 0 6px rgba(16, 185, 129, 0.4);
+      display: inline-block;
+    }
+
+    .generator-scroll-area {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+
+    .generator-scroll-area *,
+    .generator-sticky-footer * {
+      box-sizing: border-box;
+      min-width: 0;
+    }
+
+    .ds-section-header {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 7px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .ds-section-blue {
+      color: #38BDF8;
+    }
+
+    .ds-section-amber {
+      color: #C084FC;
+    }
+
+    /* --- BENTO CARDS (TYPOGRAPHY & SPACING SCALE) --- */
+    .ds-scale-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      width: 100%;
+      box-sizing: border-box;
+      min-width: 0;
+    }
+
+    .ds-fonts-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      width: 100%;
+      margin-top: 8px;
+      box-sizing: border-box;
+      min-width: 0;
+    }
+
+    .ds-param-bento {
+      background: #202024;
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 8px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: border-color 0.15s ease, background-color 0.15s ease;
+      min-width: 0;
+      box-sizing: border-box;
+    }
+
+    .ds-param-bento:hover {
+      border-color: rgba(59, 130, 246, 0.4);
+      background: #242429;
+    }
+
+    .ds-param-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .ds-param-icon-box {
+      width: 26px;
+      height: 26px;
+      min-width: 26px;
+      min-height: 26px;
+      border-radius: 6px;
+      background: rgba(59, 130, 246, 0.12);
+      color: #60A5FA;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .ds-param-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .ds-param-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #F4F4F5;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .ds-param-desc {
+      font-size: 9px;
+      color: #71717A;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .bento-select,
+    select.bento-select,
+    select.font-select {
+      width: 100%;
+      height: 28px;
+      background: #141417;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+      padding: 0 8px;
+      font-size: 11px;
+      font-weight: 500;
+      color: #E4E4E7;
+      outline: none;
+      box-sizing: border-box;
+      min-width: 0;
+      text-overflow: ellipsis;
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2371717A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+      padding-right: 22px;
+      transition: border-color 0.15s ease, background-color 0.15s ease;
+      font-family: inherit;
+    }
+
+    .bento-select:focus,
+    select.bento-select:focus,
+    select.font-select:focus {
+      border-color: #3B82F6;
+      background-color: #18181D;
+    }
+
+    .font-weights-subrow {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      width: 100%;
+      box-sizing: border-box;
+      min-width: 0;
+    }
+
+    /* --- BENTO CARDS (SYSTEM COLORS & SEED PALETTE) --- */
+    .ds-colors-bento-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      width: 100%;
+      box-sizing: border-box;
+      min-width: 0;
+    }
+
+    .color-bento-card {
+      background: #202024;
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 8px;
+      padding: 8px 10px;
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: center !important;
+      gap: 10px !important;
+      margin-bottom: 0 !important;
+      box-sizing: border-box;
+      transition: border-color 0.15s ease, background-color 0.15s ease;
+      min-width: 0;
+      position: relative;
+    }
+
+    .color-bento-card:hover {
+      border-color: rgba(192, 132, 252, 0.4);
+      background: #242429;
+    }
+
+    .color-swatch {
+      width: 32px !important;
+      height: 32px !important;
+      min-width: 32px !important;
+      min-height: 32px !important;
+      border-radius: 7px !important;
+      border: 1px solid rgba(255, 255, 255, 0.18) !important;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+      flex-shrink: 0;
+      cursor: pointer;
+      transition: transform 0.12s ease, border-color 0.12s ease;
+      box-sizing: border-box;
+    }
+
+    .color-swatch:hover {
+      transform: scale(1.06);
+      border-color: #FFFFFF !important;
+    }
+
+    .color-meta-col {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .color-top-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .color-role-label {
+      font-size: 9px;
+      font-weight: 600;
+      color: #71717A;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      line-height: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .color-hex-preview {
+      font-size: 9px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      color: #A1A1AA;
+      background: #141417;
+      padding: 1px 5px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      line-height: 1.2;
+      flex-shrink: 0;
+    }
+
+    .color-name-input {
+      font-size: 12px !important;
+      font-weight: 600 !important;
+      color: #F4F4F5 !important;
+      background: transparent !important;
+      border: none !important;
+      border-bottom: 1px solid transparent !important;
+      outline: none !important;
+      padding: 1px 0 !important;
+      margin: 0 !important;
+      width: 100% !important;
+      min-width: 0 !important;
+      line-height: 1.2 !important;
+      transition: border-color 0.15s ease;
+      font-family: inherit;
+    }
+
+    .color-name-input:focus {
+      border-bottom-color: #3B82F6 !important;
+      background: transparent !important;
+    }
+
+    /* --- STICKY FOOTER BAR & ADVANCED OPTIONS --- */
+    .generator-sticky-footer {
+      background: #18181B;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 12px 16px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      box-sizing: border-box;
+      width: 100%;
+    }
+
+    .advanced-accordion-btn {
+      height: 34px;
+      background: #202024;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      width: 100%;
+      color: #D4D4D8;
+      font-size: 11px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      cursor: pointer;
+      box-sizing: border-box;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+
+    .advanced-accordion-btn:hover {
+      background: #27272C;
+      color: #FFFFFF;
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .footer-actions-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 8px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .cta-generate-btn {
+      height: 36px;
+      background: linear-gradient(180deg, #3B82F6 0%, #2563EB 100%);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      color: #FFFFFF;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+      transition: all 0.15s ease;
+      font-family: inherit;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .cta-generate-btn:hover {
+      background: linear-gradient(180deg, #60A5FA 0%, #3B82F6 100%);
+    }
+
+    .secondary-export-btn {
+      height: 36px;
+      background: #26262B;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      color: #E4E4E7;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+      font-family: inherit;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .secondary-export-btn:hover {
+      background: #303036;
+      color: #FFFFFF;
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    #bridge-status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #141417;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 10px;
+      color: #8E8E93;
+      width: 100%;
+      box-sizing: border-box;
+      gap: 8px;
+    }
+
+    #bridge-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #71717A;
+      display: inline-block;
+      flex-shrink: 0;
+      transition: all 0.2s ease;
+    }
+
+    #bridge-text {
+      font-size: 10px;
+      color: #8E8E93;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #bridge-refresh-btn {
+      background: #26262B;
+      color: #60A5FA;
+      border: 1px solid rgba(96, 165, 250, 0.25);
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+      font-family: inherit;
+    }
+
+    #bridge-refresh-btn:hover {
+      background: #2E3340;
+      border-color: #60A5FA;
+      color: #93C5FD;
+    }
+
+    h3 {
+      margin: 14px 0 8px 0;
+      font-size: 10px;
+      color: #71717A;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 700;
+    }
+
+    h2 {
+      margin-top: 0;
+      font-size: 16px;
+      margin-bottom: 16px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: #ffffff;
+    }
+
+    .row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 20px;
+      align-items: stretch;
+    }
+
+    .row-label {
+      width: 100%;
+      font-size: 11px;
+      color: #aaa;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 2px;
+    }
+
+    .row-content {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    input[type="text"],
+    input[type="number"] {
+      flex-grow: 1;
+      padding: 10px 12px;
+      border: 1px solid #333;
+      background-color: #2c2c2c;
+      border-radius: 6px;
+      font-size: 14px;
+      color: #fff;
+      transition: all 0.2s;
+    }
+
+    input[type="text"]:focus,
+    input[type="number"]:focus {
+      outline: none;
+      border-color: #18a0fb;
+      background-color: #383838;
+    }
+
+    input[type="text"]::placeholder,
+    input[type="number"]::placeholder {
+      color: #555;
+      font-size: 12px;
+    }
+
+    .twin-inputs {
+      display: flex;
+      gap: 8px;
+      flex-grow: 1;
+    }
+
+    .twin-inputs input {
+      width: 40%;
+    }
+
+    .triple-inputs {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      flex-grow: 1;
+      width: 100%;
+    }
+
+    .unit {
+      font-size: 13px;
+      color: #888;
+      font-weight: 500;
+      min-width: 20px;
+      display: none;
+      /* Replaced by unit-tag */
+    }
+
+    .input-with-unit {
+      position: relative;
+      display: flex;
+      align-items: center;
+      flex-grow: 1;
+    }
+
+    .input-with-unit input {
+      padding-right: 32px !important;
+      width: 100%;
+    }
+
+    .unit-tag {
+      position: absolute;
+      right: 12px;
+      color: #666;
+      font-size: 11px;
+      font-weight: 600;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .field-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex-grow: 1;
+    }
+
+    .field-sublabel {
+      font-size: 9px;
+      color: #777;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    select.style-select {
+      padding: 2px 4px;
+      font-size: 10px;
+      border-radius: 4px;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+      height: 24px;
+    }
+
+    button.primary-btn {
+      background: #18a0fb;
+      color: white;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+      width: 100%;
+      font-weight: 600;
+      margin-top: 12px;
+      font-size: 14px;
+    }
+
+    button.primary-btn:hover {
+      background: #0d8adb;
+    }
+
+    button.secondary-btn {
+      background: #252525;
+      color: #ccc;
+      border: 1px solid #3c3c3c;
+      padding: 11px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 500;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      margin-top: 20px;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+
+    button.secondary-btn:hover {
+      background: #333333;
+      color: #fff;
+      border-color: #555;
+    }
+
+    .separator {
+      border-bottom: 1px solid #333;
+      margin: 20px 0;
+    }
+
+    /* --- MODALS --- */
+    #picker-modal, #advanced-modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.75);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(4px);
+    }
+
+    .advanced-content {
+      background: #1e1e1e;
+      color: white;
+      padding: 22px 24px;
+      border-radius: 16px;
+      width: 580px;
+      max-width: 92%;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+      border: 1px solid #333;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-sizing: border-box;
+    }
+
+    .modal-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #333;
+    }
+
+    .modal-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #eee;
+    }
+
+    .modal-close-btn {
+      background: transparent;
+      border: none;
+      color: #888;
+      font-size: 18px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 4px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    .modal-close-btn:hover {
+      background: #333;
+      color: #fff;
+    }
+
+    .modal-section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 20px;
+      margin-bottom: 12px;
+    }
+
+    .small-btn {
+      background: #252525;
+      color: #58a6ff;
+      border: 1px solid #3c3c3c;
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+
+    .small-btn:hover {
+      background: #333333;
+      border-color: #58a6ff;
+      color: #79b8ff;
+    }
+
+    .gradient-card {
+      background: #171717;
+      border: 1px solid #2d2d2d;
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .gradient-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      gap: 8px;
+    }
+
+    .gradient-name-input {
+      background: #222;
+      border: 1px solid #383838;
+      color: #eee;
+      padding: 5px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      flex-grow: 1;
+      font-weight: 500;
+    }
+
+    .gradient-preview-bar {
+      height: 26px;
+      border-radius: 6px;
+      border: 1px solid #333;
+      margin-bottom: 10px;
+      box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);
+    }
+
+    .grad-controls-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 10px;
+      align-items: end;
+    }
+
+    .grad-control-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .grad-control-label {
+      font-size: 10px;
+      color: #888;
+      font-weight: 500;
+    }
+
+    .grad-mode-select, .grad-control-input {
+      background: #222;
+      border: 1px solid #383838;
+      color: #eee;
+      padding: 4px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .grad-control-input {
+      padding-right: 16px;
+      text-align: right;
+      font-family: monospace;
+    }
+
+    .stops-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .stop-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #1e1e1e;
+      padding: 5px 8px;
+      border-radius: 6px;
+      border: 1px solid #282828;
+    }
+
+    .stop-label {
+      font-size: 10px;
+      color: #888;
+      width: 44px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .stop-swatch {
+      width: 28px;
+      height: 22px;
+      border-radius: 4px;
+      border: 1px solid #444;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: transform 0.1s;
+    }
+
+    .stop-swatch:hover {
+      transform: scale(1.06);
+      border-color: #fff;
+    }
+
+    .stop-hex-input {
+      background: #252525;
+      border: 1px solid #383838;
+      color: #fff;
+      padding: 4px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 11px;
+      width: 64px;
+      text-align: center;
+    }
+
+    .stop-percent-wrap {
+      width: 58px;
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    .stop-percent-input {
+      background: #252525;
+      border: 1px solid #383838;
+      color: #fff;
+      padding: 4px 16px 4px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 11px;
+      width: 100%;
+      text-align: right;
+      box-sizing: border-box;
+    }
+
+    .icon-btn-del {
+      background: transparent;
+      border: none;
+      color: #777;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      line-height: 1;
+      margin-left: auto;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    .icon-btn-del:hover {
+      color: #ff6467;
+      background: #2a2a2a;
+    }
+
+    .custom-colors-container {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .custom-color-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #171717;
+      border: 1px solid #2d2d2d;
+      border-radius: 8px;
+      padding: 8px 10px;
+      transition: border-color 0.15s;
+    }
+
+    .custom-color-row:hover {
+      border-color: #3d3d3d;
+    }
+
+    .custom-color-name-input {
+      background: #222;
+      border: 1px solid #383838;
+      color: #eee;
+      padding: 5px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      flex-grow: 1;
+      font-weight: 500;
+      box-sizing: border-box;
+    }
+
+    .custom-color-name-input:focus {
+      border-color: #18a0fb;
+      outline: none;
+    }
+
+    .custom-color-swatch {
+      width: 32px;
+      height: 26px;
+      border-radius: 6px;
+      border: 1px solid #444;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: transform 0.1s, border-color 0.1s;
+    }
+
+    .custom-color-swatch:hover {
+      transform: scale(1.06);
+      border-color: #fff;
+    }
+
+    .custom-color-hex-input {
+      background: #222;
+      border: 1px solid #383838;
+      color: #fff;
+      padding: 5px 6px;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 11px;
+      width: 70px;
+      text-align: center;
+      box-sizing: border-box;
+    }
+
+    .custom-color-hex-input:focus {
+      border-color: #18a0fb;
+      outline: none;
+    }
+
+    /* --- MODERN FIGMA COLOR PICKER MODAL --- */
+    #picker-modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.7);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(4px);
+    }
+
+    .picker-content {
+      background: #1e1e1e;
+      color: #fff;
+      padding: 14px 16px 14px 16px;
+      border-radius: 12px;
+      width: 300px;
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.8);
+      border: 1px solid #333333;
+      box-sizing: border-box;
+      user-select: none;
+    }
+
+    .picker-top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .picker-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #eee;
+      letter-spacing: -0.2px;
+    }
+
+    .picker-close-btn {
+      background: transparent;
+      border: none;
+      color: #888;
+      font-size: 15px;
+      cursor: pointer;
+      padding: 2px 6px;
+      line-height: 1;
+      border-radius: 4px;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    .picker-close-btn:hover {
+      color: #fff;
+      background: #2a2a2a;
+    }
+
+    /* 2D Saturation-Value Canvas / Box */
+    .picker-sat-val-wrap {
+      width: 100%;
+      height: 180px;
+      position: relative;
+      border-radius: 6px;
+      overflow: hidden;
+      cursor: crosshair;
+      margin-bottom: 12px;
+      touch-action: none;
+      box-shadow: inset 0 0 1px rgba(0,0,0,0.5);
+    }
+
+    .picker-sat-val-box {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      background-color: #ff0000;
+      background-image: 
+        linear-gradient(to right, #ffffff, rgba(255, 255, 255, 0)),
+        linear-gradient(to top, #000000, rgba(0, 0, 0, 0));
+    }
+
+    .picker-sat-val-thumb {
+      position: absolute;
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      border: 2.5px solid #ffffff;
+      box-shadow: 0 0 4px rgba(0, 0, 0, 0.9), inset 0 0 2px rgba(0, 0, 0, 0.6);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      top: 0;
+      left: 0;
+      box-sizing: border-box;
+    }
+
+    /* Sliders Stack (Hue + Alpha) */
+    .picker-sliders-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .picker-eyedropper-btn {
+      background: #282828;
+      border: 1px solid #383838;
+      color: #aaa;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px;
+      border-radius: 6px;
+      transition: all 0.15s;
+      flex-shrink: 0;
+    }
+
+    .picker-eyedropper-btn:hover {
+      background: #333333;
+      color: #fff;
+      border-color: #484848;
+    }
+
+    .picker-sliders-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex-grow: 1;
+    }
+
+    .picker-slider-track {
+      height: 12px;
+      border-radius: 6px;
+      position: relative;
+      cursor: pointer;
+      touch-action: none;
+    }
+
+    .hue-track {
+      background: linear-gradient(to right,
+        #ff0000 0%,
+        #ffff00 17%,
+        #00ff00 33%,
+        #00ffff 50%,
+        #0000ff 67%,
+        #ff00ff 83%,
+        #ff0000 100%);
+    }
+
+    .alpha-track {
+      background-color: #222;
+      background-image: 
+        linear-gradient(45deg, #444 25%, transparent 25%), 
+        linear-gradient(-45deg, #444 25%, transparent 25%), 
+        linear-gradient(45deg, transparent 75%, #444 75%), 
+        linear-gradient(-45deg, transparent 75%, #444 75%);
+      background-size: 8px 8px;
+      background-position: 0 0, 0 4px, 4px -4px, -4px 0px;
+      overflow: hidden;
+    }
+
+    .picker-alpha-gradient {
+      width: 100%;
+      height: 100%;
+      border-radius: 6px;
+      background: linear-gradient(to right, transparent, #ff0000);
+      pointer-events: none;
+    }
+
+    .picker-slider-thumb {
+      position: absolute;
+      top: 50%;
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      border: 2.5px solid #ffffff;
+      box-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+      background: transparent;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      left: 0%;
+      box-sizing: border-box;
+    }
+
+    /* Format selector & inputs row */
+    .picker-inputs-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      position: relative;
+      margin-bottom: 14px;
+    }
+
+    .picker-format-dropdown-wrap {
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .picker-format-btn {
+      background: #2a2a2a;
+      border: 1px solid #383838;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 5px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      height: 28px;
+      box-sizing: border-box;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .picker-format-btn:hover {
+      background: #333;
+      border-color: #484848;
+    }
+
+    .picker-format-menu {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 4px);
+      left: 0;
+      background: #1e1e1e;
+      border: 1px solid #383838;
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7);
+      padding: 4px 0;
+      min-width: 90px;
+      z-index: 300;
+    }
+
+    .picker-format-menu.open {
+      display: block;
+    }
+
+    .format-option {
+      padding: 6px 14px 6px 24px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #ccc;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      position: relative;
+      transition: background 0.1s, color 0.1s;
+    }
+
+    .format-option:hover {
+      background: #2c2c2c;
+      color: #fff;
+    }
+
+    .format-option.active {
+      background: #0d99ff;
+      color: #ffffff;
+    }
+
+    .format-option .check-icon {
+      position: absolute;
+      left: 8px;
+      font-size: 10px;
+      display: none;
+    }
+
+    .format-option.active .check-icon {
+      display: block;
+    }
+
+    .picker-fields-container {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-grow: 1;
+      min-width: 0;
+    }
+
+    .picker-num-input, .picker-text-input {
+      background: #2a2a2a;
+      border: 1px solid #383838;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 6px;
+      border-radius: 6px;
+      text-align: center;
+      height: 28px;
+      box-sizing: border-box;
+      outline: none;
+      min-width: 0;
+      flex: 1;
+      font-family: inherit;
+      transition: border-color 0.15s, background-color 0.15s;
+    }
+
+    .picker-num-input::-webkit-outer-spin-button,
+    .picker-num-input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    .picker-num-input[type=number] {
+      -moz-appearance: textfield;
+      appearance: textfield;
+    }
+
+    .picker-num-input:focus, .picker-text-input:focus {
+      border-color: #0d99ff;
+      background: #333;
+    }
+
+    .picker-text-input.hex-field {
+      text-align: center;
+      font-family: monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Footer with Preview + Actions */
+    .picker-footer-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 10px;
+      border-top: 1px solid #2d2d2d;
+    }
+
+    .picker-preview-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .picker-preview-swatch {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 1px solid #444;
+      background-color: #6750A4;
+      box-shadow: inset 0 0 2px rgba(0,0,0,0.5);
+    }
+
+    .picker-preview-hex {
+      font-size: 11px;
+      font-family: monospace;
+      color: #aaa;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .picker-actions-btns {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .picker-btn {
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      border: none;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .picker-btn.btn-cancel {
+      background: #2a2a2a;
+      color: #aaa;
+      border: 1px solid #383838;
+    }
+
+    .picker-btn.btn-cancel:hover {
+      background: #333;
+      color: #fff;
+    }
+
+    .picker-btn.btn-apply {
+      background: #0d99ff;
+      color: #fff;
+    }
+
+    .picker-btn.btn-apply:hover {
+      background: #0082e6;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Sticky Top Bar (identical to Components Setup) -->
+  <div class="launcher-top-bar">
+    <div class="mode-switcher-segmented">
+      <button type="button" class="mode-switcher-btn" onclick="parent.postMessage({ pluginMessage: { type: 'switch-plugin-mode', mode: 'components' } }, '*')">
+        <span>⚡</span> Components Setup
+      </button>
+      <button type="button" class="mode-switcher-btn active">
+        <span>🎨</span> DS Generator
+      </button>
+    </div>
+    <div class="launcher-brand-row">
+      <div class="launcher-brand">
+        <span class="brand-icon">🎨</span>
+        <span class="brand-name">DS Generator</span>
+        <span class="brand-version">v2.4</span>
+      </div>
+      <div class="launcher-status-pill" id="launcherStatusPill" title="Ready">
+        <span class="status-dot online"></span>
+        <span id="bridgeHeaderStatus">Bridge Ready</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scrollable Content Area -->
+  <div class="generator-scroll-area">
+    <!-- Section 1: Typography & Spacing Scale -->
+    <div style="display: flex; flex-direction: column; width: 100%; min-width: 0;">
+      <div class="ds-section-header ds-section-blue">
+        <span>📐</span> TYPOGRAPHY &amp; SPACING SCALE
+      </div>
+      <!-- Row 1: 3 Presets Bento Cards -->
+      <div class="ds-scale-grid">
+        <div class="ds-param-bento">
+          <div class="ds-param-header">
+            <div class="ds-param-icon-box">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="5"/>
+              </svg>
+            </div>
+            <div class="ds-param-meta">
+              <span class="ds-param-title">Corner Radius</span>
+              <span class="ds-param-desc">Global border radius</span>
+            </div>
+          </div>
+          <select id="radius-preset" class="bento-select">
+            <option value="none">Sharp (0px)</option>
+            <option value="compact">Compact (Subtle)</option>
+            <option value="default" selected>Default (Standard)</option>
+            <option value="relaxed">Relaxed (Rounded)</option>
+            <option value="full">Full (Pill / 9999px)</option>
+          </select>
+        </div>
+
+        <div class="ds-param-bento">
+          <div class="ds-param-header">
+            <div class="ds-param-icon-box">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 3H3v7h18V3zM21 14H3v7h18v-7z"/>
+              </svg>
+            </div>
+            <div class="ds-param-meta">
+              <span class="ds-param-title">Spacing Scale</span>
+              <span class="ds-param-desc">Layout density</span>
+            </div>
+          </div>
+          <select id="spacing-preset" class="bento-select">
+            <option value="compact">Compact (Dense)</option>
+            <option value="default" selected>Default (Standard)</option>
+            <option value="relaxed">Relaxed (Spacious)</option>
+          </select>
+        </div>
+
+        <div class="ds-param-bento">
+          <div class="ds-param-header">
+            <div class="ds-param-icon-box">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>
+                <path d="m13 13 6 6"/>
+              </svg>
+            </div>
+            <div class="ds-param-meta">
+              <span class="ds-param-title">Button Hover</span>
+              <span class="ds-param-desc">Interactive state</span>
+            </div>
+          </div>
+          <select id="button-hover-preset" class="bento-select">
+            <option value="color" selected>Color Shift</option>
+            <option value="shape">Shape Morph</option>
+            <option value="both">Color &amp; Shape</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Row 2: 2 Fonts Bento Cards -->
+      <div class="ds-fonts-grid">
+        <div class="ds-param-bento">
+          <div class="ds-param-header">
+            <div class="ds-param-icon-box">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 7V4h16v3M9 20h6M12 4v16"/>
+              </svg>
+            </div>
+            <div class="ds-param-meta">
+              <span class="ds-param-title">Headers Font</span>
+              <span class="ds-param-desc">Heading typeface</span>
+            </div>
+          </div>
+          <select id="headers-font" class="bento-select">
+            <option value="Inter">Loading fonts...</option>
+          </select>
+          <!-- Header Weights (Hidden unless non-standard font) -->
+          <div class="row font-weights-subrow" id="headers-weights-row" style="display: none; margin-top: 6px; margin-bottom: 0;">
+            <div class="field-sublabel" style="font-size: 8px; margin-bottom: 3px;">Header Styles</div>
+            <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; width: 100%;">
+              <div class="field-stack" style="min-width: 0;">
+                <span class="field-sublabel" style="font-size: 8px;">Regular</span>
+                <select id="headers-weight-reg" class="bento-select style-select"></select>
+              </div>
+              <div class="field-stack" style="min-width: 0;">
+                <span class="field-sublabel" style="font-size: 8px;">Medium</span>
+                <select id="headers-weight-med" class="bento-select style-select"></select>
+              </div>
+              <div class="field-stack" style="min-width: 0;">
+                <span class="field-sublabel" style="font-size: 8px;">Bold</span>
+                <select id="headers-weight-bold" class="bento-select style-select"></select>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ds-param-bento">
+          <div class="ds-param-header">
+            <div class="ds-param-icon-box">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="4 7 4 4 20 4 20 7"/>
+                <line x1="9" y1="20" x2="15" y2="20"/>
+                <line x1="12" y1="4" x2="12" y2="20"/>
+              </svg>
+            </div>
+            <div class="ds-param-meta">
+              <span class="ds-param-title">Text Font</span>
+              <span class="ds-param-desc">Body &amp; UI typeface</span>
+            </div>
+          </div>
+          <select id="body-font" class="bento-select">
+            <option value="Inter">Loading fonts...</option>
+          </select>
+          <!-- Body Weights (Hidden unless non-standard font) -->
+          <div class="row font-weights-subrow" id="body-weights-row" style="display: none; margin-top: 6px; margin-bottom: 0;">
+            <div class="field-sublabel" style="font-size: 8px; margin-bottom: 3px;">Text Styles</div>
+            <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; width: 100%;">
+              <div class="field-stack" style="min-width: 0;">
+                <span class="field-sublabel" style="font-size: 8px;">Regular</span>
+                <select id="body-weight-reg" class="bento-select style-select"></select>
+              </div>
+              <div class="field-stack" style="min-width: 0;">
+                <span class="field-sublabel" style="font-size: 8px;">Medium</span>
+                <select id="body-weight-med" class="bento-select style-select"></select>
+              </div>
+              <div class="field-stack" style="min-width: 0;">
+                <span class="field-sublabel" style="font-size: 8px;">Bold</span>
+                <select id="body-weight-bold" class="bento-select style-select"></select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 2: System Colors & Seed Palette -->
+    <div>
+      <div class="ds-section-header ds-section-amber" style="margin-top: 6px;">
+        <span>🎨</span> SYSTEM COLORS &amp; SEED PALETTE
+      </div>
+      <div id="fixed-container" class="ds-colors-bento-grid">
+        <div class="row color-bento-card" data-role="primary">
+          <div class="color-swatch" data-color="#6750A4" style="background-color: #6750a4" title="Kliknij, aby wybrać kolor"></div>
+          <div class="color-meta-col">
+            <div class="color-top-row">
+              <span class="color-role-label">PRIMARY</span>
+              <span class="color-hex-preview">#6750A4</span>
+            </div>
+            <input type="text" value="primary" placeholder="primary" class="color-name-input" />
+          </div>
+        </div>
+
+        <div class="row color-bento-card" data-role="secondary">
+          <div class="color-swatch" data-color="#625B71" style="background-color: #625b71" title="Kliknij, aby wybrać kolor"></div>
+          <div class="color-meta-col">
+            <div class="color-top-row">
+              <span class="color-role-label">SECONDARY</span>
+              <span class="color-hex-preview">#625B71</span>
+            </div>
+            <input type="text" value="secondary" placeholder="secondary" class="color-name-input" />
+          </div>
+        </div>
+
+        <div class="row color-bento-card" data-role="tertiary">
+          <div class="color-swatch" data-color="#7D5260" style="background-color: #7d5260" title="Kliknij, aby wybrać kolor"></div>
+          <div class="color-meta-col">
+            <div class="color-top-row">
+              <span class="color-role-label">TERTIARY</span>
+              <span class="color-hex-preview">#7D5260</span>
+            </div>
+            <input type="text" value="tertiary" placeholder="tertiary" class="color-name-input" />
+          </div>
+        </div>
+
+        <div class="row color-bento-card" data-role="neutral">
+          <div class="color-swatch" data-color="#767680" style="background-color: #767680" title="Kliknij, aby wybrać kolor"></div>
+          <div class="color-meta-col">
+            <div class="color-top-row">
+              <span class="color-role-label">NEUTRAL</span>
+              <span class="color-hex-preview">#767680</span>
+            </div>
+            <input type="text" value="neutral" placeholder="neutral" class="color-name-input" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sticky Footer Bar -->
+  <div class="generator-sticky-footer">
+    <button type="button" id="open-advanced-btn" class="advanced-accordion-btn">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        <span>Advanced Options (Semantic &amp; Custom Tokens)</span>
+      </div>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #71717A;"><polyline points="9 18 15 12 9 6"></polyline></svg>
+    </button>
+
+    <div class="footer-actions-grid">
+      <button id="create" class="cta-generate-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
+        Generate System
+      </button>
+      <button type="button" id="export-vars-btn" class="secondary-export-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        Export Variables
+      </button>
+    </div>
+
+    <!-- Local Token Bridge Status Bar (discreet dark style) -->
+    <div id="bridge-status-bar">
+      <div style="display: flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden;">
+        <span id="bridge-dot"></span>
+        <span id="bridge-text">Mostek: sprawdzanie localhost:3050...</span>
+      </div>
+      <button type="button" id="bridge-refresh-btn" title="Sprawdź połączenie z lokalnym mostkiem">Sprawdź</button>
+    </div>
+  </div>
+
+  <!-- ADVANCED OPTIONS MODAL -->
+  <div id="advanced-modal">
+    <div class="advanced-content">
+      <div class="modal-header-row">
+        <span class="modal-title">Advanced Options</span>
+        <button type="button" id="close-advanced-btn" class="modal-close-btn" title="Close">✕</button>
+      </div>
+
+      <div class="row">
+        <div class="row-label">Base Font Size (Body Large)</div>
+        <div class="row-content">
+          <select id="base-font-size" class="font-select">
+            <option value="14">14 px (Small)</option>
+            <option value="16" selected>16 px (Default)</option>
+            <option value="18">18 px (Large)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="row-label">Line Height Scale</div>
+        <div class="row-content">
+          <div class="triple-inputs">
+            <div class="field-stack">
+              <span class="field-sublabel">Heading</span>
+              <select id="lh-heading" class="font-select style-select">
+                <option value="default" selected>Default (1.0)</option>
+                <option value="1">1.0 (100%)</option>
+                <option value="1.1">1.1 (110%)</option>
+                <option value="1.15">1.15 (115%)</option>
+                <option value="1.2">1.2 (120%)</option>
+                <option value="1.25">1.25 (125%)</option>
+                <option value="1.33">1.33 (133%)</option>
+                <option value="1.4">1.4 (140%)</option>
+                <option value="1.5">1.5 (150%)</option>
+                <option value="1.6">1.6 (160%)</option>
+                <option value="1.75">1.75 (175%)</option>
+                <option value="2">2.0 (200%)</option>
+              </select>
+            </div>
+            <div class="field-stack">
+              <span class="field-sublabel">Display</span>
+              <select id="lh-display" class="font-select style-select">
+                <option value="default" selected>Default (+12px)</option>
+                <option value="1">1.0 (100%)</option>
+                <option value="1.1">1.1 (110%)</option>
+                <option value="1.15">1.15 (115%)</option>
+                <option value="1.2">1.2 (120%)</option>
+                <option value="1.25">1.25 (125%)</option>
+                <option value="1.33">1.33 (133%)</option>
+                <option value="1.4">1.4 (140%)</option>
+                <option value="1.5">1.5 (150%)</option>
+                <option value="1.6">1.6 (160%)</option>
+                <option value="1.75">1.75 (175%)</option>
+                <option value="2">2.0 (200%)</option>
+              </select>
+            </div>
+            <div class="field-stack">
+              <span class="field-sublabel">Default</span>
+              <select id="lh-others" class="font-select style-select">
+                <option value="default" selected>Default (+16px)</option>
+                <option value="small">Small (+12px)</option>
+                <option value="extra-small">ExtraSmall (+8px)</option>
+                <option value="1">1.0 (100%)</option>
+                <option value="1.1">1.1 (110%)</option>
+                <option value="1.15">1.15 (115%)</option>
+                <option value="1.2">1.2 (120%)</option>
+                <option value="1.25">1.25 (125%)</option>
+                <option value="1.33">1.33 (133%)</option>
+                <option value="1.4">1.4 (140%)</option>
+                <option value="1.5">1.5 (150%)</option>
+                <option value="1.6">1.6 (160%)</option>
+                <option value="1.75">1.75 (175%)</option>
+                <option value="2">2.0 (200%)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="row-label">Letter Spacing</div>
+        <div class="row-content">
+          <div class="triple-inputs">
+            <div class="field-stack">
+              <span class="field-sublabel">Heading</span>
+              <div class="input-with-unit">
+                <input type="number" id="ls-heading" step="0.01" value="0" />
+                <span class="unit-tag">px</span>
+              </div>
+            </div>
+            <div class="field-stack">
+              <span class="field-sublabel">Display</span>
+              <div class="input-with-unit">
+                <input type="number" id="ls-display" step="0.01" value="0" />
+                <span class="unit-tag">px</span>
+              </div>
+            </div>
+            <div class="field-stack">
+              <span class="field-sublabel">Default</span>
+              <div class="input-with-unit">
+                <input type="number" id="ls-others" step="0.01" value="0" />
+                <span class="unit-tag">px</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="row-label">Wrap Style</div>
+        <div class="row-content">
+          <div class="twin-inputs">
+            <div class="field-stack">
+              <span class="field-sublabel">Display</span>
+              <select id="wrap-display" class="font-select style-select">
+                <option value="BALANCE" selected>Balance</option>
+                <option value="AUTO">Auto</option>
+                <option value="PRETTY">Pretty</option>
+              </select>
+            </div>
+            <div class="field-stack">
+              <span class="field-sublabel">Default</span>
+              <select id="wrap-others" class="font-select style-select">
+                <option value="BALANCE" selected>Balance</option>
+                <option value="AUTO">Auto</option>
+                <option value="PRETTY">Pretty</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row" style="display: none;">
+        <div class="row-label">Para. Spacing</div>
+        <div class="row-content">
+          <div class="twin-inputs">
+            <div class="field-stack">
+              <span class="field-sublabel">Heading</span>
+              <div class="input-with-unit">
+                <input type="number" id="ps-display" step="1" value="0" />
+                <span class="unit-tag">px</span>
+              </div>
+            </div>
+            <div class="field-stack">
+              <span class="field-sublabel">Default</span>
+              <div class="input-with-unit">
+                <input type="number" id="ps-others" step="1" value="0" />
+                <span class="unit-tag">px</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row" style="display: none;">
+        <div class="row-label">Para. Indent</div>
+        <div class="row-content">
+          <div class="twin-inputs">
+            <div class="field-stack">
+              <span class="field-sublabel">Heading</span>
+              <div class="input-with-unit">
+                <input type="number" id="pi-display" step="1" value="0" />
+                <span class="unit-tag">px</span>
+              </div>
+            </div>
+            <div class="field-stack">
+              <span class="field-sublabel">Default</span>
+              <div class="input-with-unit">
+                <input type="number" id="pi-others" step="1" value="0" />
+                <span class="unit-tag">px</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="row-label">Layout Margins</div>
+        <div class="row-content">
+          <div class="triple-inputs">
+            <div class="field-stack">
+              <span class="field-sublabel">LG (1366)</span>
+              <div class="input-with-unit">
+                <input type="number" id="layout-margin-lg" min="16" max="200" placeholder="Auto" />
+                <span class="unit-tag">px</span>
+              </div>
+            </div>
+            <div class="field-stack">
+              <span class="field-sublabel">XL (1536)</span>
+              <div class="input-with-unit">
+                <input type="number" id="layout-margin-xl" min="32" max="200" value="72" />
+                <span class="unit-tag">px</span>
+              </div>
+            </div>
+            <div class="field-stack">
+              <span class="field-sublabel">2XL (1920)</span>
+              <div class="input-with-unit">
+                <input type="number" id="layout-margin-2xl" min="32" max="300" placeholder="Auto" />
+                <span class="unit-tag">px</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="font-size: 10px; color: #777; margin-top: 4px; line-height: 1.4;">
+          Marginesy dla breakpointów: wpisz customowe wartości dla LG i 2XL lub pozostaw puste, aby obliczyć je proporcjonalnie ze wzoru na podstawie XL.
+        </div>
+      </div>
+
+      <div class="separator"></div>
+
+      <div class="modal-section-header">
+        <span style="font-weight: 600; font-size: 13px; color: #eee; text-transform: uppercase; letter-spacing: 0.5px;">Custom Colors</span>
+        <button type="button" id="add-color-btn" class="small-btn">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          Add Color
+        </button>
+      </div>
+      <div id="custom-colors-container" class="custom-colors-container">
+        <!-- Rendered dynamically -->
+      </div>
+
+      <div class="separator"></div>
+
+      <div class="modal-section-header">
+        <span style="font-weight: 600; font-size: 13px; color: #eee; text-transform: uppercase; letter-spacing: 0.5px;">Custom Gradients (8 Directions)</span>
+        <button type="button" id="add-gradient-btn" class="small-btn">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          Add Gradient
+        </button>
+      </div>
+      <div id="custom-gradients-container">
+        <!-- Rendered dynamically -->
+      </div>
+
+      <button type="button" id="done-advanced-btn" class="primary-btn" style="margin-top: 18px; padding: 10px;">Save & Close</button>
+    </div>
+  </div>
+
+  <div id="picker-modal">
+    <div class="picker-content">
+      <!-- Header with Title and Close -->
+      <div class="picker-top-bar">
+        <span class="picker-title">Color Picker</span>
+        <button type="button" class="picker-close-btn" id="btn-picker-close" title="Close">✕</button>
+      </div>
+
+      <!-- 2D Saturation-Value Canvas / Box -->
+      <div class="picker-sat-val-wrap">
+        <div class="picker-sat-val-box" id="picker-sat-val-box">
+          <div class="picker-sat-val-thumb" id="picker-sat-val-thumb"></div>
+        </div>
+      </div>
+
+      <!-- Sliders Row (Eyedropper + Hue & Alpha Sliders) -->
+      <div class="picker-sliders-row">
+        <button type="button" class="picker-eyedropper-btn" id="picker-eyedropper-btn" title="Pick color from screen">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 11l-8-8-8.5 8.5a2.12 2.12 0 0 0 0 3l2.5 2.5a2.12 2.12 0 0 0 3 0L16.5 8.5"/>
+            <path d="M5 19l-3 3"/>
+            <path d="M14 6l4 4"/>
+          </svg>
+        </button>
+
+        <div class="picker-sliders-stack">
+          <!-- Hue Slider Track -->
+          <div class="picker-slider-track hue-track" id="picker-hue-track">
+            <div class="picker-slider-thumb" id="picker-hue-thumb"></div>
+          </div>
+
+          <!-- Alpha Slider Track -->
+          <div class="picker-slider-track alpha-track" id="picker-alpha-track">
+            <div class="picker-alpha-gradient" id="picker-alpha-gradient"></div>
+            <div class="picker-slider-thumb" id="picker-alpha-thumb"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Format selector & inputs row -->
+      <div class="picker-inputs-row">
+        <!-- Format Dropdown Trigger -->
+        <div class="picker-format-dropdown-wrap">
+          <button type="button" class="picker-format-btn" id="picker-format-btn">
+            <span id="picker-format-label">HSL</span>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          
+          <!-- Dropdown Options Popup Menu -->
+          <div class="picker-format-menu" id="picker-format-menu">
+            <div class="format-option" data-format="hex">Hex</div>
+            <div class="format-option" data-format="rgb">RGB</div>
+            <div class="format-option" data-format="css">CSS</div>
+            <div class="format-option active" data-format="hsl">
+              <span class="check-icon">✓</span>
+              <span>HSL</span>
+            </div>
+            <div class="format-option" data-format="hsb">HSB</div>
+          </div>
+        </div>
+
+        <!-- Dynamic Inputs Container -->
+        <div class="picker-fields-container" id="picker-fields-container"></div>
+      </div>
+
+      <!-- Footer Actions Row (Preview + Cancel & OK) -->
+      <div class="picker-footer-row">
+        <div class="picker-preview-wrap">
+          <div class="picker-preview-swatch" id="picker-preview-swatch"></div>
+          <span class="picker-preview-hex" id="picker-preview-hex">#6750A4</span>
+        </div>
+        <div class="picker-actions-btns">
+          <button type="button" class="picker-btn btn-cancel" id="btn-picker-cancel">Cancel</button>
+          <button type="button" class="picker-btn btn-apply" id="btn-picker-apply">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let activeSwatch = null;
+
+    function updateSwatchColor(swatch, hex) {
+      if (hex && hex !== "undefined") {
+        swatch.style.backgroundColor = hex;
+        swatch.dataset.color = hex;
+        const bentoCard = swatch.closest('.color-bento-card');
+        if (bentoCard) {
+          const hexPreview = bentoCard.querySelector('.color-hex-preview');
+          if (hexPreview) hexPreview.textContent = hex.toUpperCase();
+        }
+        if (swatch.dataset.role === 'custom-grad-stop') {
+          const row = swatch.closest('.stop-row');
+          if (row) {
+            const inp = row.querySelector('.stop-hex-input');
+            if (inp) inp.value = hex;
+          }
+          const card = swatch.closest('.gradient-card');
+          if (card && row) {
+            const cardIdx = parseInt(card.dataset.index, 10);
+            const sIdx = parseInt(row.dataset.stopIndex, 10);
+            if (customGradientsList[cardIdx] && customGradientsList[cardIdx].stops[sIdx]) {
+              customGradientsList[cardIdx].stops[sIdx].color = hex;
+            }
+            const previewBar = card.querySelector('.gradient-preview-bar');
+            if (previewBar && customGradientsList[cardIdx]) {
+              const gradStops = customGradientsList[cardIdx].stops;
+              previewBar.style.background = `linear-gradient(90deg, ${gradStops.map(s => `${s.color} ${s.position}%`).join(', ')})`;
+            }
+          }
+        } else if (swatch.dataset.role === 'custom-color') {
+          const row = swatch.closest('.custom-color-row');
+          if (row) {
+            const inp = row.querySelector('.custom-color-hex-input');
+            if (inp) inp.value = hex;
+            const cIdx = parseInt(row.dataset.index, 10);
+            if (customColorsList[cIdx]) {
+              customColorsList[cIdx].color = hex;
+            }
+          }
+        }
+      }
+    }
+
+    const advModal = document.getElementById("advanced-modal");
+    const openAdvBtn = document.getElementById("open-advanced-btn");
+    const closeAdvBtn = document.getElementById("close-advanced-btn");
+    const doneAdvBtn = document.getElementById("done-advanced-btn");
+
+    if (openAdvBtn) {
+      openAdvBtn.addEventListener("click", () => {
+        advModal.style.display = "flex";
+      });
+    }
+
+    const closeAdvModal = () => {
+      advModal.style.display = "none";
+    };
+
+    if (closeAdvBtn) closeAdvBtn.addEventListener("click", closeAdvModal);
+    if (doneAdvBtn) doneAdvBtn.addEventListener("click", closeAdvModal);
+
+    advModal.addEventListener("click", (e) => {
+      if (e.target === advModal) closeAdvModal();
+    });
+
+    window.addEventListener("keydown", (e) => {
+      if (modal.style.display === "flex" && e.key === "Escape") {
+        modal.style.display = "none";
+      } else if (advModal.style.display === "flex" && e.key === "Escape") {
+        closeAdvModal();
+      }
+    });
+
+    // Custom Gradients Management
+    let customGradientsList = [];
+
+    function normalizeGradientStops(rawStops) {
+      if (!Array.isArray(rawStops) || rawStops.length === 0) {
+        return [
+          { color: '#6750A4', position: 0 },
+          { color: '#FF8008', position: 100 }
+        ];
+      }
+      return rawStops.map((s, idx) => {
+        if (typeof s === 'string') {
+          const pos = Math.round((idx / Math.max(1, rawStops.length - 1)) * 100);
+          return { color: s, position: pos };
+        }
+        return {
+          color: s.color || '#000000',
+          position: s.position !== undefined ? parseInt(s.position, 10) : Math.round((idx / Math.max(1, rawStops.length - 1)) * 100)
+        };
+      });
+    }
+
+    function createGradientCardElement(grad, index) {
+      grad.stops = normalizeGradientStops(grad.stops);
+      grad.mode = grad.mode || 'all-8';
+      grad.angle = grad.angle !== undefined ? grad.angle : 90;
+      grad.scale = grad.scale !== undefined ? grad.scale : 100;
+      grad.offsetX = grad.offsetX !== undefined ? grad.offsetX : 0;
+      grad.offsetY = grad.offsetY !== undefined ? grad.offsetY : 0;
+
+      const card = document.createElement('div');
+      card.className = 'gradient-card';
+      card.dataset.index = index;
+
+      const header = document.createElement('div');
+      header.className = 'gradient-card-header';
+      
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.className = 'gradient-name-input';
+      nameInput.placeholder = 'Gradient name (e.g. brand, hero)';
+      nameInput.value = grad.name || `custom-${index + 1}`;
+      nameInput.addEventListener('input', () => {
+        grad.name = nameInput.value.trim() || 'custom';
+      });
+
+      const delCardBtn = document.createElement('button');
+      delCardBtn.type = 'button';
+      delCardBtn.className = 'icon-btn-del';
+      delCardBtn.innerHTML = '✕';
+      delCardBtn.title = 'Remove this gradient';
+      delCardBtn.addEventListener('click', () => {
+        customGradientsList.splice(index, 1);
+        renderAllGradientCards();
+      });
+
+      header.appendChild(nameInput);
+      header.appendChild(delCardBtn);
+      card.appendChild(header);
+
+      // Controls Grid (Mode, Angle, Scale, Offset X, Offset Y)
+      const controlsGrid = document.createElement('div');
+      controlsGrid.className = 'grad-controls-grid';
+
+      const modeStack = document.createElement('div');
+      modeStack.className = 'grad-control-stack';
+      const modeLabel = document.createElement('span');
+      modeLabel.className = 'grad-control-label';
+      modeLabel.innerText = 'Mode';
+      const modeSelect = document.createElement('select');
+      modeSelect.className = 'grad-mode-select';
+      modeSelect.innerHTML = '<option value="all-8">All 8 Directions</option><option value="custom">Custom Angle</option>';
+      modeSelect.value = grad.mode;
+      modeStack.appendChild(modeLabel);
+      modeStack.appendChild(modeSelect);
+      controlsGrid.appendChild(modeStack);
+
+      function createInputStack(labelText, initialVal, min, max, unitText, onChange) {
+        const stack = document.createElement('div');
+        stack.className = 'grad-control-stack';
+        const label = document.createElement('span');
+        label.className = 'grad-control-label';
+        label.innerText = labelText;
+
+        const wrap = document.createElement('div');
+        wrap.className = 'input-with-unit';
+        wrap.style.cssText = 'position: relative; width: 100%;';
+
+        const inp = document.createElement('input');
+        inp.type = 'number';
+        inp.className = 'grad-control-input';
+        inp.min = min.toString();
+        inp.max = max.toString();
+        inp.value = initialVal.toString();
+
+        const unit = document.createElement('span');
+        unit.className = 'unit-tag';
+        unit.style.cssText = 'right: 4px; font-size: 10px; pointer-events: none;';
+        unit.innerText = unitText;
+
+        const handleVal = () => {
+          let v = parseInt(inp.value, 10);
+          if (isNaN(v)) v = initialVal;
+          v = Math.max(min, Math.min(max, v));
+          onChange(v);
+        };
+        inp.addEventListener('input', handleVal);
+        inp.addEventListener('change', handleVal);
+
+        wrap.appendChild(inp);
+        wrap.appendChild(unit);
+        stack.appendChild(label);
+        stack.appendChild(wrap);
+        return { stack, inp };
+      }
+
+      const angleObj = createInputStack('Angle', grad.angle, 0, 360, '°', (v) => {
+        grad.angle = v;
+        updatePreview();
+      });
+
+      const scaleObj = createInputStack('Length', grad.scale, 10, 300, '%', (v) => {
+        grad.scale = v;
+        updatePreview();
+      });
+
+      const offsetXObj = createInputStack('Shift X', grad.offsetX, -100, 100, '%', (v) => {
+        grad.offsetX = v;
+        updatePreview();
+      });
+
+      const offsetYObj = createInputStack('Shift Y', grad.offsetY, -100, 100, '%', (v) => {
+        grad.offsetY = v;
+        updatePreview();
+      });
+
+      controlsGrid.appendChild(angleObj.stack);
+      controlsGrid.appendChild(scaleObj.stack);
+      controlsGrid.appendChild(offsetXObj.stack);
+      controlsGrid.appendChild(offsetYObj.stack);
+      card.appendChild(controlsGrid);
+
+      function toggleCustomControls() {
+        const isCustom = modeSelect.value === 'custom';
+        grad.mode = modeSelect.value;
+        angleObj.stack.style.display = isCustom ? 'flex' : 'none';
+        scaleObj.stack.style.display = isCustom ? 'flex' : 'none';
+        offsetXObj.stack.style.display = isCustom ? 'flex' : 'none';
+        offsetYObj.stack.style.display = isCustom ? 'flex' : 'none';
+        updatePreview();
+      }
+
+      modeSelect.addEventListener('change', toggleCustomControls);
+
+      const previewBar = document.createElement('div');
+      previewBar.className = 'gradient-preview-bar';
+      card.appendChild(previewBar);
+
+      const stopsList = document.createElement('div');
+      stopsList.className = 'stops-list';
+
+      function renderStops() {
+        stopsList.innerHTML = '';
+        const stops = grad.stops;
+
+        stops.forEach((stopObj, sIdx) => {
+          const row = document.createElement('div');
+          row.className = 'stop-row';
+          row.dataset.stopIndex = sIdx;
+
+          const label = document.createElement('span');
+          label.className = 'stop-label';
+          if (sIdx === 0) label.innerText = 'Start';
+          else if (sIdx === stops.length - 1) label.innerText = 'End';
+          else label.innerText = `Stop ${sIdx + 1}`;
+
+          const swatch = document.createElement('div');
+          swatch.className = 'stop-swatch';
+          swatch.dataset.color = stopObj.color;
+          swatch.dataset.role = 'custom-grad-stop';
+          swatch.style.backgroundColor = stopObj.color;
+          swatch.addEventListener('click', (e) => {
+            openPicker(e);
+          });
+
+          const hexInp = document.createElement('input');
+          hexInp.type = 'text';
+          hexInp.className = 'stop-hex-input';
+          hexInp.value = stopObj.color;
+          const onHexChange = () => {
+            let val = hexInp.value.trim();
+            if (!val.startsWith('#')) val = '#' + val;
+            if (/^#[0-9A-F]{6}$/i.test(val)) {
+              swatch.style.backgroundColor = val;
+              swatch.dataset.color = val;
+              stopObj.color = val;
+              updatePreview();
+            }
+          };
+          hexInp.addEventListener('input', onHexChange);
+          hexInp.addEventListener('change', onHexChange);
+
+          const percentWrap = document.createElement('div');
+          percentWrap.className = 'input-with-unit stop-percent-wrap';
+
+          const percentInp = document.createElement('input');
+          percentInp.type = 'number';
+          percentInp.className = 'stop-percent-input';
+          percentInp.min = '0';
+          percentInp.max = '100';
+          percentInp.value = stopObj.position !== undefined ? stopObj.position : (sIdx === 0 ? 0 : sIdx === stops.length - 1 ? 100 : 50);
+          
+          const onPercentChange = () => {
+            let pVal = parseInt(percentInp.value, 10);
+            if (isNaN(pVal)) pVal = 0;
+            pVal = Math.max(0, Math.min(100, pVal));
+            stopObj.position = pVal;
+            updatePreview();
+          };
+          percentInp.addEventListener('input', onPercentChange);
+          percentInp.addEventListener('change', onPercentChange);
+
+          const percentUnit = document.createElement('span');
+          percentUnit.className = 'unit-tag';
+          percentUnit.style.cssText = 'right: 4px; font-size: 10px; pointer-events: none;';
+          percentUnit.innerText = '%';
+
+          percentWrap.appendChild(percentInp);
+          percentWrap.appendChild(percentUnit);
+
+          row.appendChild(label);
+          row.appendChild(swatch);
+          row.appendChild(hexInp);
+          row.appendChild(percentWrap);
+
+          if (stops.length > 2 && sIdx > 0 && sIdx < stops.length - 1) {
+            const delStopBtn = document.createElement('button');
+            delStopBtn.type = 'button';
+            delStopBtn.className = 'icon-btn-del';
+            delStopBtn.innerHTML = '✕';
+            delStopBtn.title = 'Remove color stop';
+            delStopBtn.addEventListener('click', () => {
+              grad.stops.splice(sIdx, 1);
+              renderStops();
+            });
+            row.appendChild(delStopBtn);
+          }
+
+          stopsList.appendChild(row);
+        });
+
+        updatePreview();
+      }
+
+      function updatePreview() {
+        if (grad.stops && grad.stops.length >= 2) {
+          const stopsStr = grad.stops.map(s => `${s.color} ${s.position}%`).join(', ');
+          const ang = grad.mode === 'custom' ? (grad.angle !== undefined ? grad.angle : 90) : 90;
+          previewBar.style.background = `linear-gradient(${ang}deg, ${stopsStr})`;
+        }
+      }
+
+      toggleCustomControls();
+      card.appendChild(stopsList);
+
+      const addStopBtn = document.createElement('button');
+      addStopBtn.type = 'button';
+      addStopBtn.className = 'small-btn';
+      addStopBtn.style.marginTop = '4px';
+      addStopBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> Add Color Stop';
+      addStopBtn.addEventListener('click', () => {
+        const prevPos = grad.stops[grad.stops.length - 2] ? grad.stops[grad.stops.length - 2].position : 0;
+        const lastPos = grad.stops[grad.stops.length - 1] ? grad.stops[grad.stops.length - 1].position : 100;
+        const midPos = Math.round((prevPos + lastPos) / 2);
+        const insertIdx = grad.stops.length - 1;
+        grad.stops.splice(insertIdx, 0, { color: '#D0BCFF', position: midPos });
+        renderStops();
+      });
+      card.appendChild(addStopBtn);
+
+      renderStops();
+      return card;
+    }
+
+    function renderAllGradientCards() {
+      const container = document.getElementById('custom-gradients-container');
+      if (!container) return;
+      container.innerHTML = '';
+
+      if (customGradientsList.length === 0) {
+        const emptyHint = document.createElement('div');
+        emptyHint.style.cssText = 'font-size: 11px; color: #777; font-style: italic; padding: 4px 0 10px 0;';
+        emptyHint.innerText = 'No custom gradients defined yet. Click "+ Add Gradient" to create one.';
+        container.appendChild(emptyHint);
+        return;
+      }
+
+      customGradientsList.forEach((grad, idx) => {
+        const cardEl = createGradientCardElement(grad, idx);
+        container.appendChild(cardEl);
+      });
+    }
+
+    const addGradBtn = document.getElementById('add-gradient-btn');
+    if (addGradBtn) {
+      addGradBtn.addEventListener('click', () => {
+        const newIdx = customGradientsList.length + 1;
+        customGradientsList.push({
+          name: `custom-${newIdx}`,
+          stops: [
+            { color: '#6750A4', position: 0 },
+            { color: '#FF8008', position: 100 }
+          ]
+        });
+        renderAllGradientCards();
+      });
+    }
+
+    // Custom Colors Management
+    let customColorsList = [];
+
+    function createCustomColorRowElement(item, index) {
+      const row = document.createElement('div');
+      row.className = 'custom-color-row';
+      row.dataset.index = index;
+
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.className = 'custom-color-name-input';
+      nameInput.placeholder = 'Color name (e.g. brand, accent)';
+      nameInput.value = item.name || `custom-${index + 1}`;
+      nameInput.addEventListener('input', () => {
+        item.name = nameInput.value.trim() || 'custom';
+      });
+
+      const swatch = document.createElement('div');
+      swatch.className = 'custom-color-swatch';
+      swatch.dataset.role = 'custom-color';
+      swatch.dataset.color = item.color || '#6750A4';
+      swatch.style.backgroundColor = item.color || '#6750A4';
+      swatch.title = 'Click to pick color';
+      swatch.addEventListener('click', openPicker);
+
+      const hexInp = document.createElement('input');
+      hexInp.type = 'text';
+      hexInp.className = 'custom-color-hex-input';
+      hexInp.maxLength = 7;
+      hexInp.value = item.color || '#6750A4';
+      const onHexChange = () => {
+        let val = hexInp.value.trim();
+        if (!val.startsWith('#')) val = '#' + val;
+        if (/^#[0-9A-F]{6}$/i.test(val)) {
+          swatch.style.backgroundColor = val;
+          swatch.dataset.color = val;
+          item.color = val;
+        }
+      };
+      hexInp.addEventListener('input', onHexChange);
+      hexInp.addEventListener('change', onHexChange);
+      hexInp.addEventListener('blur', () => {
+        let val = hexInp.value.trim();
+        if (!val.startsWith('#')) val = '#' + val;
+        if (!/^#[0-9A-F]{6}$/i.test(val)) {
+          hexInp.value = item.color || '#6750A4';
+        }
+      });
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'icon-btn-del';
+      delBtn.innerHTML = '✕';
+      delBtn.title = 'Remove this color';
+      delBtn.addEventListener('click', () => {
+        customColorsList.splice(index, 1);
+        renderAllCustomColors();
+      });
+
+      row.appendChild(nameInput);
+      row.appendChild(swatch);
+      row.appendChild(hexInp);
+      row.appendChild(delBtn);
+
+      return row;
+    }
+
+    function renderAllCustomColors() {
+      const container = document.getElementById('custom-colors-container');
+      if (!container) return;
+      container.innerHTML = '';
+
+      if (customColorsList.length === 0) {
+        const emptyHint = document.createElement('div');
+        emptyHint.style.cssText = 'font-size: 11px; color: #777; font-style: italic; padding: 4px 0 10px 0;';
+        emptyHint.innerText = 'No custom colors defined yet. Click "+ Add Color" to create one.';
+        container.appendChild(emptyHint);
+        return;
+      }
+
+      customColorsList.forEach((item, idx) => {
+        const rowEl = createCustomColorRowElement(item, idx);
+        container.appendChild(rowEl);
+      });
+    }
+
+    const addColorBtn = document.getElementById('add-color-btn');
+    if (addColorBtn) {
+      addColorBtn.addEventListener('click', () => {
+        const newIdx = customColorsList.length + 1;
+        customColorsList.push({
+          name: `custom-${newIdx}`,
+          color: '#6750A4'
+        });
+        renderAllCustomColors();
+      });
+    }
+
+    renderAllCustomColors();
+
+    // ==========================================
+    // MODERN FIGMA COLOR PICKER SYSTEM
+    // ==========================================
+    let pickerColor = { h: 208, s: 0.07, v: 0.42, a: 1 };
+    let pickerFormat = 'hsl'; // 'hex' | 'rgb' | 'css' | 'hsl' | 'hsb'
+    let isDraggingSatVal = false;
+    let isDraggingHue = false;
+    let isDraggingAlpha = false;
+
+    const pickerModal = document.getElementById("picker-modal");
+    const pickerSatValBox = document.getElementById("picker-sat-val-box");
+    const pickerSatValThumb = document.getElementById("picker-sat-val-thumb");
+    const pickerHueTrack = document.getElementById("picker-hue-track");
+    const pickerHueThumb = document.getElementById("picker-hue-thumb");
+    const pickerAlphaTrack = document.getElementById("picker-alpha-track");
+    const pickerAlphaGradient = document.getElementById("picker-alpha-gradient");
+    const pickerAlphaThumb = document.getElementById("picker-alpha-thumb");
+    const pickerFormatBtn = document.getElementById("picker-format-btn");
+    const pickerFormatLabel = document.getElementById("picker-format-label");
+    const pickerFormatMenu = document.getElementById("picker-format-menu");
+    const pickerFieldsContainer = document.getElementById("picker-fields-container");
+    const pickerCloseBtn = document.getElementById("btn-picker-close");
+    const pickerEyedropperBtn = document.getElementById("picker-eyedropper-btn");
+
+    const pickerCancelBtn = document.getElementById("btn-picker-cancel");
+    const pickerApplyBtn = document.getElementById("btn-picker-apply");
+    const pickerPreviewSwatch = document.getElementById("picker-preview-swatch");
+    const pickerPreviewHex = document.getElementById("picker-preview-hex");
+
+    if (window.EyeDropper) {
+      pickerEyedropperBtn.style.display = 'flex';
+      pickerEyedropperBtn.onclick = async () => {
+        try {
+          const dropper = new EyeDropper();
+          const result = await dropper.open();
+          if (result && result.sRGBHex) {
+            setColorFromHex(result.sRGBHex, pickerColor.a);
+          }
+        } catch (err) {}
+      };
+    } else {
+      pickerEyedropperBtn.style.display = 'none';
+    }
+
+    function hsvToRgb(h, s, v) {
+      const c = v * s;
+      const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+      const m = v - c;
+      let r = 0, g = 0, b = 0;
+      if (h >= 0 && h < 60) { r = c; g = x; b = 0; }
+      else if (h >= 60 && h < 120) { r = x; g = c; b = 0; }
+      else if (h >= 120 && h < 180) { r = 0; g = c; b = x; }
+      else if (h >= 180 && h < 240) { r = 0; g = x; b = c; }
+      else if (h >= 240 && h < 300) { r = x; g = 0; b = c; }
+      else { r = c; g = 0; b = x; }
+      return {
+        r: Math.round((r + m) * 255),
+        g: Math.round((g + m) * 255),
+        b: Math.round((b + m) * 255)
+      };
+    }
+
+    function rgbToHsv(r, g, b) {
+      r /= 255; g /= 255; b /= 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      const d = max - min;
+      let h = 0;
+      const s = max === 0 ? 0 : d / max;
+      const v = max;
+      if (max !== min) {
+        if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+        else if (max === g) h = (b - r) / d + 2;
+        else h = (r - g) / d + 4;
+        h = h * 60;
+      }
+      return { h: Math.round(h < 0 ? h + 360 : (h >= 360 ? 0 : h)), s: s, v: v };
+    }
+
+    function hsvToHsl(h, s_hsv, v) {
+      const l = v * (1 - s_hsv / 2);
+      const s_hsl = l === 0 || l === 1 ? 0 : (v - l) / Math.min(l, 1 - l);
+      return { h: h, s: Math.max(0, Math.min(1, s_hsl)), l: Math.max(0, Math.min(1, l)) };
+    }
+
+    function hslToHsv(h, s_hsl, l) {
+      const v = l + s_hsl * Math.min(l, 1 - l);
+      const s_hsv = v === 0 ? 0 : 2 * (1 - l / v);
+      return { h: h, s: Math.max(0, Math.min(1, s_hsv)), v: Math.max(0, Math.min(1, v)) };
+    }
+
+    function rgbToHex(r, g, b) {
+      const toHex = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+      return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
+    }
+
+    function parseColorToHsv(colorStr) {
+      if (!colorStr) return { h: 0, s: 0, v: 0, a: 1 };
+      colorStr = colorStr.trim();
+
+      if (colorStr.startsWith('#') || /^[0-9A-F]{3,8}$/i.test(colorStr)) {
+        let hex = colorStr.startsWith('#') ? colorStr.slice(1) : colorStr;
+        let a = 1;
+        if (hex.length === 3) {
+          hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+        } else if (hex.length === 4) {
+          a = parseInt(hex[3] + hex[3], 16) / 255;
+          hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+        } else if (hex.length === 8) {
+          a = parseInt(hex.slice(6, 8), 16) / 255;
+          hex = hex.slice(0, 6);
+        }
+        const num = parseInt(hex, 16);
+        if (!isNaN(num)) {
+          const r = (num >> 16) & 255;
+          const g = (num >> 8) & 255;
+          const b = num & 255;
+          const hsv = rgbToHsv(r, g, b);
+          return { h: hsv.h, s: hsv.s, v: hsv.v, a: a };
+        }
+      }
+
+      const rgbMatch = colorStr.match(/rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/i);
+      if (rgbMatch) {
+        const r = parseInt(rgbMatch[1], 10);
+        const g = parseInt(rgbMatch[2], 10);
+        const b = parseInt(rgbMatch[3], 10);
+        const a = rgbMatch[4] !== undefined ? parseFloat(rgbMatch[4]) : 1;
+        const hsv = rgbToHsv(r, g, b);
+        return { h: hsv.h, s: hsv.s, v: hsv.v, a: isNaN(a) ? 1 : a };
+      }
+
+      const hslMatch = colorStr.match(/hsla?\s*\(\s*([\d.]+)\s*,\s*([\d.]+)%?\s*,\s*([\d.]+)%?(?:\s*,\s*([\d.]+))?\s*\)/i);
+      if (hslMatch) {
+        const h = parseFloat(hslMatch[1]);
+        const s = parseFloat(hslMatch[2]) / 100;
+        const l = parseFloat(hslMatch[3]) / 100;
+        const a = hslMatch[4] !== undefined ? parseFloat(hslMatch[4]) : 1;
+        const hsv = hslToHsv(h, s, l);
+        return { h: hsv.h, s: hsv.s, v: hsv.v, a: isNaN(a) ? 1 : a };
+      }
+
+      return { h: 0, s: 0, v: 0, a: 1 };
+    }
+
+    function setColorFromHex(hex, alpha = 1) {
+      const parsed = parseColorToHsv(hex);
+      pickerColor.h = parsed.h;
+      pickerColor.s = parsed.s;
+      pickerColor.v = parsed.v;
+      pickerColor.a = alpha !== undefined ? alpha : parsed.a;
+      renderPickerUI();
+    }
+
+    function renderPickerUI(skipFields = false) {
+      const { h, s, v, a } = pickerColor;
+      const { r, g, b } = hsvToRgb(h, s, v);
+      const hex = rgbToHex(r, g, b);
+
+      // 1. 2D Canvas Sat-Val
+      pickerSatValBox.style.backgroundColor = `hsl(${h}, 100%, 50%)`;
+      pickerSatValThumb.style.left = `${Math.max(0, Math.min(100, s * 100))}%`;
+      pickerSatValThumb.style.top = `${Math.max(0, Math.min(100, (1 - v) * 100))}%`;
+
+      // 2. Hue slider
+      pickerHueThumb.style.left = `${Math.max(0, Math.min(100, (h / 360) * 100))}%`;
+
+      // 3. Alpha slider
+      pickerAlphaGradient.style.background = `linear-gradient(to right, transparent, rgb(${r}, ${g}, ${b}))`;
+      pickerAlphaThumb.style.left = `${Math.max(0, Math.min(100, a * 100))}%`;
+
+      // 4. Inputs
+      if (!skipFields) {
+        renderFormatFields();
+      }
+
+      // 5. Update local preview inside picker modal (without modifying activeSwatch until OK is clicked)
+      if (pickerPreviewSwatch) {
+        pickerPreviewSwatch.style.backgroundColor = hex;
+      }
+      if (pickerPreviewHex) {
+        pickerPreviewHex.innerText = hex;
+      }
+    }
+
+    function renderFormatFields() {
+      const { h, s, v, a } = pickerColor;
+      const { r, g, b } = hsvToRgb(h, s, v);
+      const hex = rgbToHex(r, g, b).replace('#', '');
+      const hsl = hsvToHsl(h, s, v);
+      const alphaPercent = Math.round(a * 100);
+
+      pickerFormatLabel.innerText = pickerFormat.toUpperCase();
+
+      pickerFormatMenu.querySelectorAll('.format-option').forEach(opt => {
+        if (opt.dataset.format === pickerFormat) {
+          opt.classList.add('active');
+        } else {
+          opt.classList.remove('active');
+        }
+      });
+
+      pickerFieldsContainer.innerHTML = '';
+
+      if (pickerFormat === 'hsl') {
+        const hInp = createNumInput(Math.round(hsl.h), 0, 360, (val) => {
+          const newHsv = hslToHsv(val, hsl.s, hsl.l);
+          pickerColor.h = newHsv.h;
+          pickerColor.s = newHsv.s;
+          pickerColor.v = newHsv.v;
+          renderPickerUI(true);
+        });
+        const sInp = createNumInput(Math.round(hsl.s * 100), 0, 100, (val) => {
+          const newHsv = hslToHsv(hsl.h, val / 100, hsl.l);
+          pickerColor.h = newHsv.h;
+          pickerColor.s = newHsv.s;
+          pickerColor.v = newHsv.v;
+          renderPickerUI(true);
+        });
+        const lInp = createNumInput(Math.round(hsl.l * 100), 0, 100, (val) => {
+          const newHsv = hslToHsv(hsl.h, hsl.s, val / 100);
+          pickerColor.h = newHsv.h;
+          pickerColor.s = newHsv.s;
+          pickerColor.v = newHsv.v;
+          renderPickerUI(true);
+        });
+        const aInp = createPercentInput(alphaPercent, (val) => {
+          pickerColor.a = val / 100;
+          renderPickerUI(true);
+        });
+
+        pickerFieldsContainer.appendChild(hInp);
+        pickerFieldsContainer.appendChild(sInp);
+        pickerFieldsContainer.appendChild(lInp);
+        pickerFieldsContainer.appendChild(aInp);
+      } else if (pickerFormat === 'hex') {
+        const hexInp = document.createElement('input');
+        hexInp.type = 'text';
+        hexInp.className = 'picker-text-input hex-field';
+        hexInp.value = hex;
+        hexInp.style.flex = '2';
+        hexInp.addEventListener('input', () => {
+          let clean = hexInp.value.replace('#', '').trim();
+          if (clean.length === 6) {
+            const parsed = parseColorToHsv('#' + clean);
+            pickerColor.h = parsed.h;
+            pickerColor.s = parsed.s;
+            pickerColor.v = parsed.v;
+            renderPickerUI(true);
+          }
+        });
+        hexInp.addEventListener('change', () => {
+          let clean = hexInp.value.replace('#', '').trim();
+          if (clean.length === 3) {
+            clean = clean[0] + clean[0] + clean[1] + clean[1] + clean[2] + clean[2];
+          }
+          if (clean.length === 6) {
+            const parsed = parseColorToHsv('#' + clean);
+            pickerColor.h = parsed.h;
+            pickerColor.s = parsed.s;
+            pickerColor.v = parsed.v;
+          }
+          renderPickerUI();
+        });
+
+        const aInp = createPercentInput(alphaPercent, (val) => {
+          pickerColor.a = val / 100;
+          renderPickerUI(true);
+        });
+
+        pickerFieldsContainer.appendChild(hexInp);
+        pickerFieldsContainer.appendChild(aInp);
+      } else if (pickerFormat === 'rgb') {
+        const rInp = createNumInput(r, 0, 255, (val) => {
+          const newHsv = rgbToHsv(val, g, b);
+          pickerColor.h = newHsv.h;
+          pickerColor.s = newHsv.s;
+          pickerColor.v = newHsv.v;
+          renderPickerUI(true);
+        });
+        const gInp = createNumInput(g, 0, 255, (val) => {
+          const newHsv = rgbToHsv(r, val, b);
+          pickerColor.h = newHsv.h;
+          pickerColor.s = newHsv.s;
+          pickerColor.v = newHsv.v;
+          renderPickerUI(true);
+        });
+        const bInp = createNumInput(b, 0, 255, (val) => {
+          const newHsv = rgbToHsv(r, g, val);
+          pickerColor.h = newHsv.h;
+          pickerColor.s = newHsv.s;
+          pickerColor.v = newHsv.v;
+          renderPickerUI(true);
+        });
+        const aInp = createPercentInput(alphaPercent, (val) => {
+          pickerColor.a = val / 100;
+          renderPickerUI(true);
+        });
+
+        pickerFieldsContainer.appendChild(rInp);
+        pickerFieldsContainer.appendChild(gInp);
+        pickerFieldsContainer.appendChild(bInp);
+        pickerFieldsContainer.appendChild(aInp);
+      } else if (pickerFormat === 'hsb') {
+        const hInp = createNumInput(Math.round(h), 0, 360, (val) => {
+          pickerColor.h = val;
+          renderPickerUI(true);
+        });
+        const sInp = createNumInput(Math.round(s * 100), 0, 100, (val) => {
+          pickerColor.s = val / 100;
+          renderPickerUI(true);
+        });
+        const bInp = createNumInput(Math.round(v * 100), 0, 100, (val) => {
+          pickerColor.v = val / 100;
+          renderPickerUI(true);
+        });
+        const aInp = createPercentInput(alphaPercent, (val) => {
+          pickerColor.a = val / 100;
+          renderPickerUI(true);
+        });
+
+        pickerFieldsContainer.appendChild(hInp);
+        pickerFieldsContainer.appendChild(sInp);
+        pickerFieldsContainer.appendChild(bInp);
+        pickerFieldsContainer.appendChild(aInp);
+      } else if (pickerFormat === 'css') {
+        const cssInp = document.createElement('input');
+        cssInp.type = 'text';
+        cssInp.className = 'picker-text-input';
+        cssInp.style.flex = '1';
+        cssInp.value = a < 1 ? `rgba(${r}, ${g}, ${b}, ${+(a.toFixed(2))})` : `hsl(${Math.round(hsl.h)}, ${Math.round(hsl.s * 100)}%, ${Math.round(hsl.l * 100)}%)`;
+        cssInp.addEventListener('change', () => {
+          const parsed = parseColorToHsv(cssInp.value);
+          pickerColor.h = parsed.h;
+          pickerColor.s = parsed.s;
+          pickerColor.v = parsed.v;
+          pickerColor.a = parsed.a;
+          renderPickerUI();
+        });
+        pickerFieldsContainer.appendChild(cssInp);
+      }
+    }
+
+    function createNumInput(initialVal, min, max, onChange) {
+      const inp = document.createElement('input');
+      inp.type = 'number';
+      inp.className = 'picker-num-input';
+      inp.min = min.toString();
+      inp.max = max.toString();
+      inp.value = initialVal.toString();
+      inp.addEventListener('input', () => {
+        let val = parseInt(inp.value, 10);
+        if (isNaN(val)) return;
+        val = Math.max(min, Math.min(max, val));
+        onChange(val);
+      });
+      inp.addEventListener('change', () => {
+        let val = parseInt(inp.value, 10);
+        if (isNaN(val)) val = min;
+        val = Math.max(min, Math.min(max, val));
+        inp.value = val.toString();
+        onChange(val);
+      });
+      return inp;
+    }
+
+    function createPercentInput(initialVal, onChange) {
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.className = 'picker-num-input';
+      inp.value = `${initialVal}%`;
+      inp.addEventListener('input', () => {
+        let val = parseInt(inp.value.replace('%', ''), 10);
+        if (isNaN(val)) return;
+        val = Math.max(0, Math.min(100, val));
+        onChange(val);
+      });
+      inp.addEventListener('focus', () => {
+        inp.value = inp.value.replace('%', '');
+        inp.select();
+      });
+      inp.addEventListener('blur', () => {
+        let val = parseInt(inp.value.replace('%', ''), 10);
+        if (isNaN(val)) val = 100;
+        val = Math.max(0, Math.min(100, val));
+        inp.value = `${val}%`;
+        onChange(val);
+      });
+      return inp;
+    }
+
+    function updateSatValFromPointer(e) {
+      const rect = pickerSatValBox.getBoundingClientRect();
+      const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+      const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+      pickerColor.s = x / rect.width;
+      pickerColor.v = 1 - (y / rect.height);
+      renderPickerUI();
+    }
+
+    pickerSatValBox.addEventListener('pointerdown', (e) => {
+      isDraggingSatVal = true;
+      pickerSatValBox.setPointerCapture(e.pointerId);
+      updateSatValFromPointer(e);
+    });
+
+    pickerSatValBox.addEventListener('pointermove', (e) => {
+      if (isDraggingSatVal) {
+        updateSatValFromPointer(e);
+      }
+    });
+
+    pickerSatValBox.addEventListener('pointerup', (e) => {
+      isDraggingSatVal = false;
+      try { pickerSatValBox.releasePointerCapture(e.pointerId); } catch(err) {}
+    });
+
+    function updateHueFromPointer(e) {
+      const rect = pickerHueTrack.getBoundingClientRect();
+      const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+      pickerColor.h = Math.round((x / rect.width) * 360) % 360;
+      renderPickerUI();
+    }
+
+    pickerHueTrack.addEventListener('pointerdown', (e) => {
+      isDraggingHue = true;
+      pickerHueTrack.setPointerCapture(e.pointerId);
+      updateHueFromPointer(e);
+    });
+
+    pickerHueTrack.addEventListener('pointermove', (e) => {
+      if (isDraggingHue) {
+        updateHueFromPointer(e);
+      }
+    });
+
+    pickerHueTrack.addEventListener('pointerup', (e) => {
+      isDraggingHue = false;
+      try { pickerHueTrack.releasePointerCapture(e.pointerId); } catch(err) {}
+    });
+
+    function updateAlphaFromPointer(e) {
+      const rect = pickerAlphaTrack.getBoundingClientRect();
+      const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+      pickerColor.a = Math.max(0, Math.min(1, +( (x / rect.width).toFixed(2) )));
+      renderPickerUI();
+    }
+
+    pickerAlphaTrack.addEventListener('pointerdown', (e) => {
+      isDraggingAlpha = true;
+      pickerAlphaTrack.setPointerCapture(e.pointerId);
+      updateAlphaFromPointer(e);
+    });
+
+    pickerAlphaTrack.addEventListener('pointermove', (e) => {
+      if (isDraggingAlpha) {
+        updateAlphaFromPointer(e);
+      }
+    });
+
+    pickerAlphaTrack.addEventListener('pointerup', (e) => {
+      isDraggingAlpha = false;
+      try { pickerAlphaTrack.releasePointerCapture(e.pointerId); } catch(err) {}
+    });
+
+    pickerFormatBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pickerFormatMenu.classList.toggle('open');
+    });
+
+    pickerFormatMenu.querySelectorAll('.format-option').forEach(opt => {
+      opt.addEventListener('click', (e) => {
+        e.stopPropagation();
+        pickerFormat = opt.dataset.format;
+        pickerFormatMenu.classList.remove('open');
+        renderFormatFields();
+      });
+    });
+
+    document.addEventListener('click', () => {
+      pickerFormatMenu.classList.remove('open');
+    });
+
+    function openPicker(e) {
+      activeSwatch = e.target;
+      const initialColor = activeSwatch.dataset.color || '#6750A4';
+      const parsed = parseColorToHsv(initialColor);
+      pickerColor.h = parsed.h;
+      pickerColor.s = parsed.s;
+      pickerColor.v = parsed.v;
+      pickerColor.a = parsed.a !== undefined ? parsed.a : 1;
+      renderPickerUI();
+      pickerModal.style.display = 'flex';
+    }
+
+    const closePicker = () => {
+      pickerModal.style.display = 'none';
+      pickerFormatMenu.classList.remove('open');
+    };
+
+    function applyChosenColor() {
+      const { h, s, v } = pickerColor;
+      const { r, g, b } = hsvToRgb(h, s, v);
+      const finalHex = rgbToHex(r, g, b);
+      if (activeSwatch) {
+        updateSwatchColor(activeSwatch, finalHex);
+      }
+      closePicker();
+    }
+
+    if (pickerCloseBtn) pickerCloseBtn.addEventListener('click', closePicker);
+    if (pickerCancelBtn) pickerCancelBtn.addEventListener('click', closePicker);
+    if (pickerApplyBtn) pickerApplyBtn.addEventListener('click', applyChosenColor);
+
+    pickerModal.addEventListener('click', (e) => {
+      if (e.target === pickerModal) {
+        closePicker();
+      }
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (pickerModal.style.display === 'flex') {
+        if (e.key === 'Escape') {
+          closePicker();
+        } else if (e.key === 'Enter') {
+          applyChosenColor();
+        }
+      }
+    });
+
+    document
+      .querySelectorAll("#fixed-container .color-swatch")
+      .forEach((swatch) => {
+        swatch.addEventListener("click", openPicker);
+      });
+
+    function deriveDarkBaseColor(lightHex) {
+      if (!lightHex) return "#FF6669";
+      const [h, s, l] = hexToHSL(lightHex);
+      const hDark = (h + 10) % 360;
+      const sDark = s;
+      const lDark = Math.min(95, Math.max(0, Math.round(l + 25)));
+      return hslToHex(hDark, sDark, lDark);
+    }
+
+    document.getElementById("create").onclick = () => {
+      const actionColor = "#2979FF";
+      const successColor = "#27AE60";
+      const warningColor = "#F2C94C";
+      const errorColor = "#e7000b";
+
+      const allSeeds = {
+        accessibility: { name: "accessibility", color: "#ffed00" },
+        action: { name: "action", color: actionColor },
+        actionDark: { name: "actionDark", color: deriveDarkBaseColor(actionColor) },
+        success: { name: "success", color: successColor },
+        successDark: { name: "successDark", color: deriveDarkBaseColor(successColor) },
+        warning: { name: "warning", color: warningColor },
+        warningDark: { name: "warningDark", color: deriveDarkBaseColor(warningColor) },
+        error: { name: "error", color: errorColor },
+        errorDark: { name: "errorDark", color: deriveDarkBaseColor(errorColor) }
+      };
+
+      document.querySelectorAll("#fixed-container .row").forEach((row) => {
+        const role = row.dataset.role;
+        if (!role) return;
+
+        const nameInput = row.querySelector('input[type="text"]');
+        const swatch = row.querySelector(".color-swatch");
+        const customName = nameInput.value.trim() || role;
+
+        allSeeds[role] = {
+          name: customName,
+          color: swatch.dataset.color,
+        };
+      });
+
+      // Zbieramy presety i fonty
+      const radiusPreset = document.getElementById("radius-preset").value || 'default';
+      const spacingPreset = document.getElementById("spacing-preset").value || 'default';
+      const buttonHoverPreset = document.getElementById("button-hover-preset") ? document.getElementById("button-hover-preset").value : 'color';
+      const baseFontSize = parseInt(document.getElementById("base-font-size").value, 10) || 16;
+      const headersFont = document.getElementById("headers-font").value || 'Inter';
+      const bodyFont = document.getElementById("body-font").value || 'Inter';
+
+      const headersStyles = {
+        regular: document.getElementById("headers-weight-reg").value || 'Regular',
+        medium: document.getElementById("headers-weight-med").value || 'Medium',
+        bold: document.getElementById("headers-weight-bold").value || 'Bold'
+      };
+      const bodyStyles = {
+        regular: document.getElementById("body-weight-reg").value || 'Regular',
+        medium: document.getElementById("body-weight-med").value || 'Medium',
+        bold: document.getElementById("body-weight-bold").value || 'Bold'
+      };
+
+      const lsHeading = parseFloat(document.getElementById("ls-heading") ? document.getElementById("ls-heading").value : 0) || 0;
+      const lsDisplay = parseFloat(document.getElementById("ls-display").value) || 0;
+      const lsOthers = parseFloat(document.getElementById("ls-others").value) || 0;
+      const psDisplay = parseFloat(document.getElementById("ps-display").value) || 0;
+      const psOthers = parseFloat(document.getElementById("ps-others").value) || 0;
+      const piDisplay = parseFloat(document.getElementById("pi-display").value) || 0;
+      const piOthers = parseFloat(document.getElementById("pi-others").value) || 0;
+      const wrapDisplay = document.getElementById("wrap-display").value || 'BALANCE';
+      const wrapOthers = document.getElementById("wrap-others").value || 'BALANCE';
+
+      let layoutMarginXl = parseInt(document.getElementById("layout-margin-xl").value, 10) || 72;
+      if (layoutMarginXl < 32) layoutMarginXl = 32;
+      if (layoutMarginXl > 200) layoutMarginXl = 200;
+
+      const lgVal = document.getElementById("layout-margin-lg").value.trim();
+      const layoutMarginLg = lgVal !== "" ? Math.max(16, Math.min(parseInt(lgVal, 10) || 0, 200)) : null;
+
+      const val2xl = document.getElementById("layout-margin-2xl").value.trim();
+      const layoutMargin2xl = val2xl !== "" ? Math.max(32, Math.min(parseInt(val2xl, 10) || 0, 300)) : null;
+
+      const customColorsPayload = customColorsList.map(cc => ({
+        name: (cc.name || 'custom').trim(),
+        color: cc.color || '#6750A4'
+      })).filter(cc => cc.name && cc.color);
+
+      const customGradientsPayload = customGradientsList.map(cg => ({
+        name: (cg.name || 'custom').trim(),
+        mode: cg.mode || 'all-8',
+        angle: cg.angle !== undefined ? cg.angle : 90,
+        scale: cg.scale !== undefined ? cg.scale : 100,
+        offsetX: cg.offsetX !== undefined ? cg.offsetX : 0,
+        offsetY: cg.offsetY !== undefined ? cg.offsetY : 0,
+        stops: cg.stops && cg.stops.length >= 2 ? cg.stops : [{ color: '#6750A4', position: 0 }, { color: '#FF8008', position: 100 }]
+      })).filter(cg => cg.stops.length >= 2);
+
+      parent.postMessage(
+        {
+          pluginMessage: {
+            type: "create-palette",
+            seeds: allSeeds,
+            radiusPreset,
+            spacingPreset,
+            buttonHoverPreset,
+            baseFontSize,
+            lhHeading: document.getElementById("lh-heading") ? document.getElementById("lh-heading").value : "default",
+            lhDisplay: document.getElementById("lh-display") ? document.getElementById("lh-display").value : "default",
+            lhOthers: document.getElementById("lh-others") ? document.getElementById("lh-others").value : "default",
+            headersFont: headersFont,
+            headersStyles: headersStyles,
+            bodyFont: bodyFont,
+            bodyStyles: bodyStyles,
+            lsHeading, lsDisplay, lsOthers,
+            psDisplay, psOthers,
+            piDisplay, piOthers,
+            wrapDisplay, wrapOthers,
+            layoutMarginXl,
+            layoutMarginLg,
+            layoutMargin2xl,
+            customColors: customColorsPayload,
+            customGradients: customGradientsPayload
+          },
+        },
+        "*",
+      );
+    };
+
+    let initialHeadersFont = "Inter";
+    let initialBodyFont = "Inter";
+    let allFontStylesMap = {};
+    let savedHeadersStyles = null;
+    let savedBodyStyles = null;
+
+    function findBestMatchingStyle(styles, target) {
+      if (!styles || styles.length === 0) return target;
+      const targetLower = target.toLowerCase();
+      
+      const exact = styles.find(s => s.toLowerCase() === targetLower);
+      if (exact) return exact;
+      
+      if (targetLower === 'regular') {
+        const regSynonyms = ['normal', 'roman', 'book', '400', 'text regular', 'plain'];
+        for (const syn of regSynonyms) {
+          const m = styles.find(s => s.toLowerCase() === syn);
+          if (m) return m;
+        }
+        const nonItalicReg = styles.find(s => !s.toLowerCase().includes('italic') && (s.toLowerCase().includes('regular') || s.toLowerCase().includes('normal')));
+        if (nonItalicReg) return nonItalicReg;
+        const nonItalic = styles.find(s => !s.toLowerCase().includes('italic'));
+        if (nonItalic) return nonItalic;
+        return styles[0];
+      }
+      
+      if (targetLower === 'medium') {
+        const medSynonyms = ['500', 'medium', 'semibold', 'semi bold', 'demi', 'demibold', 'demi bold'];
+        for (const syn of medSynonyms) {
+          const m = styles.find(s => s.toLowerCase() === syn);
+          if (m) return m;
+        }
+        const nonItalicMed = styles.find(s => !s.toLowerCase().includes('italic') && (s.toLowerCase().includes('medium') || s.toLowerCase().includes('semibold') || s.toLowerCase().includes('semi bold')));
+        if (nonItalicMed) return nonItalicMed;
+        return findBestMatchingStyle(styles, 'regular');
+      }
+      
+      if (targetLower === 'bold') {
+        const boldSynonyms = ['700', 'bold', 'black', 'heavy', 'extrabold', 'extra bold', '800', '900', 'semibold', 'semi bold'];
+        for (const syn of boldSynonyms) {
+          const m = styles.find(s => s.toLowerCase() === syn);
+          if (m) return m;
+        }
+        const nonItalicBold = styles.find(s => !s.toLowerCase().includes('italic') && (s.toLowerCase().includes('bold') || s.toLowerCase().includes('black') || s.toLowerCase().includes('heavy')));
+        if (nonItalicBold) return nonItalicBold;
+        return styles[styles.length - 1];
+      }
+      
+      return styles[0];
+    }
+
+    const STANDARD_STYLE_KEYS = new Set([
+      'thin', 'thinitalic', 'italicthin',
+      'extralight', 'extralightitalic', 'italicextralight',
+      'ultralight', 'ultralightitalic', 'italicultralight',
+      'light', 'lightitalic', 'italiclight',
+      'regular', 'regularitalic', 'italicregular', 'normal', 'normalitalic', 'italicnormal', 'italic',
+      'medium', 'mediumitalic', 'italicmedium',
+      'semibold', 'semibolditalic', 'italicsemibold',
+      'demibold', 'demibolditalic', 'italicdemibold',
+      'bold', 'bolditalic', 'italicbold',
+      'extrabold', 'extrabolditalic', 'italicextrabold',
+      'ultrabold', 'ultrabolditalic', 'italicultrabold',
+      'black', 'blackitalic', 'italicblack',
+      'heavy', 'heavyitalic', 'italicheavy'
+    ]);
+
+    function normalizeStyleName(style) {
+      return (style || '').toLowerCase().replace(/[\s\-_]/g, '');
+    }
+
+    function isNonStandardFont(styles) {
+      if (!styles || styles.length === 0) return false;
+
+      // 1. Każdy styl w foncie musi należeć do standardowego zbioru 9 wag (lub 18 z italicami)
+      const allStylesStandard = styles.every(s => STANDARD_STYLE_KEYS.has(normalizeStyleName(s)));
+      if (!allStylesStandard) {
+        return true; // Posiada niestandardowe odmiany (np. Condensed, Extended, Text, Book, Roman, etc.)
+      }
+
+      // 2. Musi posiadać 3 bazowe wagi wymagane przez system (Regular, Medium/SemiBold, Bold)
+      const hasRegular = styles.some(s => {
+        const k = normalizeStyleName(s);
+        return k === 'regular' || k === 'normal' || k === 'italic';
+      });
+      const hasMedium = styles.some(s => {
+        const k = normalizeStyleName(s);
+        return k === 'medium' || k === 'semibold' || k === 'demibold';
+      });
+      const hasBold = styles.some(s => {
+        const k = normalizeStyleName(s);
+        return k === 'bold' || k === 'extrabold' || k === 'black' || k === 'heavy';
+      });
+
+      if (hasRegular && hasMedium && hasBold) {
+        return false; // Standardowy font -> ukrywamy override
+      }
+
+      return true; // Brakuje kluczowych wag -> pokazujemy override
+    }
+
+    function updateFontStylesUI(type, family, overrideStyles) {
+      const styles = allFontStylesMap[family] || ['Regular', 'Medium', 'Bold'];
+      const row = document.getElementById(`${type}-weights-row`);
+      const regSel = document.getElementById(`${type}-weight-reg`);
+      const medSel = document.getElementById(`${type}-weight-med`);
+      const boldSel = document.getElementById(`${type}-weight-bold`);
+
+      const optionsHtml = styles.map(s => `<option value="${s}">${s}</option>`).join('');
+      regSel.innerHTML = optionsHtml;
+      medSel.innerHTML = optionsHtml;
+      boldSel.innerHTML = optionsHtml;
+
+      const regVal = (overrideStyles && overrideStyles.regular && styles.includes(overrideStyles.regular)) 
+        ? overrideStyles.regular 
+        : findBestMatchingStyle(styles, 'regular');
+      const medVal = (overrideStyles && overrideStyles.medium && styles.includes(overrideStyles.medium)) 
+        ? overrideStyles.medium 
+        : findBestMatchingStyle(styles, 'medium');
+      const boldVal = (overrideStyles && overrideStyles.bold && styles.includes(overrideStyles.bold)) 
+        ? overrideStyles.bold 
+        : findBestMatchingStyle(styles, 'bold');
+
+      regSel.value = regVal;
+      medSel.value = medVal;
+      boldSel.value = boldVal;
+
+      if (isNonStandardFont(styles)) {
+        row.style.display = 'flex';
+      } else {
+        row.style.display = 'none';
+      }
+    }
+
+    document.getElementById("headers-font").addEventListener("change", (e) => {
+      updateFontStylesUI('headers', e.target.value);
+    });
+    document.getElementById("body-font").addEventListener("change", (e) => {
+      updateFontStylesUI('body', e.target.value);
+    });
+
+    // --- Local Token Bridge Integration ---
+    function updateBridgeUI(isOnline, text) {
+      const dot = document.getElementById("bridge-dot");
+      const label = document.getElementById("bridge-text");
+      const headerStatus = document.getElementById("bridgeHeaderStatus");
+      if (headerStatus) {
+        headerStatus.textContent = isOnline ? "Bridge Online" : "Bridge Offline";
+      }
+      if (!dot || !label) return;
+      if (isOnline) {
+        dot.style.background = "#10B981";
+        dot.style.boxShadow = "0 0 6px rgba(16, 185, 129, 0.4)";
+        label.style.color = "#34D399";
+        label.textContent = text || "Mostek aktywny (localhost:3050)";
+      } else {
+        dot.style.background = "#71717A";
+        dot.style.boxShadow = "none";
+        label.style.color = "#8E8E93";
+        label.textContent = text || "Mostek offline (localhost:3050)";
+      }
+    }
+
+    const BRIDGE_URLS = ["http://localhost:3050"];
+    let activeBridgeUrl = "http://localhost:3050";
+
+    async function checkBridgeStatus() {
+      for (const url of BRIDGE_URLS) {
+        try {
+          const res = await fetch(`${url}/status`, { method: "GET" });
+          if (res.ok) {
+            activeBridgeUrl = url;
+            updateBridgeUI(true, "Mostek online (localhost:3050)");
+            return true;
+          }
+        } catch (e) {}
+      }
+      updateBridgeUI(false, "Mostek offline (localhost:3050)");
+      return false;
+    }
+
+    async function sendTokensToBridge(jsonString, isAutoSync = false) {
+      for (const url of [activeBridgeUrl, ...BRIDGE_URLS.filter(u => u !== activeBridgeUrl)]) {
+        try {
+          const response = await fetch(`${url}/api/tokens`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: jsonString
+          });
+          if (response.ok) {
+            activeBridgeUrl = url;
+            const now = new Date().toLocaleTimeString();
+            updateBridgeUI(true, `Zsynchronizowano z projektem! (${now})`);
+            return true;
+          }
+        } catch (err) {}
+      }
+      updateBridgeUI(false, "Mostek offline (localhost:3050)");
+      return false;
+    }
+
+    function downloadJsonFile(jsonString, filename = "variables.json") {
+      try {
+        const blob = new Blob([jsonString], { type: "application/json;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch (e) {
+        console.error("Download failed:", e);
+      }
+    }
+
+    const bridgeRefreshBtn = document.getElementById("bridge-refresh-btn");
+    if (bridgeRefreshBtn) {
+      bridgeRefreshBtn.addEventListener("click", () => {
+        checkBridgeStatus();
+      });
+    }
+
+    // Check status on load and poll every 30s
+    setTimeout(checkBridgeStatus, 500);
+    setInterval(checkBridgeStatus, 30000);
+
+    const exportBtn = document.getElementById("export-vars-btn");
+    if (exportBtn) {
+      exportBtn.addEventListener("click", () => {
+        parent.postMessage({ pluginMessage: { type: "export-variables" } }, "*");
+      });
+    }
+
+    window.onmessage = (event) => {
+      const msg = event.data.pluginMessage;
+      if (!msg) return;
+
+      if (msg.type === "export-variables-result") {
+        const isAutoSync = Boolean(msg.autoSync);
+
+        // Attempt sending payload to local token bridge
+        sendTokensToBridge(msg.json, isAutoSync).then((synced) => {
+          // If manual export (not autoSync) and bridge didn't sync, download file as fallback
+          if (!isAutoSync) {
+            downloadJsonFile(msg.json, msg.filename || "variables.json");
+          }
+        });
+        return;
+      }
+
+      if (msg.type === "fonts-loaded") {
+        allFontStylesMap = msg.fontStyles || {};
+        const fontList = msg.fonts;
+        const headersSelect = document.getElementById("headers-font");
+        const bodySelect = document.getElementById("body-font");
+
+        headersSelect.innerHTML = "";
+        bodySelect.innerHTML = "";
+
+        fontList.forEach((font) => {
+          const opt1 = document.createElement("option");
+          opt1.value = font;
+          opt1.innerText = font;
+          headersSelect.appendChild(opt1);
+
+          const opt2 = document.createElement("option");
+          opt2.value = font;
+          opt2.innerText = font;
+          bodySelect.appendChild(opt2);
+        });
+
+        headersSelect.value = initialHeadersFont;
+        bodySelect.value = initialBodyFont;
+
+        updateFontStylesUI('headers', headersSelect.value, savedHeadersStyles);
+        updateFontStylesUI('body', bodySelect.value, savedBodyStyles);
+      }
+      else if (msg.type === "load-settings") {
+        const savedSeeds = msg.seeds;
+        if (msg.fontStyles) allFontStylesMap = msg.fontStyles;
+
+        if (msg.headersStyles) savedHeadersStyles = msg.headersStyles;
+        if (msg.bodyStyles) savedBodyStyles = msg.bodyStyles;
+
+        if (msg.headersFont) {
+          initialHeadersFont = msg.headersFont;
+          const headersSelect = document.getElementById("headers-font");
+          if (headersSelect && Array.from(headersSelect.options).some(opt => opt.value === msg.headersFont)) {
+            headersSelect.value = msg.headersFont;
+          }
+        }
+        if (msg.bodyFont) {
+          initialBodyFont = msg.bodyFont;
+          const bodySelect = document.getElementById("body-font");
+          if (bodySelect && Array.from(bodySelect.options).some(opt => opt.value === msg.bodyFont)) {
+            bodySelect.value = msg.bodyFont;
+          }
+        }
+
+        updateFontStylesUI('headers', document.getElementById("headers-font").value, savedHeadersStyles);
+        updateFontStylesUI('body', document.getElementById("body-font").value, savedBodyStyles);
+
+        if (msg.radiusPreset) document.getElementById("radius-preset").value = msg.radiusPreset;
+        if (msg.spacingPreset) document.getElementById("spacing-preset").value = msg.spacingPreset;
+        if (msg.buttonHoverPreset && document.getElementById("button-hover-preset")) {
+          document.getElementById("button-hover-preset").value = msg.buttonHoverPreset;
+        }
+        if (msg.baseFontSize) document.getElementById("base-font-size").value = msg.baseFontSize;
+        if (msg.lhHeading && document.getElementById("lh-heading")) {
+          document.getElementById("lh-heading").value = msg.lhHeading;
+        }
+        if (msg.lhDisplay && document.getElementById("lh-display")) {
+          document.getElementById("lh-display").value = msg.lhDisplay;
+        }
+        if (msg.lhOthers && document.getElementById("lh-others")) {
+          document.getElementById("lh-others").value = msg.lhOthers;
+        }
+
+        if (msg.lsHeading !== undefined && document.getElementById("ls-heading")) {
+          document.getElementById("ls-heading").value = msg.lsHeading;
+        }
+        if (msg.lsDisplay !== undefined) document.getElementById("ls-display").value = msg.lsDisplay;
+        if (msg.lsOthers !== undefined) document.getElementById("ls-others").value = msg.lsOthers;
+        if (msg.psDisplay !== undefined) document.getElementById("ps-display").value = msg.psDisplay;
+        if (msg.psOthers !== undefined) document.getElementById("ps-others").value = msg.psOthers;
+
+        if (msg.piDisplay !== undefined) document.getElementById("pi-display").value = msg.piDisplay;
+        if (msg.piOthers !== undefined) document.getElementById("pi-others").value = msg.piOthers;
+
+        if (msg.wrapDisplay !== undefined) document.getElementById("wrap-display").value = msg.wrapDisplay;
+        if (msg.wrapOthers !== undefined) document.getElementById("wrap-others").value = msg.wrapOthers;
+
+        if (msg.layoutMarginXl !== undefined) document.getElementById("layout-margin-xl").value = msg.layoutMarginXl;
+        if (msg.layoutMarginLg !== undefined && msg.layoutMarginLg !== null) {
+          document.getElementById("layout-margin-lg").value = msg.layoutMarginLg;
+        }
+        if (msg.layoutMargin2xl !== undefined && msg.layoutMargin2xl !== null) {
+          document.getElementById("layout-margin-2xl").value = msg.layoutMargin2xl;
+        }
+
+        if (msg.customColors && Array.isArray(msg.customColors)) {
+          customColorsList = msg.customColors;
+        } else {
+          customColorsList = [];
+        }
+        renderAllCustomColors();
+
+        if (msg.customGradients && Array.isArray(msg.customGradients)) {
+          customGradientsList = msg.customGradients;
+        } else {
+          customGradientsList = [];
+        }
+        renderAllGradientCards();
+
+        for (const [role, data] of Object.entries(savedSeeds)) {
+          const row = document.querySelector(`#fixed-container .row[data-role="${role}"]`);
+          if (row) {
+            const nameInput = row.querySelector('input[type="text"]');
+            const swatch = row.querySelector(".color-swatch");
+
+            let colorHex = swatch.dataset.color;
+            let colorName = role;
+
+            if (typeof data === "string") {
+              colorHex = data;
+            } else if (data && typeof data === "object") {
+              colorHex = data.color || colorHex;
+              colorName = data.name || role;
+            }
+
+            nameInput.value = colorName;
+            updateSwatchColor(swatch, colorHex);
+          }
+        }
+      }
+    };
+
+    function hslToHex(h, s, l) {
+      l /= 100;
+      const a = (s * Math.min(l, 1 - l)) / 100;
+      const f = (n) => {
+        const k = (n + h / 30) % 12;
+        const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+        return Math.round(255 * color)
+          .toString(16)
+          .padStart(2, "0");
+      };
+      return `#${f(0)}${f(8)}${f(4)}`.toUpperCase();
+    }
+    function hexToHSL(H) {
+      let r = 0,
+        g = 0,
+        b = 0;
+      if (H.length == 4) {
+        r = "0x" + H[1] + H[1];
+        g = "0x" + H[2] + H[2];
+        b = "0x" + H[3] + H[3];
+      } else if (H.length == 7) {
+        r = "0x" + H[1] + H[2];
+        g = "0x" + H[3] + H[4];
+        b = "0x" + H[5] + H[6];
+      }
+      r /= 255;
+      g /= 255;
+      b /= 255;
+      let cmin = Math.min(r, g, b),
+        cmax = Math.max(r, g, b),
+        delta = cmax - cmin;
+      let h = 0,
+        s = 0,
+        l = 0;
+      if (delta == 0) h = 0;
+      else if (cmax == r) h = ((g - b) / delta) % 6;
+      else if (cmax == g) h = (b - r) / delta + 2;
+      else h = (r - g) / delta + 4;
+      h = Math.round(h * 60);
+      if (h < 0) h += 360;
+      l = (cmax + cmin) / 2;
+      s = delta == 0 ? 0 : delta / (1 - Math.abs(2 * l - 1));
+      s = +(s * 100).toFixed(1);
+      l = +(l * 100).toFixed(1);
+      return [Math.round(h), Math.round(s), Math.round(l)];
+    }
+
+    // Auto-resize plugin window to match content height
+    const resizeObserver = new ResizeObserver((entries) => {
+      const height = Math.ceil(document.documentElement.scrollHeight || document.body.scrollHeight);
+      parent.postMessage({ pluginMessage: { type: 'resize', height: height } }, '*');
+    });
+    resizeObserver.observe(document.body);
+  </script>
+</body>
+
+</html>

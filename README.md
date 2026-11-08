@@ -18,9 +18,18 @@ A productivity-focused Figma plugin designed to accelerate component architectur
 * **Slash-Group Column Stacking:** Groups elements sharing a common prefix before the slash (e.g. `button/default`, `button/secondary`, `button/ghost`) and stacks them vertically into columns.
 * **Clean Canvas & Collapsed Layers:** Automatically clears selection and collapses all container layers in Figma's Layers panel (`Alt + L`) after arranging.
 
-### 🔍 3. Numeric Variable Inspector & Binder
-* Inspect and bind numeric variables across multiple layers simultaneously.
-* Find unbound properties and ensure design system token consistency across components.
+### 🔍 3. Numeric Variable Inspector & Token Audit
+* **Audit Selection / Page for Unbound & Missing Tokens:** Deep-scans active selection (or current page) for `gap` (`itemSpacing`, `counterAxisSpacing`), `paddings` (top, bottom, left, right), and `corner radius` (uniform and individual corners).
+* **Detect Unbound & Missing Variables:** Instantly flags hardcoded numeric values lacking variable bindings and identifies broken or missing variable aliases.
+* **Interactive Navigation & Auto-Select:** Click any issue card to select and zoom into the offending layer on canvas, or select all layers with issues simultaneously.
+* **Token Matching Suggestions:** Highlights matching design system tokens (e.g. `base`, `medium`, `large`) for arbitrary values.
+
+### ✏️ 4. Retextifier — Multi-Input Text Replacement
+* **Deep Detection:** Recursively scans current selection to identify all nested text layers (e.g. inside cards, frames, components, or groups).
+* **Dynamic UI:** Automatically generates exactly as many input fields as text layers detected, displaying current text and layer hierarchy.
+* **Multi-Paste (Ctrl+V):** Intercepts clipboard content and splits multiple text strings sequentially across generated inputs.
+* **Missing Match Protection:** Extra inputs remain empty and are ignored, leaving canvas layers untouched when fewer strings are pasted.
+* **Font-Safe Canvas Apply:** Loads fonts (including mixed font ranges) and updates canvas text layers upon clicking Apply.
 
 ---
 
