@@ -3,6 +3,8 @@ import {
   sanitizePascalCase,
   toPascalCase
 } from '../utils/strings';
+import { isSystemOrIgnoredNode } from '../utils/nodes';
+import { CACHED_VARIABLES_MAP, CACHED_STYLE_ID_TO_LABEL_MAP } from '../variables/autoBinder';
 
 const VALID_TEXT_ROLES: string[] = [
   'Title', 'Subtitle', 'Heading', 'Subheading', 'Headline', 'Display',
@@ -177,6 +179,7 @@ export function classifyTextLayerSemantic(item: {
   characters?: string;
   fontSize?: number | string;
   fontStyle?: string;
+  fontFamily?: string;
   textStyleName?: string;
   fillTokenName?: string;
   parentName?: string;
@@ -199,6 +202,20 @@ export function classifyTextLayerSemantic(item: {
   nextSiblingType?: string;
   indexInParent?: number;
 }): string {
+  // PRIORYTET 0: Detekcja ikon tekstowych (Material Symbols / Icon Styles)
+  const styleName = (item.textStyleName || '').toLowerCase();
+  const fontFamily = (item.fontFamily || (item as any).fontFamily || '').toLowerCase();
+  const siblingIndex = typeof item.siblingIndex === 'number' ? item.siblingIndex : 0;
+  const totalSiblings = typeof item.totalSiblingTexts === 'number' ? item.totalSiblingTexts : 1;
+  const isIcon = styleName.startsWith('icon/') || styleName.includes('/icon/') || fontFamily.includes('material symbols') || /material symbols/i.test(styleName);
+  if (isIcon) {
+    if (totalSiblings > 1) {
+      if (siblingIndex === 0) return 'LeadingIcon';
+      if (siblingIndex === totalSiblings - 1) return 'TrailingIcon';
+    }
+    return 'Icon';
+  }
+
   // PRIORYTET 1: Poszanowanie istniejacej, semantycznej nazwy roboczej (Existing Semantic Name Lock)
   if (item.currentName) {
     const existingRole = getExistingSemanticRole(item.currentName, item.characters || '');
@@ -220,12 +237,9 @@ export function classifyTextLayerSemantic(item: {
   const parentLower = parentName.toLowerCase();
   const rootCompName = (item.rootComponentName || '').trim();
   const rootLower = rootCompName.toLowerCase();
-  const styleName = (item.textStyleName || '').toLowerCase();
   const fillName = (item.fillTokenName || '').toLowerCase();
   const weight = (item.fontStyle || '').toLowerCase();
   const fontSize = typeof item.fontSize === 'number' ? item.fontSize : 14;
-  const siblingIndex = typeof item.siblingIndex === 'number' ? item.siblingIndex : 0;
-  const totalSiblings = typeof item.totalSiblingTexts === 'number' ? item.totalSiblingTexts : 1;
   const isLoose = Boolean(item.isLooseText || item.hasInstanceSibling);
   const prevType = item.prevSiblingType || '';
   const nextType = item.nextSiblingType || '';
@@ -427,13 +441,18 @@ export function classifyTextLayerSemantic(item: {
 }
 
 export async function getNodeFillTokenName(node: TextNode): Promise<string> {
+  const syncVal = getNodeFillTokenNameSync(node);
+  if (syncVal) return syncVal;
   try {
     if (node.boundVariables && (node.boundVariables as any).fills) {
       const boundFills = (node.boundVariables as any).fills;
       if (Array.isArray(boundFills) && boundFills.length > 0 && boundFills[0]?.id) {
         const varId = boundFills[0].id;
         const variable = await figma.variables.getVariableByIdAsync(varId).catch(() => null);
-        if (variable) return variable.name;
+        if (variable) {
+          CACHED_VARIABLES_MAP.set(variable.id, variable);
+          return variable.name;
+        }
       }
     }
     if (node.fills && Array.isArray(node.fills) && node.fills.length > 0) {
@@ -443,7 +462,10 @@ export async function getNodeFillTokenName(node: TextNode): Promise<string> {
         const varId = colorVar.id;
         if (varId) {
           const variable = await figma.variables.getVariableByIdAsync(varId).catch(() => null);
-          if (variable) return variable.name;
+          if (variable) {
+            CACHED_VARIABLES_MAP.set(variable.id, variable);
+            return variable.name;
+          }
         }
       }
     }
@@ -460,7 +482,10 @@ export function getNodeFillTokenNameSync(node: TextNode): string {
     if (node.boundVariables && (node.boundVariables as any).fills) {
       const boundFills = (node.boundVariables as any).fills;
       if (Array.isArray(boundFills) && boundFills.length > 0 && boundFills[0]?.id) {
-        const v = (figma.variables as any).getVariableById(boundFills[0].id);
+        const varId = boundFills[0].id;
+        const cached = CACHED_VARIABLES_MAP.get(varId);
+        if (cached) return cached.name;
+        const v = (figma.variables as any).getVariableById(varId);
         if (v) return v.name;
       }
     }
@@ -469,6 +494,8 @@ export function getNodeFillTokenNameSync(node: TextNode): string {
       if (firstPaint && typeof firstPaint === 'object' && (firstPaint as any).boundVariables?.color) {
         const colorVar = (firstPaint as any).boundVariables.color;
         if (colorVar.id) {
+          const cached = CACHED_VARIABLES_MAP.get(colorVar.id);
+          if (cached) return cached.name;
           const v = (figma.variables as any).getVariableById(colorVar.id);
           if (v) return v.name;
         }
@@ -485,10 +512,13 @@ export function getNodeFillTokenNameSync(node: TextNode): string {
 export function classifyTextNodeDirectly(txt: TextNode): string {
   let textStyleName = '';
   if (typeof txt.textStyleId === 'string' && txt.textStyleId) {
-    try {
-      const style = figma.getStyleById(txt.textStyleId);
-      if (style) textStyleName = style.name;
-    } catch (_) {}
+    textStyleName = CACHED_STYLE_ID_TO_LABEL_MAP.get(txt.textStyleId) || '';
+    if (!textStyleName) {
+      try {
+        const style = figma.getStyleById(txt.textStyleId);
+        if (style) textStyleName = style.description ? `${style.name} ${style.description}` : style.name;
+      } catch (_) {}
+    }
   }
 
   const fillTokenName = getNodeFillTokenNameSync(txt);
@@ -513,10 +543,13 @@ export function classifyTextNodeDirectly(txt: TextNode): string {
   const siblingTexts = textSiblings.map(s => {
     let sStyle = '';
     if (typeof s.textStyleId === 'string' && s.textStyleId) {
-      try {
-        const st = figma.getStyleById(s.textStyleId);
-        if (st) sStyle = st.name;
-      } catch (_) {}
+      sStyle = CACHED_STYLE_ID_TO_LABEL_MAP.get(s.textStyleId) || '';
+      if (!sStyle) {
+        try {
+          const st = figma.getStyleById(s.textStyleId);
+          if (st) sStyle = st.description ? `${st.name} ${st.description}` : st.name;
+        } catch (_) {}
+      }
     }
     const sFill = getNodeFillTokenNameSync(s);
     const sWeight = (s.fontName && typeof s.fontName === 'object' && 'style' in s.fontName)
@@ -570,6 +603,9 @@ export function classifyTextNodeDirectly(txt: TextNode): string {
 
 export async function sanitizeLayerNames(node: BaseNode, isPascalCaseOnly: boolean = false) {
   if (!node) return;
+  if (isSystemOrIgnoredNode(node as any)) {
+    return;
+  }
 
   // Skip instances of other components completely ("oprócz instancji komponentów")
   if (node.type === 'INSTANCE') {

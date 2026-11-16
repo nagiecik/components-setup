@@ -11,6 +11,7 @@ export interface TargetPropDef {
 export interface AutoPropsOptions {
   enableText?: boolean;
   enableInstanceSwap?: boolean;
+  enableInstanceShow?: boolean;
   enableBoolean?: boolean;
   enableSlotExtract?: boolean;
   enableTextVisibility?: boolean;
@@ -18,6 +19,7 @@ export interface AutoPropsOptions {
   disabledInstanceSwapNames?: string[];
   disabledTextNames?: string[];
   instanceSwapDecisions?: Record<string, boolean>;
+  instanceShowDecisions?: Record<string, boolean>;
   textVisibilityDecisions?: Record<string, boolean>;
   nestedInstanceDecisions?: Record<string, boolean>;
 }

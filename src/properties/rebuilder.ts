@@ -1,4 +1,5 @@
 import { AutoPropsOptions, TargetPropDef } from '../types/auto-props';
+import { isIgnoredName, isSystemOrIgnoredNode, isSystemOrIgnoredPropName, purgeIgnoredPropertiesAndReferencesSync, safeGetComponentPropertyDefinitions } from '../utils/nodes';
 import {
   findDirectSlotContainers,
   isInsideSlot,
@@ -34,20 +35,56 @@ export function cleanRebuildComponentProperties(
     return { textPropsCount: 0, instanceSwapPropsCount: 0, booleanPropsCount: 0, nestedInstancesCount: 0 };
   }
 
-  let primaryVariant: SceneNode = propertyHost;
-  if (propertyHost.type === 'COMPONENT_SET') {
-    const compSet = propertyHost as ComponentSetNode;
-    primaryVariant = compSet.defaultVariant || variants[0] || compSet;
-  } else if (variants.length > 0) {
-    primaryVariant = variants[0];
-  }
+  try {
+    let primaryVariant: SceneNode = propertyHost;
+    if (propertyHost.type === 'COMPONENT_SET') {
+      const compSet = propertyHost as ComponentSetNode;
+      primaryVariant = compSet.defaultVariant || variants[0] || compSet;
+    } else if (variants.length > 0) {
+      primaryVariant = variants[0];
+    }
 
-  const oldDefs = propertyHost.componentPropertyDefinitions || {};
+    // 0. Pre-purge: Purge any ignored/system properties and bindings from propertyHost immediately
+    try {
+      purgeIgnoredPropertiesAndReferencesSync(propertyHost);
+    } catch (_) {}
+
+    const oldDefs = safeGetComponentPropertyDefinitions(propertyHost);
+
+    // 0. Pre-clean: Strictly purge all property bindings and nested instance exposures from all system/ignored nodes
+    const sanitizeNodeExposureAndBindings = (n: SceneNode) => {
+      try {
+        if (!n || (n as any).removed) return;
+        if (isSystemOrIgnoredNode(n) || (n.name && isSystemOrIgnoredPropName(n.name))) {
+          if ('componentPropertyReferences' in n) {
+            try { (n as any).componentPropertyReferences = null; } catch (_) {}
+          }
+          if (n.type === 'INSTANCE') {
+            try { (n as InstanceNode).isExposedInstance = false; } catch (_) {}
+          }
+          if ('children' in n && (n as any).children) {
+            for (const ch of (n as any).children) {
+              sanitizeNodeExposureAndBindings(ch);
+            }
+          }
+          return;
+        }
+        if ('children' in n && (n as any).children) {
+          for (const ch of (n as any).children) {
+            sanitizeNodeExposureAndBindings(ch);
+          }
+        }
+      } catch (_) {}
+    };
+    for (const v of variants) {
+      sanitizeNodeExposureAndBindings(v);
+    }
 
   const existingBindingsByPropKey = new Map<string, Array<{ node: SceneNode; refType: 'visible' | 'characters' | 'mainComponent' | 'slot' }>>();
   for (const variant of variants) {
     const scanBindings = (n: SceneNode) => {
       if (isInsideSlot(n, variant)) return;
+      if (isSystemOrIgnoredNode(n)) return; // Strictly ignore system, OS, BG and locked nodes
       if (isSlotContainer(n)) {
         if ('componentPropertyReferences' in n && (n as any).componentPropertyReferences?.slot) {
           const slotRef = (n as any).componentPropertyReferences.slot;
@@ -206,8 +243,29 @@ export function cleanRebuildComponentProperties(
     const instanceNameIndex = new Map<string, number>();
     for (const inst of instances) {
       if (isInsideSlot(inst, variant)) continue;
+      const raw = inst.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (
+        raw.includes('statusbar') ||
+        raw.includes('homeindicator') ||
+        raw.includes('bezel') ||
+        raw.includes('wrapper') ||
+        raw.includes('iphone') ||
+        raw === 'bg' ||
+        raw.startsWith('bg') ||
+        raw.includes('glass') ||
+        inst.locked ||
+        isSystemOrIgnoredNode(inst) ||
+        isIgnoredName(inst.name) ||
+        (inst.mainComponent && isIgnoredName(inst.mainComponent.name)) ||
+        (inst.mainComponent?.parent && isIgnoredName(inst.mainComponent.parent.name))
+      ) {
+        try {
+          inst.isExposedInstance = false;
+        } catch (_) {}
+        continue;
+      }
       const cleanInfo = cleanInstancePropertyName(inst.name);
-      if (cleanInfo.isSlot || /slot/i.test(inst.name)) continue;
+      if (cleanInfo.isSlot || /slot/i.test(inst.name) || isSystemOrIgnoredPropName(cleanInfo.propName)) continue;
 
       const maxCount = maxInstanceOccurrences.get(cleanInfo.propName) || 1;
       let propBaseName = cleanInfo.propName;
@@ -216,6 +274,8 @@ export function cleanRebuildComponentProperties(
         instanceNameIndex.set(cleanInfo.propName, idx);
         propBaseName = `${cleanInfo.propName} ${idx}`;
       }
+
+      if (isSystemOrIgnoredPropName(propBaseName)) continue;
 
       const allowSwap = options?.enableInstanceSwap !== false;
       const isSpecificSwapDisabled =
@@ -245,34 +305,52 @@ export function cleanRebuildComponentProperties(
         }
       }
 
-      if (options?.enableBoolean !== false) {
+      const allowInstanceShow = options?.enableInstanceShow !== false && options?.enableBoolean !== false;
+      const isSpecificShowDisabled =
+        (options?.instanceShowDecisions && (options.instanceShowDecisions[propBaseName] === false || options.instanceShowDecisions[cleanInfo.propName] === false));
+
+      if (allowInstanceShow && !isSpecificShowDisabled) {
         const boolPropName = propBaseName.startsWith('Show')
           ? propBaseName
           : `Show${propBaseName.charAt(0).toUpperCase() + propBaseName.slice(1)}`;
 
-        if (!defsByGroup.group3.has(boolPropName)) {
-          defsByGroup.group3.set(boolPropName, {
-            name: boolPropName,
-            group: 3,
-            type: 'BOOLEAN',
-            defaultValue: inst.visible !== false,
-            representativeNode: inst,
-            bindings: []
-          });
-        }
+        if (!isSystemOrIgnoredPropName(boolPropName)) {
+          if (!defsByGroup.group3.has(boolPropName)) {
+            defsByGroup.group3.set(boolPropName, {
+              name: boolPropName,
+              group: 3,
+              type: 'BOOLEAN',
+              defaultValue: inst.visible !== false,
+              representativeNode: inst,
+              bindings: []
+            });
+          }
 
-        const boolDef = defsByGroup.group3.get(boolPropName)!;
-        if (variant === primaryVariant) {
-          boolDef.representativeNode = inst;
-          boolDef.defaultValue = inst.visible !== false;
-        }
-        if (!boolDef.bindings.some(b => b.node === inst && b.refType === 'visible')) {
-          boolDef.bindings.push({ node: inst, refType: 'visible' });
+          const boolDef = defsByGroup.group3.get(boolPropName)!;
+          if (variant === primaryVariant) {
+            boolDef.representativeNode = inst;
+            boolDef.defaultValue = inst.visible !== false;
+          }
+          if (!boolDef.bindings.some(b => b.node === inst && b.refType === 'visible')) {
+            boolDef.bindings.push({ node: inst, refType: 'visible' });
+          }
         }
       }
 
       // Optional: Expose Nested Instance in Figma Component Properties
-      // Preserve already exposed instances if the user didn't explicitly disable them in Review mode
+      // Strictly avoid exposing system, OS or background instances!
+      if (
+        isSystemOrIgnoredNode(inst) ||
+        isSystemOrIgnoredPropName(propBaseName) ||
+        isSystemOrIgnoredPropName(cleanInfo.propName) ||
+        isSystemOrIgnoredPropName(inst.name) ||
+        (inst.mainComponent && isSystemOrIgnoredPropName(inst.mainComponent.name))
+      ) {
+        try {
+          inst.isExposedInstance = false;
+        } catch (_) {}
+        continue;
+      }
       const explicitNestedDecision =
         options?.nestedInstanceDecisions?.[propBaseName] ??
         options?.nestedInstanceDecisions?.[cleanInfo.propName] ??
@@ -295,24 +373,14 @@ export function cleanRebuildComponentProperties(
       } catch (_) {}
     }
 
-    // Also handle instances inside Slot containers if enableNestedInstances is explicitly configured
+    // Strictly exclude instances inside Slot containers from being exposed
     const slotsInVariant = findDirectSlotContainers(variant);
     for (const slotContainer of slotsInVariant) {
       if ('children' in slotContainer && Array.isArray((slotContainer as any).children)) {
         for (const ch of (slotContainer as any).children) {
           if (ch.type === 'INSTANCE') {
-            const slotInst = ch as InstanceNode;
-            const shouldExposeSlotInst = options?.enableNestedInstances === true
-              ? !isIconInstanceNode(slotInst)
-              : Boolean(slotInst.isExposedInstance);
             try {
-              const wasAlreadyExposed = Boolean(slotInst.isExposedInstance);
-              if (wasAlreadyExposed !== shouldExposeSlotInst) {
-                slotInst.isExposedInstance = shouldExposeSlotInst;
-                if (shouldExposeSlotInst && variant === primaryVariant) {
-                  nestedInstancesCount++;
-                }
-              }
+              (ch as InstanceNode).isExposedInstance = false;
             } catch (_) {}
           }
         }
@@ -375,6 +443,7 @@ export function cleanRebuildComponentProperties(
   }
 
   const isDisallowedProp = (name: string, type: string) => {
+    if (isSystemOrIgnoredPropName(name)) return true;
     const lower = name.toLowerCase().replace(/[\s_#\d-]+/g, '');
     if (lower === 'showslot' || lower.startsWith('showslot')) return true;
     if (lower === 'slot' && type !== 'SLOT') return true;
@@ -387,7 +456,7 @@ export function cleanRebuildComponentProperties(
     const oldDef = oldDefs[key];
     if (!oldDef || oldDef.type === 'VARIANT' || (oldDef.type as string) === 'SLOT') continue;
     const cleanName = key.split('#')[0].trim();
-    if (isDisallowedProp(cleanName, oldDef.type)) continue;
+    if (isDisallowedProp(cleanName, oldDef.type) || isIgnoredName(cleanName) || isIgnoredName(key)) continue;
 
     const bindings = (existingBindingsByPropKey.get(key) || []).filter(b => !isInsideSlot(b.node, primaryVariant));
     if (bindings.length === 0) continue;
@@ -513,12 +582,14 @@ export function cleanRebuildComponentProperties(
   const usedExistingKeys = new Set<string>();
 
   for (const def of fullSortedList) {
+    if (isIgnoredName(def.name)) continue;
     let finalPropName = def.name;
     let counter = 1;
     while (usedPropNames.has(finalPropName.toLowerCase())) {
       counter++;
       finalPropName = `${def.name} ${counter}`;
     }
+    if (isIgnoredName(finalPropName)) continue;
     usedPropNames.add(finalPropName.toLowerCase());
 
     let newKey: string | null = null;
@@ -529,7 +600,7 @@ export function cleanRebuildComponentProperties(
         newKey = existingMatchedKey;
         usedExistingKeys.add(existingMatchedKey);
         if (def.type === 'TEXT' && propertyHost.editComponentProperty) {
-          const curDef = (propertyHost.componentPropertyDefinitions || {})[newKey];
+          const curDef = safeGetComponentPropertyDefinitions(propertyHost)[newKey];
           if (curDef && String(curDef.defaultValue) !== finalPropName) {
             try {
               propertyHost.editComponentProperty(newKey, { defaultValue: finalPropName });
@@ -551,7 +622,7 @@ export function cleanRebuildComponentProperties(
         );
         instanceSwapPropsCount++;
       } else if (def.type === 'SLOT') {
-        const currentDefs = propertyHost.componentPropertyDefinitions || {};
+        const currentDefs = safeGetComponentPropertyDefinitions(propertyHost);
         // 1. Check for exact matching slot property by name that hasn't been used yet
         let matchedKey = Object.keys(currentDefs).find(k => {
           if (usedSlotKeys.has(k)) return false;
@@ -630,10 +701,12 @@ export function cleanRebuildComponentProperties(
           } else {
             const currentRef = (binding.node.componentPropertyReferences as any)?.[binding.refType];
             if (currentRef !== newKey) {
-              binding.node.componentPropertyReferences = {
-                ...(binding.node.componentPropertyReferences || {}),
-                [binding.refType]: newKey
-              };
+              try {
+                binding.node.componentPropertyReferences = {
+                  ...(binding.node.componentPropertyReferences || {}),
+                  [binding.refType]: newKey
+                };
+              } catch (_) {}
             }
           }
         } catch (bindErr) {
@@ -644,7 +717,7 @@ export function cleanRebuildComponentProperties(
   }
 
   // Delete only obsolete/disallowed properties that are no longer in the target set
-  const postDefs = propertyHost.componentPropertyDefinitions || {};
+  const postDefs = safeGetComponentPropertyDefinitions(propertyHost);
   for (const k of Object.keys(postDefs)) {
     const d = postDefs[k];
     if (!d || d.type === 'VARIANT') continue;
@@ -668,6 +741,15 @@ export function cleanRebuildComponentProperties(
     }
   }
 
+  // Final post-purge: Ensure all ignored properties and bindings are completely removed
+  try {
+    purgeIgnoredPropertiesAndReferencesSync(propertyHost);
+  } catch (_) {}
+
   return { textPropsCount, instanceSwapPropsCount, booleanPropsCount, nestedInstancesCount };
+  } catch (err) {
+    console.warn('[cleanRebuildComponentProperties] Error caught:', err);
+    return { textPropsCount, instanceSwapPropsCount, booleanPropsCount, nestedInstancesCount };
+  }
 }
 

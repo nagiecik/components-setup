@@ -1,11 +1,13 @@
 import { toPascalCase, sanitizePascalCase } from '../utils/strings';
 import { isSlotContainer } from '../slots/slots';
+import { isIgnoredName, isSystemOrIgnoredNode, isSystemOrIgnoredPropName } from '../utils/nodes';
 
 export function collectDirectTextNodes(root: BaseNode & ChildrenMixin): TextNode[] {
   const result: TextNode[] = [];
   function recurse(n: SceneNode) {
     if (n.type === 'INSTANCE') return; // Stop at instance boundary
     if (isSlotContainer(n)) return; // Stop at Slot boundary - ignore texts inside Slot
+    if (isSystemOrIgnoredNode(n) || (n.name && isSystemOrIgnoredPropName(n.name))) return; // Stop at system/ignored boundary
     if (n.type === 'TEXT') {
       result.push(n as TextNode);
       return;
@@ -56,6 +58,7 @@ export function isIconInstanceNode(n: InstanceNode): boolean {
 export function collectDirectIconInstances(root: BaseNode & ChildrenMixin): InstanceNode[] {
   const result: InstanceNode[] = [];
   function recurse(n: SceneNode) {
+    if (isSystemOrIgnoredNode(n) || (n.name && isSystemOrIgnoredPropName(n.name))) return;
     if (n.type === 'INSTANCE') {
       const inst = n as InstanceNode;
       if (isIconInstanceNode(inst)) {
@@ -81,6 +84,25 @@ export function collectDirectInstances(root: BaseNode & ChildrenMixin): Instance
   const result: InstanceNode[] = [];
   function recurse(n: SceneNode) {
     if (isSlotContainer(n)) return; // Stop at Slot boundary - do not collect instances inside Slot
+    const raw = (n.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (
+      raw.includes('statusbar') ||
+      raw.includes('homeindicator') ||
+      raw.includes('bezel') ||
+      raw.includes('wrapper') ||
+      raw.includes('iphone') ||
+      raw === 'bg' ||
+      raw.startsWith('bg') ||
+      raw.includes('glass') ||
+      ('locked' in n && n.locked) ||
+      isSystemOrIgnoredNode(n) ||
+      isIgnoredName(n.name)
+    ) {
+      if (n.type === 'INSTANCE') {
+        try { (n as InstanceNode).isExposedInstance = false; } catch (_) {}
+      }
+      return; // Stop at system/ignored boundary - do not collect OS/BG instances
+    }
     if (n.type === 'INSTANCE') {
       const inst = n as InstanceNode;
       const nameLower = (inst.name || '').trim().toLowerCase();

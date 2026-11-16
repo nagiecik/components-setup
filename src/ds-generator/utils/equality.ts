@@ -86,7 +86,15 @@ export function areEffectsEqual(e1, e2) {
   for (let i = 0; i < e1.length; i++) {
     const a = e1[i], b = e2[i];
     if (a.type !== b.type) return false;
+    if (a.blurType !== b.blurType) return false;
     if (a.radius !== b.radius) return false;
+    if ((a.startRadius !== undefined || b.startRadius !== undefined) && a.startRadius !== b.startRadius) return false;
+    if (a.startOffset && b.startOffset) {
+      if (a.startOffset.x !== b.startOffset.x || a.startOffset.y !== b.startOffset.y) return false;
+    }
+    if (a.endOffset && b.endOffset) {
+      if (a.endOffset.x !== b.endOffset.x || a.endOffset.y !== b.endOffset.y) return false;
+    }
     if (a.offset && b.offset) {
       if (a.offset.x !== b.offset.x || a.offset.y !== b.offset.y) return false;
     }
@@ -99,6 +107,9 @@ export function areEffectsEqual(e1, e2) {
     const bvrA = a.boundVariables && a.boundVariables.radius ? a.boundVariables.radius.id : undefined;
     const bvrB = b.boundVariables && b.boundVariables.radius ? b.boundVariables.radius.id : undefined;
     if (bvrA !== bvrB) return false;
+    const bvsrA = a.boundVariables && a.boundVariables.startRadius ? a.boundVariables.startRadius.id : undefined;
+    const bvsrB = b.boundVariables && b.boundVariables.startRadius ? b.boundVariables.startRadius.id : undefined;
+    if (bvsrA !== bvsrB) return false;
   }
   return true;
 }

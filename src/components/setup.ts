@@ -1,3 +1,4 @@
+import { safeGetComponentPropertyDefinitions } from '../utils/nodes';
 import {
   resolveComponentSetConflicts,
   sanitizeComponentProperties,
@@ -6,6 +7,7 @@ import {
 import { sanitizeLayerNames } from '../renamer/frameClassifier';
 import { applySlotMetricsAndVariables, findDirectSlotContainers } from '../slots/slots';
 import { toCamelCase, toPascalCase } from '../utils/strings';
+import { convertFrameToComponentAtomic } from './atomic';
 import {
   bindColorVariablesRecursively,
   bindOrReplaceField,
@@ -21,6 +23,7 @@ import {
   ensureTemporaryMetricsCollection
 } from '../variables/variables';
 import { sendSelectionToUI } from '../retextifier/retextifier';
+import { runSmartTokenAutoBinder } from '../variables/autoBinder';
 
 export async function setupComponentSets(nodes: readonly ComponentSetNode[]) {
   await ensureTemporaryMetricsCollection();
@@ -557,7 +560,7 @@ export function needsSmartSetup(selection: readonly SceneNode[]): boolean {
     if (!cs.dashPattern || cs.dashPattern.length === 0) return true;
     if (!hasSpacingBound(cs) || !hasRadiusBound(cs)) return true;
 
-    const defs = cs.componentPropertyDefinitions || {};
+    const defs = safeGetComponentPropertyDefinitions(cs);
     for (const key of Object.keys(defs)) {
       const rawName = key.split('#')[0].trim();
       if (/^property\s*\d+$/i.test(rawName)) return true;
@@ -643,7 +646,7 @@ export async function runComponentSetLogic() {
         // Rename Figma's default "Property 1" variant property to "Type=Default"
         try {
           if (typeof (compSet as any).editComponentProperty === 'function') {
-            const defs = (compSet as any).componentPropertyDefinitions;
+            const defs = safeGetComponentPropertyDefinitions(compSet);
             if (defs) {
               for (const propKey of Object.keys(defs)) {
                 const def = defs[propKey];
@@ -736,6 +739,13 @@ export async function runComponentSetLogic() {
         await sanitizeComponentProperties(n);
         await sanitizeLayerNames(n);
       } catch (e) {}
+    }
+
+    // 5. Smart Token Auto-Binder (Scope-Safe) on all affected nodes
+    try {
+      await runSmartTokenAutoBinder(selection, { mode: 'snap', notify: false });
+    } catch (e) {
+      console.warn('Smart Token Auto-Binder warning in setupComponentSet:', e);
     }
 
     // If new component sets were created, select them and update UI inspector
@@ -847,10 +857,14 @@ export async function runRenamePascalCaseLogic() {
 
   // 3. Sanitize component properties on all affected components and component sets
   for (const cs of componentSets) {
-    await sanitizeComponentProperties(cs);
+    try {
+      await sanitizeComponentProperties(cs);
+    } catch (_) {}
   }
   for (const target of componentTargets) {
-    await sanitizeComponentProperties(target);
+    try {
+      await sanitizeComponentProperties(target);
+    } catch (_) {}
   }
 
   // 4. Sanitize layer names on all collected nodes (ancestors: sections, frames; descendants: components, shapes, text...)
@@ -1011,5 +1025,182 @@ export async function runSetupComponentSetHorizontalLogic() {
 
   await setupComponentSetOnlyHorizontal(allSets);
 }
+
+/**
+ * Fast container & Component Set wrapper preparation for Master Component Pipeline (Phase 1).
+ * Avoids redundant deep tree walks since runSmartTokenAutoBinder handles inner nodes in a single pass.
+ */
+export async function prepareContainersForMasterPipeline(selection: readonly SceneNode[]): Promise<SceneNode[]> {
+  if (!selection || selection.length === 0) return [];
+
+  await ensureTemporaryMetricsCollection();
+  const allVars = await getAllRelevantVariablesForComponentSet();
+
+  const varGap = findVariableWithPriority(allVars, 'Layout/Base', 'Metrics') || findVariableWithPriority(allVars, 'layout/base', 'Metrics');
+  const varPadding = findVariableWithPriority(allVars, 'Layout/Base', 'Metrics') || findVariableWithPriority(allVars, 'layout/base', 'Metrics');
+  const varRadius = findVariableWithPriority(allVars, 'Radius/Container/Base', 'Metrics') || findVariableWithPriority(allVars, 'radius/container/base', 'Metrics') || findVariableWithPriority(allVars, 'Radius/Base', 'Metrics') || findVariableWithPriority(allVars, 'radius/base', 'Metrics');
+  const varBorder = findVariableWithPriority(allVars, 'Constant/1', 'Metrics') || findVariableWithPriority(allVars, 'constant/1', 'Metrics') || findVariableWithPriority(allVars, 'Constant/One', 'Metrics') || findVariableWithPriority(allVars, 'constant/one', 'Metrics');
+  const varBorderColor = findColorVariableWithPriority(allVars, ['OutlineBase', 'outlineBase', 'outlineHighest', 'outline']);
+
+  // 1. Combine standalone COMPONENTs and root FRAMEs into COMPONENT_SET
+  const standaloneComponents: ComponentNode[] = selection.filter(
+    (node): node is ComponentNode => node.type === 'COMPONENT' && (!node.parent || node.parent.type !== 'COMPONENT_SET')
+  );
+
+  const standaloneFrames = selection.filter(
+    (node): node is FrameNode => node.type === 'FRAME' && (!node.parent || node.parent.type !== 'COMPONENT_SET')
+  );
+
+  for (const frame of standaloneFrames) {
+    try {
+      const comp = convertFrameToComponentAtomic(frame, 'replace-in-parent');
+      standaloneComponents.push(comp);
+    } catch (e) {
+      console.warn('Could not convert standalone frame to component in setup:', e);
+    }
+  }
+
+  const newlyCreatedComponentSets: ComponentSetNode[] = [];
+  for (const comp of standaloneComponents) {
+    cleanHiddenWhiteFills(comp);
+    try {
+      let originalName = comp.name.trim();
+      if (/^frame(\s*\d+)?$/i.test(originalName)) {
+        originalName = 'Container';
+      } else {
+        originalName = toPascalCase(originalName);
+      }
+      const parent = (comp.parent && 'children' in comp.parent) ? comp.parent : figma.currentPage;
+      comp.name = 'State=Default';
+      const compSet = figma.combineAsVariants([comp], parent as BaseNode & ChildrenMixin);
+      compSet.name = originalName;
+
+      try {
+        if (typeof (compSet as any).editComponentProperty === 'function') {
+          const defs = safeGetComponentPropertyDefinitions(compSet);
+          if (defs) {
+            for (const propKey of Object.keys(defs)) {
+              const def = defs[propKey];
+              const rawName = propKey.split('#')[0].trim();
+              if (def.type === 'VARIANT' || /^property\s*\d+$/i.test(rawName)) {
+                try {
+                  (compSet as any).editComponentProperty(propKey, { name: 'State', defaultValue: 'Default' });
+                } catch (e1) {
+                  try {
+                    (compSet as any).editComponentProperty(rawName, { name: 'State', defaultValue: 'Default' });
+                  } catch (e2) {}
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {}
+
+      if (comp.layoutMode === 'NONE') {
+        comp.layoutMode = 'HORIZONTAL';
+        comp.primaryAxisSizingMode = 'AUTO';
+        comp.counterAxisSizingMode = 'AUTO';
+      }
+      newlyCreatedComponentSets.push(compSet);
+    } catch (err) {
+      console.warn('Could not convert component to Component Set:', err);
+    }
+  }
+
+  // 2. Collect all affected Component Sets
+  const existingComponentSets = new Set<ComponentSetNode>();
+  for (const node of selection) {
+    if ((node as any).removed) continue;
+    if (node.type === 'COMPONENT_SET') {
+      existingComponentSets.add(node);
+    } else {
+      let curr: BaseNode | null = node;
+      while (curr && curr.type !== 'PAGE' && curr.type !== 'DOCUMENT') {
+        if (curr.type === 'COMPONENT_SET') {
+          existingComponentSets.add(curr as ComponentSetNode);
+          break;
+        }
+        curr = curr.parent;
+      }
+    }
+  }
+
+  const allComponentSets = [...Array.from(existingComponentSets), ...newlyCreatedComponentSets];
+
+  for (const cs of allComponentSets) {
+    try {
+      await resolveComponentSetConflicts(cs);
+    } catch (e) {}
+    try {
+      await sanitizeComponentProperties(cs);
+    } catch (e) {}
+    try {
+      cs.layoutMode = 'VERTICAL';
+      cs.layoutWrap = 'NO_WRAP';
+      cs.primaryAxisSizingMode = 'AUTO';
+      cs.counterAxisSizingMode = 'AUTO';
+      cs.fills = [];
+
+      const safeBind = (prop: any, variable: Variable | undefined) => {
+        if (!variable) return;
+        try { cs.setBoundVariable(prop, variable); } catch (e) {}
+      };
+
+      safeBind('itemSpacing', varGap);
+      safeBind('counterAxisSpacing', varGap);
+      safeBind('paddingTop', varPadding);
+      safeBind('paddingBottom', varPadding);
+      safeBind('paddingLeft', varPadding);
+      safeBind('paddingRight', varPadding);
+
+      if (varRadius) {
+        try {
+          cs.setBoundVariable('cornerRadius', varRadius);
+        } catch (err) {
+          safeBind('topLeftRadius', varRadius);
+          safeBind('topRightRadius', varRadius);
+          safeBind('bottomLeftRadius', varRadius);
+          safeBind('bottomRightRadius', varRadius);
+        }
+      }
+
+      if ('cornerSmoothing' in cs) {
+        try { cs.cornerSmoothing = 0.6; } catch (e) {}
+      }
+
+      cs.dashPattern = [4, 4];
+      cs.strokes = [{ type: 'SOLID', color: { r: 0.85, g: 0.85, b: 0.85 } }];
+      if (varBorderColor) {
+        cs.strokes = [...(cs.strokes as readonly Paint[])].map((paint) =>
+          paint.type === 'SOLID' ? figma.variables.setBoundVariableForPaint(paint, 'color', varBorderColor) : paint
+        );
+      }
+      if (varBorder) safeBind('strokeWeight', varBorder);
+
+      for (const child of cs.children) {
+        if (child.type === 'COMPONENT') {
+          cleanHiddenWhiteFills(child);
+          if (child.layoutMode === 'NONE') {
+            try {
+              child.layoutMode = 'HORIZONTAL';
+              child.primaryAxisSizingMode = 'AUTO';
+              child.counterAxisSizingMode = 'AUTO';
+            } catch (e) {}
+          }
+          if ('cornerSmoothing' in child) {
+            try { child.cornerSmoothing = 0.6; } catch (e) {}
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (newlyCreatedComponentSets.length > 0) {
+    figma.currentPage.selection = allComponentSets;
+  }
+
+  return [...figma.currentPage.selection];
+}
+
 
 

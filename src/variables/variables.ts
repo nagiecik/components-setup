@@ -1,4 +1,5 @@
 import { ResolvedVariable } from '../types/variables';
+export type { ResolvedVariable };
 
 export async function getAllRelevantVariablesForComponentSet(): Promise<ResolvedVariable[]> {
   const allVariables: ResolvedVariable[] = [];

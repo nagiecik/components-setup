@@ -1,5 +1,6 @@
 import { AiLayerScanItem } from '../types/renamer';
 import { isInsideSlot, isSlotContainer, isSlotLayer, unwrapRedundantSlotWrappers } from '../slots/slots';
+import { isSystemOrIgnoredNode, isSystemOrIgnoredPropName } from '../utils/nodes';
 import { classifyAutoLayoutFrame, getExistingSemanticFrameName, nodeContainsText } from './frameClassifier';
 import {
   classifyTextLayerSemantic,
@@ -10,6 +11,7 @@ import {
 } from './textClassifier';
 import { getInstanceBaseName, hasContentAncestorNode } from '../utils/geometry';
 import { sanitizePascalCase } from '../utils/strings';
+import { CACHED_STYLE_ID_TO_LABEL_MAP } from '../variables/autoBinder';
 
 export let lastAiRenamerPeerMap: Map<string, string[]> = new Map();
 export let lastAiRenamerRootIds: string[] = [];
@@ -57,6 +59,31 @@ export async function scanLayersForAiRenaming(): Promise<{ items: AiLayerScanIte
 
   const collectedItems: AiLayerScanItem[] = [];
   let totalVariants = 0;
+  const resolvedFrameNames = new Map<string, string>();
+
+  async function resolveTextStyleLabel(styleId: string): Promise<string> {
+    if (!styleId) return '';
+    const cached = CACHED_STYLE_ID_TO_LABEL_MAP.get(styleId);
+    if (cached) return cached;
+    try {
+      const style = await figma.getStyleByIdAsync(styleId);
+      if (style) {
+        const label = style.description ? `${style.name} ${style.description}` : style.name;
+        CACHED_STYLE_ID_TO_LABEL_MAP.set(styleId, label);
+        return label;
+      }
+    } catch (_) {
+      try {
+        const style = figma.getStyleById(styleId);
+        if (style) {
+          const label = style.description ? `${style.name} ${style.description}` : style.name;
+          CACHED_STYLE_ID_TO_LABEL_MAP.set(styleId, label);
+          return label;
+        }
+      } catch (_) {}
+    }
+    return '';
+  }
 
   for (const root of targetRoots) {
     if (root.type === 'COMPONENT_SET') {
@@ -124,7 +151,7 @@ export async function scanLayersForAiRenaming(): Promise<{ items: AiLayerScanIte
           }
 
           const parent = txt.parent;
-          const parentName = parent ? (parent.name || '') : '';
+          const parentName = parent ? (resolvedFrameNames.get(parent.id) || parent.name || '') : '';
           const parentLayoutMode = (parent && 'layoutMode' in parent) ? (parent.layoutMode as 'HORIZONTAL' | 'VERTICAL' | 'NONE') : 'NONE';
           const parentChildren = parent && 'children' in parent && Array.isArray(parent.children) ? parent.children : [];
           const indexInParent = parentChildren.indexOf(txt);
@@ -145,10 +172,13 @@ export async function scanLayersForAiRenaming(): Promise<{ items: AiLayerScanIte
           const siblingTexts = textSiblings.map(s => {
             let sStyleName = '';
             if (typeof s.textStyleId === 'string' && s.textStyleId) {
-              try {
-                const st = figma.getStyleById(s.textStyleId);
-                if (st) sStyleName = st.name;
-              } catch (_) {}
+              sStyleName = CACHED_STYLE_ID_TO_LABEL_MAP.get(s.textStyleId) || '';
+              if (!sStyleName) {
+                try {
+                  const st = figma.getStyleById(s.textStyleId);
+                  if (st) sStyleName = st.description ? `${st.name} ${st.description}` : st.name;
+                } catch (_) {}
+              }
             }
             const sFontStyle = (s.fontName && typeof s.fontName === 'object' && 'style' in s.fontName) ? (s.fontName as FontName).style : '';
             return {
@@ -161,18 +191,9 @@ export async function scanLayersForAiRenaming(): Promise<{ items: AiLayerScanIte
             };
           });
 
-          let textStyleName = '';
-          if (typeof txt.textStyleId === 'string' && txt.textStyleId) {
-            try {
-              const style = await figma.getStyleByIdAsync(txt.textStyleId);
-              if (style) textStyleName = style.name;
-            } catch (_) {
-              try {
-                const style = figma.getStyleById(txt.textStyleId);
-                if (style) textStyleName = style.name;
-              } catch (_) {}
-            }
-          }
+          const textStyleName = (typeof txt.textStyleId === 'string' && txt.textStyleId)
+            ? await resolveTextStyleLabel(txt.textStyleId)
+            : '';
 
           const fillTokenName = await getNodeFillTokenName(txt);
 
@@ -190,12 +211,16 @@ export async function scanLayersForAiRenaming(): Promise<{ items: AiLayerScanIte
           const fontStyle = (txt.fontName && typeof txt.fontName === 'object' && 'style' in txt.fontName)
             ? (txt.fontName as FontName).style
             : '';
+          const fontFamily = (txt.fontName && typeof txt.fontName === 'object' && 'family' in txt.fontName)
+            ? (txt.fontName as FontName).family
+            : '';
 
           const suggestedName = classifyTextLayerSemantic({
             currentName: txt.name || '',
             characters: (txt.characters || '').slice(0, 100),
             fontSize: typeof txt.fontSize === 'number' ? txt.fontSize : 14,
             fontStyle,
+            fontFamily,
             textStyleName,
             fillTokenName,
             parentName,
@@ -247,6 +272,7 @@ export async function scanLayersForAiRenaming(): Promise<{ items: AiLayerScanIte
           const existingFrameRole = getExistingSemanticFrameName(frame, isDirectRootChild, hasContentAncestor);
           const allPeersAlreadyNamed = existingFrameRole && peerNodes.every(p => p.name === existingFrameRole);
           if (allPeersAlreadyNamed) {
+            for (const pid of peerIds) resolvedFrameNames.set(pid, existingFrameRole!);
             continue;
           }
 
@@ -261,6 +287,7 @@ export async function scanLayersForAiRenaming(): Promise<{ items: AiLayerScanIte
           const clipsContent = 'clipsContent' in frame ? frame.clipsContent : false;
           const isSlot = isSlotLayer(frame);
           const suggestedName = classifyAutoLayoutFrame(frame, isDirectRootChild, hasContentAncestor);
+          for (const pid of peerIds) resolvedFrameNames.set(pid, suggestedName);
 
           const childrenSummary: Array<{
             type: string;
@@ -330,8 +357,8 @@ export async function scanLayersForAiRenaming(): Promise<{ items: AiLayerScanIte
       const rootCompName = root.name || '';
 
       const scanSubtree = async (node: SceneNode, pathLabel: string, depth: number, isRootNode: boolean) => {
-        // INSTANCE or SLOT: skip & stop recursion
-        if (node.type === 'INSTANCE' || isSlotContainer(node)) {
+        // INSTANCE, SLOT or SYSTEM/IGNORED: skip & stop recursion
+        if (node.type === 'INSTANCE' || isSlotContainer(node) || isSystemOrIgnoredNode(node) || (node.name && isSystemOrIgnoredPropName(node.name))) {
           return;
         }
 
@@ -343,7 +370,9 @@ export async function scanLayersForAiRenaming(): Promise<{ items: AiLayerScanIte
           const isDirectRootChild = (depth === 1 && !isRootNode) || (isRootNode && !isStandaloneComp);
           const hasContentAncestor = hasContentAncestorNode(frame);
           const existingFrameRole = getExistingSemanticFrameName(frame, isDirectRootChild, hasContentAncestor);
-          if (!existingFrameRole || frame.name !== existingFrameRole) {
+          if (existingFrameRole && frame.name === existingFrameRole) {
+            resolvedFrameNames.set(frame.id, existingFrameRole);
+          } else {
             const containsText = nodeContainsText(frame);
             const peerIds = [frame.id];
             lastAiRenamerPeerMap.set(frame.id, peerIds);
@@ -358,6 +387,7 @@ export async function scanLayersForAiRenaming(): Promise<{ items: AiLayerScanIte
             const clipsContent = 'clipsContent' in frame ? frame.clipsContent : false;
             const isSlot = isSlotLayer(frame);
             const suggestedName = classifyAutoLayoutFrame(frame, isDirectRootChild, hasContentAncestor);
+            resolvedFrameNames.set(frame.id, suggestedName);
 
             const childrenSummary: Array<{
               type: string;
@@ -428,7 +458,7 @@ export async function scanLayersForAiRenaming(): Promise<{ items: AiLayerScanIte
             lastAiRenamerPeerMap.set(txt.id, peerIds);
 
             const parent = txt.parent;
-            const parentName = parent ? (parent.name || '') : '';
+            const parentName = parent ? (resolvedFrameNames.get(parent.id) || parent.name || '') : '';
             const parentLayoutMode = (parent && 'layoutMode' in parent) ? (parent.layoutMode as 'HORIZONTAL' | 'VERTICAL' | 'NONE') : 'NONE';
             const parentChildren = parent && 'children' in parent && Array.isArray(parent.children) ? parent.children : [];
             const indexInParent = parentChildren.indexOf(txt);
@@ -449,10 +479,13 @@ export async function scanLayersForAiRenaming(): Promise<{ items: AiLayerScanIte
             const siblingTexts = textSiblings.map(s => {
               let sStyleName = '';
               if (typeof s.textStyleId === 'string' && s.textStyleId) {
-                try {
-                  const st = figma.getStyleById(s.textStyleId);
-                  if (st) sStyleName = st.name;
-                } catch (_) {}
+                sStyleName = CACHED_STYLE_ID_TO_LABEL_MAP.get(s.textStyleId) || '';
+                if (!sStyleName) {
+                  try {
+                    const st = figma.getStyleById(s.textStyleId);
+                    if (st) sStyleName = st.description ? `${st.name} ${st.description}` : st.name;
+                  } catch (_) {}
+                }
               }
               const sFontStyle = (s.fontName && typeof s.fontName === 'object' && 'style' in s.fontName) ? (s.fontName as FontName).style : '';
               return {
@@ -465,18 +498,9 @@ export async function scanLayersForAiRenaming(): Promise<{ items: AiLayerScanIte
               };
             });
 
-            let textStyleName = '';
-            if (typeof txt.textStyleId === 'string' && txt.textStyleId) {
-              try {
-                const style = await figma.getStyleByIdAsync(txt.textStyleId);
-                if (style) textStyleName = style.name;
-              } catch (_) {
-                try {
-                  const style = figma.getStyleById(txt.textStyleId);
-                  if (style) textStyleName = style.name;
-                } catch (_) {}
-              }
-            }
+            const textStyleName = (typeof txt.textStyleId === 'string' && txt.textStyleId)
+              ? await resolveTextStyleLabel(txt.textStyleId)
+              : '';
 
             const fillTokenName = await getNodeFillTokenName(txt);
 
@@ -494,12 +518,16 @@ export async function scanLayersForAiRenaming(): Promise<{ items: AiLayerScanIte
             const fontStyle = (txt.fontName && typeof txt.fontName === 'object' && 'style' in txt.fontName)
               ? (txt.fontName as FontName).style
               : '';
+            const fontFamily = (txt.fontName && typeof txt.fontName === 'object' && 'family' in txt.fontName)
+              ? (txt.fontName as FontName).family
+              : '';
 
             const suggestedName = classifyTextLayerSemantic({
               currentName: txt.name || '',
               characters: (txt.characters || '').slice(0, 100),
               fontSize: typeof txt.fontSize === 'number' ? txt.fontSize : 14,
               fontStyle,
+              fontFamily,
               textStyleName,
               fillTokenName,
               parentName,

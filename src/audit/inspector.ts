@@ -10,6 +10,7 @@ import {
   dsRegistry,
   getLayerTypeDisplayName,
   getNodeIgnoredAuditKeys,
+  getTrustedAuditLibraries,
   isInsideIgnoredSubtree,
   isNonNumericProp,
   parsePropertyInfo,
@@ -407,6 +408,9 @@ function isGradientColorStyle(style: any): boolean {
 
 export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') {
   try {
+    const trustedLibraries = getTrustedAuditLibraries();
+    const trustedLibraryKeys = new Set(trustedLibraries.map((t) => t.key));
+
     let targetRoots: readonly SceneNode[] = [];
     if (scope === 'selection') {
       targetRoots = figma.currentPage.selection || [];
@@ -418,6 +422,7 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
             totalIssues: 0,
             unboundCount: 0,
             missingCount: 0,
+            foreignCount: 0,
             gapCount: 0,
             paddingCount: 0,
             radiusCount: 0,
@@ -427,6 +432,7 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
             scope: 'selection',
           },
           issues: [],
+          trustedLibraries,
           emptyReason: 'no-selection',
         });
         return;
@@ -499,15 +505,67 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
     }
 
     let availableLibraryCollectionKeys: Set<string> | null = null;
+    const libraryInfoByKey = new Map<string, { name: string; libraryName: string }>();
     try {
       if (figma.teamLibrary && typeof (figma.teamLibrary as any).getAvailableLibraryVariableCollectionsAsync === 'function') {
         const libs = await (figma.teamLibrary as any).getAvailableLibraryVariableCollectionsAsync();
         if (Array.isArray(libs)) {
           availableLibraryCollectionKeys = new Set(libs.map((l: any) => l.key));
+          for (const l of libs) {
+            if (l && l.key) {
+              libraryInfoByKey.set(l.key, {
+                name: l.name || 'Remote Collection',
+                libraryName: l.libraryName || 'External Library',
+              });
+            }
+          }
         }
       }
     } catch (e) {
       availableLibraryCollectionKeys = null;
+    }
+
+    let localCollections: VariableCollection[] = [];
+    try {
+      localCollections = await figma.variables.getLocalVariableCollectionsAsync();
+    } catch (e) {
+      localCollections = [];
+    }
+
+    const STANDARD_DS_COLLECTION_NAMES = new Set([
+      'schemes',
+      'metrics',
+      '_metrics',
+      'layout',
+      'typography',
+      'accessibility',
+      'palettes',
+      '_palettes',
+      'schemes controls',
+      'typography controls',
+      'variables',
+    ]);
+    const CORE_DS_COLLECTION_NAMES = new Set([
+      'schemes',
+      'metrics',
+      '_metrics',
+      'layout',
+      'typography',
+      'accessibility',
+    ]);
+
+    const allowedLocalCollectionIds = new Set<string>();
+    const hasCoreLocalDsCollection = localCollections.some((c) =>
+      CORE_DS_COLLECTION_NAMES.has((c.name || '').trim().toLowerCase())
+    );
+    if (hasCoreLocalDsCollection) {
+      for (const c of localCollections) {
+        if (STANDARD_DS_COLLECTION_NAMES.has((c.name || '').trim().toLowerCase())) {
+          allowedLocalCollectionIds.add(c.id);
+        }
+      }
+    } else if (localCollections.length === 1) {
+      allowedLocalCollectionIds.add(localCollections[0].id);
     }
 
     async function collectNodes(nodes: readonly SceneNode[] | null | undefined) {
@@ -531,11 +589,58 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
 
     await collectNodes(targetRoots);
 
-    const varStatusCache = new Map<string, { variable: Variable | null; isMissing: boolean; name: string }>();
+    // Fallback for custom-named files with multiple local collections: treat the most-used local collection as primary DS
+    if (allowedLocalCollectionIds.size === 0 && localCollections.length > 1) {
+      const localUsageCounts = new Map<string, number>();
+      const localVarColMap = new Map<string, string>();
+      try {
+        const localVars = await figma.variables.getLocalVariablesAsync();
+        for (const lv of localVars) {
+          localVarColMap.set(lv.id, lv.variableCollectionId);
+        }
+        const scanBoundMap = new Map<string, Set<string>>();
+        const unusedNumSet = new Set<string>();
+        for (const n of allNodes) {
+          if ((n as any).boundVariables) {
+            extractVariableAliases((n as any).boundVariables, scanBoundMap, unusedNumSet);
+          }
+        }
+        for (const vId of scanBoundMap.keys()) {
+          const cid = localVarColMap.get(vId);
+          if (cid) {
+            localUsageCounts.set(cid, (localUsageCounts.get(cid) || 0) + 1);
+          }
+        }
+      } catch (e) {}
 
-    async function checkVariableStatus(varId: string, consumerNode?: SceneNode): Promise<{ variable: Variable | null; isMissing: boolean; name: string }> {
+      let primaryColId = localCollections[0].id;
+      let maxCount = -1;
+      for (const c of localCollections) {
+        const count = localUsageCounts.get(c.id) || 0;
+        if (count > maxCount) {
+          maxCount = count;
+          primaryColId = c.id;
+        }
+      }
+      allowedLocalCollectionIds.add(primaryColId);
+    }
+
+    interface VariableAuditStatus {
+      variable: Variable | null;
+      isMissing: boolean;
+      isForeign: boolean;
+      foreignSource?: 'remote' | 'local-other';
+      foreignLibraryKey?: string;
+      collectionName?: string;
+      libraryName?: string;
+      name: string;
+    }
+
+    const varStatusCache = new Map<string, VariableAuditStatus>();
+
+    async function checkVariableStatus(varId: string, consumerNode?: SceneNode): Promise<VariableAuditStatus> {
       if (!varId || typeof varId !== 'string') {
-        return { variable: null, isMissing: true, name: 'Unknown' };
+        return { variable: null, isMissing: true, isForeign: false, name: 'Unknown' };
       }
       if (varStatusCache.has(varId)) {
         const cached = varStatusCache.get(varId)!;
@@ -544,10 +649,10 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
           try {
             const resolved = (cached.variable as any).resolveForConsumer(consumerNode);
             if (!resolved || resolved.value === undefined || resolved.value === null) {
-              return { variable: cached.variable, isMissing: true, name: cached.name };
+              return { variable: cached.variable, isMissing: true, isForeign: false, name: cached.name };
             }
           } catch (e) {
-            return { variable: cached.variable, isMissing: true, name: cached.name };
+            return { variable: cached.variable, isMissing: true, isForeign: false, name: cached.name };
           }
         }
         return cached;
@@ -560,7 +665,7 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
           variable = null;
         }
         if (!variable) {
-          const res = { variable: null, isMissing: true, name: `Missing Variable (${varId})` };
+          const res: VariableAuditStatus = { variable: null, isMissing: true, isForeign: false, name: `Missing Variable (${varId})` };
           varStatusCache.set(varId, res);
           return res;
         }
@@ -573,23 +678,44 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
           collection = null;
         }
         if (!collection) {
-          const res = { variable, isMissing: true, name: variable.name };
+          const res: VariableAuditStatus = { variable, isMissing: true, isForeign: false, name: variable.name };
           varStatusCache.set(varId, res);
           return res;
         }
 
         // Check if variable is still in collection's variableIds
         if (collection && collection.variableIds && Array.isArray(collection.variableIds) && !collection.variableIds.includes(variable.id)) {
-          const res = { variable, isMissing: true, name: variable.name };
+          const res: VariableAuditStatus = { variable, isMissing: true, isForeign: false, name: variable.name };
           varStatusCache.set(varId, res);
           return res;
         }
 
         // Check if remote library collection is available in this file
         if (collection && collection.remote && availableLibraryCollectionKeys && !availableLibraryCollectionKeys.has(collection.key)) {
-          const res = { variable, isMissing: true, name: variable.name };
+          const res: VariableAuditStatus = { variable, isMissing: true, isForeign: false, name: variable.name };
           varStatusCache.set(varId, res);
           return res;
+        }
+
+        // Determine if variable belongs to an external library or another local collection
+        let isForeign = false;
+        let foreignSource: 'remote' | 'local-other' | undefined;
+        let foreignLibraryKey: string | undefined;
+        let collectionName = collection.name || undefined;
+        let libraryName: string | undefined;
+
+        if (collection.remote || (variable as any).remote) {
+          foreignSource = 'remote';
+          const libMeta = collection.key ? libraryInfoByKey.get(collection.key) : undefined;
+          libraryName = libMeta?.libraryName || 'External Library';
+          collectionName = collection.name || libMeta?.name || 'Remote Collection';
+          foreignLibraryKey = `remote:${(libraryName || collectionName || 'External Library').trim()}`;
+          isForeign = !trustedLibraryKeys.has(foreignLibraryKey);
+        } else if (allowedLocalCollectionIds.size > 0 && !allowedLocalCollectionIds.has(collection.id)) {
+          foreignSource = 'local-other';
+          collectionName = collection.name || 'Other Collection';
+          foreignLibraryKey = `local:${collectionName.trim()}`;
+          isForeign = !trustedLibraryKeys.has(foreignLibraryKey);
         }
 
         // Verify consumer resolution if node is provided
@@ -597,23 +723,32 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
           try {
             const resolved = (variable as any).resolveForConsumer(consumerNode);
             if (!resolved || resolved.value === undefined || resolved.value === null) {
-              const res = { variable, isMissing: true, name: variable.name };
+              const res: VariableAuditStatus = { variable, isMissing: true, isForeign: false, name: variable.name };
               varStatusCache.set(varId, res);
               return res;
             }
           } catch (e) {
-            const res = { variable, isMissing: true, name: variable.name };
+            const res: VariableAuditStatus = { variable, isMissing: true, isForeign: false, name: variable.name };
             varStatusCache.set(varId, res);
             return res;
           }
         }
 
         const { isMissing } = await resolveVariableValueAndStatus(variable);
-        const res = { variable, isMissing, name: variable.name };
+        const res: VariableAuditStatus = {
+          variable,
+          isMissing,
+          isForeign: isMissing ? false : isForeign,
+          foreignSource: isMissing ? undefined : foreignSource,
+          foreignLibraryKey: isMissing ? undefined : foreignLibraryKey,
+          collectionName,
+          libraryName,
+          name: variable.name,
+        };
         varStatusCache.set(varId, res);
         return res;
       } catch (err) {
-        const res = { variable: null, isMissing: true, name: `Missing (${varId})` };
+        const res: VariableAuditStatus = { variable: null, isMissing: true, isForeign: false, name: `Missing (${varId})` };
         varStatusCache.set(varId, res);
         return res;
       }
@@ -646,6 +781,83 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
       return false;
     };
 
+    const reportBoundVariableIssue = (
+      vStatus: VariableAuditStatus,
+      opts: {
+        nodeId: string;
+        nodeName: string;
+        layerType: string;
+        layerTypeName: string;
+        category: 'gap' | 'padding' | 'radius' | 'color' | 'stroke';
+        categoryLabel: string;
+        property: string;
+        propertyLabel: string;
+        value: number | string;
+        varId: string;
+        missingSuggestion: string;
+        styleName?: string;
+      }
+    ): boolean => {
+      if (!vStatus.isMissing && !vStatus.isForeign) return false;
+      if (markReported(opts.nodeId, `var:${opts.varId}`)) return false;
+
+      if (vStatus.isMissing) {
+        issues.push({
+          id: `issue_${++issueCounter}`,
+          nodeId: opts.nodeId,
+          nodeName: opts.nodeName,
+          layerType: opts.layerType,
+          layerTypeName: opts.layerTypeName,
+          category: opts.category,
+          categoryLabel: opts.categoryLabel,
+          property: opts.property,
+          propertyLabel: opts.propertyLabel,
+          issueType: 'missing',
+          value: opts.value,
+          formattedValue: opts.styleName
+            ? `Missing Variable (${vStatus.name}) in "${opts.styleName}"`
+            : `Missing Variable (${vStatus.name})`,
+          varId: opts.varId,
+          varName: vStatus.name,
+          suggestion: opts.missingSuggestion,
+        });
+        return true;
+      }
+
+      const sourceLabel =
+        vStatus.foreignSource === 'remote'
+          ? `${vStatus.libraryName || 'External Library'}${vStatus.collectionName ? ` · ${vStatus.collectionName}` : ''}`
+          : `Local: ${vStatus.collectionName || 'Other Collection'}`;
+
+      issues.push({
+        id: `issue_${++issueCounter}`,
+        nodeId: opts.nodeId,
+        nodeName: opts.nodeName,
+        layerType: opts.layerType,
+        layerTypeName: opts.layerTypeName,
+        category: opts.category,
+        categoryLabel: opts.categoryLabel,
+        property: opts.property,
+        propertyLabel: opts.propertyLabel,
+        issueType: 'foreign',
+        value: opts.value,
+        formattedValue: opts.styleName
+          ? `${vStatus.name} [${sourceLabel}] in "${opts.styleName}"`
+          : `${vStatus.name} [${sourceLabel}]`,
+        varId: opts.varId,
+        varName: vStatus.name,
+        foreignSource: vStatus.foreignSource,
+        foreignLibraryKey: vStatus.foreignLibraryKey,
+        collectionName: vStatus.collectionName,
+        libraryName: vStatus.libraryName,
+        suggestion:
+          vStatus.foreignSource === 'remote'
+            ? `External library variable ("${vStatus.libraryName || vStatus.collectionName}") — replace with a local Design System token`
+            : `Variable from another local collection ("${vStatus.collectionName}") — replace with a token from the active Design System`,
+      });
+      return true;
+    };
+
     const nodeIgnoredMap = new Map<string, Set<string>>();
 
     for (const node of allNodes) {
@@ -671,25 +883,19 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
 
             if (gapBinding && gapBinding.type === 'VARIABLE_ALIAS' && gapBinding.id) {
               const vStatus = await checkVariableStatus(gapBinding.id, node);
-              if (vStatus.isMissing && !markReported(node.id, `var:${gapBinding.id}`)) {
-                issues.push({
-                  id: `issue_${++issueCounter}`,
-                  nodeId: node.id,
-                  nodeName: nodeName,
-                  layerType: nodeType,
-                  layerTypeName: layerTypeName,
-                  category: 'gap',
-                  categoryLabel: 'Gap',
-                  property: 'itemSpacing',
-                  propertyLabel: 'Gap',
-                  issueType: 'missing',
-                  value: itemSpacing,
-                  formattedValue: `Missing Variable (${vStatus.name})`,
-                  varId: gapBinding.id,
-                  varName: vStatus.name,
-                  suggestion: 'Reassign to a valid Spacing variable',
-                });
-              }
+              reportBoundVariableIssue(vStatus, {
+                nodeId: node.id,
+                nodeName,
+                layerType: nodeType,
+                layerTypeName,
+                category: 'gap',
+                categoryLabel: 'Gap',
+                property: 'itemSpacing',
+                propertyLabel: 'Gap',
+                value: itemSpacing,
+                varId: gapBinding.id,
+                missingSuggestion: 'Reassign to a valid Spacing variable',
+              });
             } else {
               const tokenMatch = dsRegistry.matchSpacing(itemSpacing);
               const isArbitrary = tokenMatch.startsWith('[');
@@ -717,25 +923,19 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
             const counterBinding = boundVars.counterAxisSpacing;
             if (counterBinding && counterBinding.type === 'VARIABLE_ALIAS' && counterBinding.id) {
               const vStatus = await checkVariableStatus(counterBinding.id, node);
-              if (vStatus.isMissing && !markReported(node.id, `var:${counterBinding.id}`)) {
-                issues.push({
-                  id: `issue_${++issueCounter}`,
-                  nodeId: node.id,
-                  nodeName: nodeName,
-                  layerType: nodeType,
-                  layerTypeName: layerTypeName,
-                  category: 'gap',
-                  categoryLabel: 'Gap',
-                  property: 'counterAxisSpacing',
-                  propertyLabel: 'Counter Gap',
-                  issueType: 'missing',
-                  value: counterSpacing,
-                  formattedValue: `Missing Variable (${vStatus.name})`,
-                  varId: counterBinding.id,
-                  varName: vStatus.name,
-                  suggestion: 'Reassign to a valid Spacing variable',
-                });
-              }
+              reportBoundVariableIssue(vStatus, {
+                nodeId: node.id,
+                nodeName,
+                layerType: nodeType,
+                layerTypeName,
+                category: 'gap',
+                categoryLabel: 'Gap',
+                property: 'counterAxisSpacing',
+                propertyLabel: 'Counter Gap',
+                value: counterSpacing,
+                varId: counterBinding.id,
+                missingSuggestion: 'Reassign to a valid Spacing variable',
+              });
             } else {
               const tokenMatch = dsRegistry.matchSpacing(counterSpacing);
               const isArbitrary = tokenMatch.startsWith('[');
@@ -772,25 +972,19 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
             const binding = boundVars[p.key];
             if (binding && binding.type === 'VARIABLE_ALIAS' && binding.id) {
               const vStatus = await checkVariableStatus(binding.id, node);
-              if (vStatus.isMissing && !markReported(node.id, `var:${binding.id}`)) {
-                issues.push({
-                  id: `issue_${++issueCounter}`,
-                  nodeId: node.id,
-                  nodeName: nodeName,
-                  layerType: nodeType,
-                  layerTypeName: layerTypeName,
-                  category: 'padding',
-                  categoryLabel: 'Padding',
-                  property: p.key,
-                  propertyLabel: p.label,
-                  issueType: 'missing',
-                  value: p.val,
-                  formattedValue: `Missing Variable (${vStatus.name})`,
-                  varId: binding.id,
-                  varName: vStatus.name,
-                  suggestion: 'Reassign to a valid Spacing variable',
-                });
-              }
+              reportBoundVariableIssue(vStatus, {
+                nodeId: node.id,
+                nodeName,
+                layerType: nodeType,
+                layerTypeName,
+                category: 'padding',
+                categoryLabel: 'Padding',
+                property: p.key,
+                propertyLabel: p.label,
+                value: p.val,
+                varId: binding.id,
+                missingSuggestion: 'Reassign to a valid Spacing variable',
+              });
             } else {
               const tokenMatch = dsRegistry.matchSpacing(p.val);
               const isArbitrary = tokenMatch.startsWith('[');
@@ -831,25 +1025,19 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
               const binding = boundVars[c.key];
               if (binding && binding.type === 'VARIABLE_ALIAS' && binding.id) {
                 const vStatus = await checkVariableStatus(binding.id, node);
-                if (vStatus.isMissing && !markReported(node.id, `var:${binding.id}`)) {
-                  issues.push({
-                    id: `issue_${++issueCounter}`,
-                    nodeId: node.id,
-                    nodeName: nodeName,
-                    layerType: nodeType,
-                    layerTypeName: layerTypeName,
-                    category: 'radius',
-                    categoryLabel: 'Radius',
-                    property: c.key,
-                    propertyLabel: c.label,
-                    issueType: 'missing',
-                    value: c.val,
-                    formattedValue: `Missing Variable (${vStatus.name})`,
-                    varId: binding.id,
-                    varName: vStatus.name,
-                    suggestion: 'Reassign to a valid Radius variable',
-                  });
-                }
+                reportBoundVariableIssue(vStatus, {
+                  nodeId: node.id,
+                  nodeName,
+                  layerType: nodeType,
+                  layerTypeName,
+                  category: 'radius',
+                  categoryLabel: 'Radius',
+                  property: c.key,
+                  propertyLabel: c.label,
+                  value: c.val,
+                  varId: binding.id,
+                  missingSuggestion: 'Reassign to a valid Radius variable',
+                });
               } else {
                 const tokenMatch = dsRegistry.matchRadius(c.val);
                 const isArbitrary = tokenMatch.startsWith('[');
@@ -876,47 +1064,38 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
 
             if (binding && binding.type === 'VARIABLE_ALIAS' && binding.id) {
               const vStatus = await checkVariableStatus(binding.id, node);
-              if (vStatus.isMissing && !markReported(node.id, `var:${binding.id}`)) {
-                issues.push({
-                  id: `issue_${++issueCounter}`,
-                  nodeId: node.id,
-                  nodeName: nodeName,
-                  layerType: nodeType,
-                  layerTypeName: layerTypeName,
-                  category: 'radius',
-                  categoryLabel: 'Radius',
-                  property: 'cornerRadius',
-                  propertyLabel: 'Corner Radius',
-                  issueType: 'missing',
-                  value: cornerRadius,
-                  formattedValue: `Missing Variable (${vStatus.name})`,
-                  varId: binding.id,
-                  varName: vStatus.name,
-                  suggestion: 'Reassign to a valid Radius variable',
-                });
-              }
+              reportBoundVariableIssue(vStatus, {
+                nodeId: node.id,
+                nodeName,
+                layerType: nodeType,
+                layerTypeName,
+                category: 'radius',
+                categoryLabel: 'Radius',
+                property: 'cornerRadius',
+                propertyLabel: 'Corner Radius',
+                value: cornerRadius,
+                varId: binding.id,
+                missingSuggestion: 'Reassign to a valid Radius variable',
+              });
             } else if (indBindings.length > 0) {
               for (const indBinding of indBindings) {
                 if (indBinding.type === 'VARIABLE_ALIAS' && indBinding.id) {
                   const vStatus = await checkVariableStatus(indBinding.id, node);
-                  if (vStatus.isMissing && !markReported(node.id, `var:${indBinding.id}`)) {
-                    issues.push({
-                      id: `issue_${++issueCounter}`,
+                  if (
+                    reportBoundVariableIssue(vStatus, {
                       nodeId: node.id,
-                      nodeName: nodeName,
+                      nodeName,
                       layerType: nodeType,
-                      layerTypeName: layerTypeName,
+                      layerTypeName,
                       category: 'radius',
                       categoryLabel: 'Radius',
                       property: 'cornerRadius',
                       propertyLabel: 'Corner Radius',
-                      issueType: 'missing',
                       value: cornerRadius,
-                      formattedValue: `Missing Variable (${vStatus.name})`,
                       varId: indBinding.id,
-                      varName: vStatus.name,
-                      suggestion: 'Reassign to a valid Radius variable',
-                    });
+                      missingSuggestion: 'Reassign to a valid Radius variable',
+                    })
+                  ) {
                     break;
                   }
                 }
@@ -960,25 +1139,19 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
                 const binding = boundVars[s.key] || boundVars.strokeWeight;
                 if (binding && binding.type === 'VARIABLE_ALIAS' && binding.id) {
                   const vStatus = await checkVariableStatus(binding.id, node);
-                  if (vStatus.isMissing && !markReported(node.id, `var:${binding.id}`)) {
-                    issues.push({
-                      id: `issue_${++issueCounter}`,
-                      nodeId: node.id,
-                      nodeName: nodeName,
-                      layerType: nodeType,
-                      layerTypeName: layerTypeName,
-                      category: 'stroke',
-                      categoryLabel: 'Stroke',
-                      property: s.key,
-                      propertyLabel: s.label,
-                      issueType: 'missing',
-                      value: s.val,
-                      formattedValue: `Missing Variable (${vStatus.name})`,
-                      varId: binding.id,
-                      varName: vStatus.name,
-                      suggestion: 'Reassign to a valid Stroke variable',
-                    });
-                  }
+                  reportBoundVariableIssue(vStatus, {
+                    nodeId: node.id,
+                    nodeName,
+                    layerType: nodeType,
+                    layerTypeName,
+                    category: 'stroke',
+                    categoryLabel: 'Stroke',
+                    property: s.key,
+                    propertyLabel: s.label,
+                    value: s.val,
+                    varId: binding.id,
+                    missingSuggestion: 'Reassign to a valid Stroke variable',
+                  });
                 } else {
                   const tokenMatch = dsRegistry.matchStroke(s.val);
                   const isArbitrary = tokenMatch.startsWith('[');
@@ -1008,47 +1181,38 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
 
             if (binding && binding.type === 'VARIABLE_ALIAS' && binding.id) {
               const vStatus = await checkVariableStatus(binding.id, node);
-              if (vStatus.isMissing && !markReported(node.id, `var:${binding.id}`)) {
-                issues.push({
-                  id: `issue_${++issueCounter}`,
-                  nodeId: node.id,
-                  nodeName: nodeName,
-                  layerType: nodeType,
-                  layerTypeName: layerTypeName,
-                  category: 'stroke',
-                  categoryLabel: 'Stroke',
-                  property: 'strokeWeight',
-                  propertyLabel: 'Stroke Weight',
-                  issueType: 'missing',
-                  value: sw,
-                  formattedValue: `Missing Variable (${vStatus.name})`,
-                  varId: binding.id,
-                  varName: vStatus.name,
-                  suggestion: 'Reassign to a valid Stroke variable',
-                });
-              }
+              reportBoundVariableIssue(vStatus, {
+                nodeId: node.id,
+                nodeName,
+                layerType: nodeType,
+                layerTypeName,
+                category: 'stroke',
+                categoryLabel: 'Stroke',
+                property: 'strokeWeight',
+                propertyLabel: 'Stroke Weight',
+                value: sw,
+                varId: binding.id,
+                missingSuggestion: 'Reassign to a valid Stroke variable',
+              });
             } else if (indBindings.length > 0) {
               for (const indBinding of indBindings) {
                 if (indBinding.type === 'VARIABLE_ALIAS' && indBinding.id) {
                   const vStatus = await checkVariableStatus(indBinding.id, node);
-                  if (vStatus.isMissing && !markReported(node.id, `var:${indBinding.id}`)) {
-                    issues.push({
-                      id: `issue_${++issueCounter}`,
+                  if (
+                    reportBoundVariableIssue(vStatus, {
                       nodeId: node.id,
-                      nodeName: nodeName,
+                      nodeName,
                       layerType: nodeType,
-                      layerTypeName: layerTypeName,
+                      layerTypeName,
                       category: 'stroke',
                       categoryLabel: 'Stroke',
                       property: 'strokeWeight',
                       propertyLabel: 'Stroke Weight',
-                      issueType: 'missing',
                       value: sw,
-                      formattedValue: `Missing Variable (${vStatus.name})`,
                       varId: indBinding.id,
-                      varName: vStatus.name,
-                      suggestion: 'Reassign to a valid Stroke variable',
-                    });
+                      missingSuggestion: 'Reassign to a valid Stroke variable',
+                    })
+                  ) {
                     break;
                   }
                 }
@@ -1139,25 +1303,20 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
                     const spBinding = (sp as any).boundVariables?.color;
                     if (spBinding && spBinding.type === 'VARIABLE_ALIAS' && spBinding.id) {
                       const vStatus = await checkVariableStatus(spBinding.id, node);
-                      if (vStatus.isMissing && !markReported(node.id, `var:${spBinding.id}`)) {
-                        issues.push({
-                          id: `issue_${++issueCounter}`,
-                          nodeId: node.id,
-                          nodeName: nodeName,
-                          layerType: nodeType,
-                          layerTypeName: layerTypeName,
-                          category: 'color',
-                          categoryLabel: 'Color',
-                          property: 'fills',
-                          propertyLabel: `Style "${style.name}"`,
-                          issueType: 'missing',
-                          value: sp.type === 'SOLID' ? rgbToHex(sp.color.r, sp.color.g, sp.color.b) : '#888888',
-                          formattedValue: `Missing Variable (${vStatus.name}) in "${style.name}"`,
-                          varId: spBinding.id,
-                          varName: vStatus.name,
-                          suggestion: 'Reassign to a valid Color variable',
-                        });
-                      }
+                      reportBoundVariableIssue(vStatus, {
+                        nodeId: node.id,
+                        nodeName,
+                        layerType: nodeType,
+                        layerTypeName,
+                        category: 'color',
+                        categoryLabel: 'Color',
+                        property: 'fills',
+                        propertyLabel: `Style "${style.name}"`,
+                        value: sp.type === 'SOLID' ? rgbToHex(sp.color.r, sp.color.g, sp.color.b) : '#888888',
+                        varId: spBinding.id,
+                        missingSuggestion: 'Reassign to a valid Color variable',
+                        styleName: style.name,
+                      });
                     }
                   }
                 }
@@ -1182,26 +1341,20 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
 
               if (colorBinding && colorBinding.type === 'VARIABLE_ALIAS' && colorBinding.id) {
                 const vStatus = await checkVariableStatus(colorBinding.id, node);
-                if (vStatus.isMissing && !markReported(node.id, `var:${colorBinding.id}`)) {
-                  const valHex = paint.type === 'SOLID' ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : '#888888';
-                  issues.push({
-                    id: `issue_${++issueCounter}`,
-                    nodeId: node.id,
-                    nodeName: nodeName,
-                    layerType: nodeType,
-                    layerTypeName: layerTypeName,
-                    category: 'color',
-                    categoryLabel: 'Color',
-                    property: 'fills',
-                    propertyLabel: propLabel,
-                    issueType: 'missing',
-                    value: valHex,
-                    formattedValue: `Missing Variable (${vStatus.name})`,
-                    varId: colorBinding.id,
-                    varName: vStatus.name,
-                    suggestion: 'Reassign to a valid Color variable',
-                  });
-                }
+                const valHex = paint.type === 'SOLID' ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : '#888888';
+                reportBoundVariableIssue(vStatus, {
+                  nodeId: node.id,
+                  nodeName,
+                  layerType: nodeType,
+                  layerTypeName,
+                  category: 'color',
+                  categoryLabel: 'Color',
+                  property: 'fills',
+                  propertyLabel: propLabel,
+                  value: valHex,
+                  varId: colorBinding.id,
+                  missingSuggestion: 'Reassign to a valid Color variable',
+                });
               } else if (paint.type === 'SOLID') {
                 const hasStyle = typeof (node as any).fillStyleId === 'string' && (node as any).fillStyleId.length > 0;
                 if (!hasStyle) {
@@ -1238,25 +1391,19 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
                     const stopBinding = (stop as any).boundVariables?.color;
                     if (stopBinding && stopBinding.type === 'VARIABLE_ALIAS' && stopBinding.id) {
                       const vStatus = await checkVariableStatus(stopBinding.id, node);
-                      if (vStatus.isMissing && !markReported(node.id, `var:${stopBinding.id}`)) {
-                        issues.push({
-                          id: `issue_${++issueCounter}`,
-                          nodeId: node.id,
-                          nodeName: nodeName,
-                          layerType: nodeType,
-                          layerTypeName: layerTypeName,
-                          category: 'color',
-                          categoryLabel: 'Color',
-                          property: 'fills',
-                          propertyLabel: `${propLabel} Stop (${sIdx + 1})`,
-                          issueType: 'missing',
-                          value: rgbToHex(stop.color.r, stop.color.g, stop.color.b),
-                          formattedValue: `Missing Variable (${vStatus.name})`,
-                          varId: stopBinding.id,
-                          varName: vStatus.name,
-                          suggestion: 'Reassign to a valid Color variable',
-                        });
-                      }
+                      reportBoundVariableIssue(vStatus, {
+                        nodeId: node.id,
+                        nodeName,
+                        layerType: nodeType,
+                        layerTypeName,
+                        category: 'color',
+                        categoryLabel: 'Color',
+                        property: 'fills',
+                        propertyLabel: `${propLabel} Stop (${sIdx + 1})`,
+                        value: rgbToHex(stop.color.r, stop.color.g, stop.color.b),
+                        varId: stopBinding.id,
+                        missingSuggestion: 'Reassign to a valid Color variable',
+                      });
                     }
                   }
                 }
@@ -1266,25 +1413,19 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
               const paintOpBinding = (paint as any).boundVariables?.opacity;
               if (paintOpBinding && paintOpBinding.type === 'VARIABLE_ALIAS' && paintOpBinding.id) {
                 const vStatus = await checkVariableStatus(paintOpBinding.id, node);
-                if (vStatus.isMissing && !markReported(node.id, `var:${paintOpBinding.id}`)) {
-                  issues.push({
-                    id: `issue_${++issueCounter}`,
-                    nodeId: node.id,
-                    nodeName: nodeName,
-                    layerType: nodeType,
-                    layerTypeName: layerTypeName,
-                    category: 'color',
-                    categoryLabel: 'Color',
-                    property: 'fills',
-                    propertyLabel: `${propLabel} Opacity`,
-                    issueType: 'missing',
-                    value: paint.opacity ?? 1,
-                    formattedValue: `Missing Variable (${vStatus.name})`,
-                    varId: paintOpBinding.id,
-                    varName: vStatus.name,
-                    suggestion: 'Reassign to a valid Number variable',
-                  });
-                }
+                reportBoundVariableIssue(vStatus, {
+                  nodeId: node.id,
+                  nodeName,
+                  layerType: nodeType,
+                  layerTypeName,
+                  category: 'color',
+                  categoryLabel: 'Color',
+                  property: 'fills',
+                  propertyLabel: `${propLabel} Opacity`,
+                  value: paint.opacity ?? 1,
+                  varId: paintOpBinding.id,
+                  missingSuggestion: 'Reassign to a valid Number variable',
+                });
               }
             }
           } else if (node.type === 'TEXT' && (node as any).fills === figma.mixed) {
@@ -1302,25 +1443,19 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
 
                     if (colorBinding && colorBinding.type === 'VARIABLE_ALIAS' && colorBinding.id) {
                       const vStatus = await checkVariableStatus(colorBinding.id, node);
-                      if (vStatus.isMissing && !markReported(node.id, `var:${colorBinding.id}`)) {
-                        issues.push({
-                          id: `issue_${++issueCounter}`,
-                          nodeId: node.id,
-                          nodeName: nodeName,
-                          layerType: nodeType,
-                          layerTypeName: layerTypeName,
-                          category: 'color',
-                          categoryLabel: 'Color',
-                          property: 'fills',
-                          propertyLabel: segLabel,
-                          issueType: 'missing',
-                          value: paint.type === 'SOLID' ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : '#888888',
-                          formattedValue: `Missing Variable (${vStatus.name})`,
-                          varId: colorBinding.id,
-                          varName: vStatus.name,
-                          suggestion: 'Reassign to a valid Color variable',
-                        });
-                      }
+                      reportBoundVariableIssue(vStatus, {
+                        nodeId: node.id,
+                        nodeName,
+                        layerType: nodeType,
+                        layerTypeName,
+                        category: 'color',
+                        categoryLabel: 'Color',
+                        property: 'fills',
+                        propertyLabel: segLabel,
+                        value: paint.type === 'SOLID' ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : '#888888',
+                        varId: colorBinding.id,
+                        missingSuggestion: 'Reassign to a valid Color variable',
+                      });
                     } else if (paint.type === 'SOLID') {
                       const hasSegStyle = typeof (seg as any).fillStyleId === 'string' && (seg as any).fillStyleId.length > 0;
                       if (!hasSegStyle) {
@@ -1447,25 +1582,20 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
                     const spBinding = (sp as any).boundVariables?.color;
                     if (spBinding && spBinding.type === 'VARIABLE_ALIAS' && spBinding.id) {
                       const vStatus = await checkVariableStatus(spBinding.id, node);
-                      if (vStatus.isMissing && !markReported(node.id, `var:${spBinding.id}`)) {
-                        issues.push({
-                          id: `issue_${++issueCounter}`,
-                          nodeId: node.id,
-                          nodeName: nodeName,
-                          layerType: nodeType,
-                          layerTypeName: layerTypeName,
-                          category: 'color',
-                          categoryLabel: 'Color',
-                          property: 'strokes',
-                          propertyLabel: `Style "${style.name}"`,
-                          issueType: 'missing',
-                          value: sp.type === 'SOLID' ? rgbToHex(sp.color.r, sp.color.g, sp.color.b) : '#888888',
-                          formattedValue: `Missing Variable (${vStatus.name}) in "${style.name}"`,
-                          varId: spBinding.id,
-                          varName: vStatus.name,
-                          suggestion: 'Reassign to a valid Color variable',
-                        });
-                      }
+                      reportBoundVariableIssue(vStatus, {
+                        nodeId: node.id,
+                        nodeName,
+                        layerType: nodeType,
+                        layerTypeName,
+                        category: 'color',
+                        categoryLabel: 'Color',
+                        property: 'strokes',
+                        propertyLabel: `Style "${style.name}"`,
+                        value: sp.type === 'SOLID' ? rgbToHex(sp.color.r, sp.color.g, sp.color.b) : '#888888',
+                        varId: spBinding.id,
+                        missingSuggestion: 'Reassign to a valid Color variable',
+                        styleName: style.name,
+                      });
                     }
                   }
                 }
@@ -1492,26 +1622,20 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
 
                 if (colorBinding && colorBinding.type === 'VARIABLE_ALIAS' && colorBinding.id) {
                   const vStatus = await checkVariableStatus(colorBinding.id, node);
-                  if (vStatus.isMissing && !markReported(node.id, `var:${colorBinding.id}`)) {
-                    const valHex = paint.type === 'SOLID' ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : '#888888';
-                    issues.push({
-                      id: `issue_${++issueCounter}`,
-                      nodeId: node.id,
-                      nodeName: nodeName,
-                      layerType: nodeType,
-                      layerTypeName: layerTypeName,
-                      category: 'color',
-                      categoryLabel: 'Color',
-                      property: 'strokes',
-                      propertyLabel: propLabel,
-                      issueType: 'missing',
-                      value: valHex,
-                      formattedValue: `Missing Variable (${vStatus.name})`,
-                      varId: colorBinding.id,
-                      varName: vStatus.name,
-                      suggestion: 'Reassign to a valid Color variable',
-                    });
-                  }
+                  const valHex = paint.type === 'SOLID' ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : '#888888';
+                  reportBoundVariableIssue(vStatus, {
+                    nodeId: node.id,
+                    nodeName,
+                    layerType: nodeType,
+                    layerTypeName,
+                    category: 'color',
+                    categoryLabel: 'Color',
+                    property: 'strokes',
+                    propertyLabel: propLabel,
+                    value: valHex,
+                    varId: colorBinding.id,
+                    missingSuggestion: 'Reassign to a valid Color variable',
+                  });
                 } else if (paint.type === 'SOLID') {
                   const hasStyle = typeof (node as any).strokeStyleId === 'string' && (node as any).strokeStyleId.length > 0;
                   if (!hasStyle) {
@@ -1547,25 +1671,19 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
                       const stopBinding = (stop as any).boundVariables?.color;
                       if (stopBinding && stopBinding.type === 'VARIABLE_ALIAS' && stopBinding.id) {
                         const vStatus = await checkVariableStatus(stopBinding.id, node);
-                        if (vStatus.isMissing && !markReported(node.id, `var:${stopBinding.id}`)) {
-                          issues.push({
-                            id: `issue_${++issueCounter}`,
-                            nodeId: node.id,
-                            nodeName: nodeName,
-                            layerType: nodeType,
-                            layerTypeName: layerTypeName,
-                            category: 'color',
-                            categoryLabel: 'Color',
-                            property: 'strokes',
-                            propertyLabel: `${propLabel} Stop (${sIdx + 1})`,
-                            issueType: 'missing',
-                            value: rgbToHex(stop.color.r, stop.color.g, stop.color.b),
-                            formattedValue: `Missing Variable (${vStatus.name})`,
-                            varId: stopBinding.id,
-                            varName: vStatus.name,
-                            suggestion: 'Reassign to a valid Color variable',
-                          });
-                        }
+                        reportBoundVariableIssue(vStatus, {
+                          nodeId: node.id,
+                          nodeName,
+                          layerType: nodeType,
+                          layerTypeName,
+                          category: 'color',
+                          categoryLabel: 'Color',
+                          property: 'strokes',
+                          propertyLabel: `${propLabel} Stop (${sIdx + 1})`,
+                          value: rgbToHex(stop.color.r, stop.color.g, stop.color.b),
+                          varId: stopBinding.id,
+                          missingSuggestion: 'Reassign to a valid Color variable',
+                        });
                       }
                     }
                   }
@@ -1612,25 +1730,19 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
                 const effLabel = effects.length > 1 ? `Shadow (${eIdx + 1})` : 'Shadow';
                 if (effColorBinding && effColorBinding.type === 'VARIABLE_ALIAS' && effColorBinding.id) {
                   const vStatus = await checkVariableStatus(effColorBinding.id, node);
-                  if (vStatus.isMissing && !markReported(node.id, `var:${effColorBinding.id}`)) {
-                    issues.push({
-                      id: `issue_${++issueCounter}`,
-                      nodeId: node.id,
-                      nodeName: nodeName,
-                      layerType: nodeType,
-                      layerTypeName: layerTypeName,
-                      category: 'color',
-                      categoryLabel: 'Color',
-                      property: 'effects',
-                      propertyLabel: effLabel,
-                      issueType: 'missing',
-                      value: rgbToHex(eff.color.r, eff.color.g, eff.color.b),
-                      formattedValue: `Missing Variable (${vStatus.name})`,
-                      varId: effColorBinding.id,
-                      varName: vStatus.name,
-                      suggestion: 'Reassign to a valid Color variable',
-                    });
-                  }
+                  reportBoundVariableIssue(vStatus, {
+                    nodeId: node.id,
+                    nodeName,
+                    layerType: nodeType,
+                    layerTypeName,
+                    category: 'color',
+                    categoryLabel: 'Color',
+                    property: 'effects',
+                    propertyLabel: effLabel,
+                    value: rgbToHex(eff.color.r, eff.color.g, eff.color.b),
+                    varId: effColorBinding.id,
+                    missingSuggestion: 'Reassign to a valid Color variable',
+                  });
                 }
               }
             }
@@ -1691,63 +1803,51 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
                 const item = bVal[idx];
                 if (item && item.type === 'VARIABLE_ALIAS' && item.id) {
                   const vStatus = await checkVariableStatus(item.id, node);
-                  if (vStatus.isMissing && !markReported(node.id, `var:${item.id}`)) {
-                    const cat: 'gap' | 'padding' | 'radius' | 'color' | 'stroke' = bKey.includes('radius')
-                      ? 'radius'
-                      : (bKey.includes('spacing') || bKey.includes('gap')
-                        ? 'gap'
-                        : (bKey.includes('padding')
-                          ? 'padding'
-                          : (bKey.toLowerCase().includes('weight') || bKey.toLowerCase().includes('width') || bKey === 'strokeWeight' ? 'stroke' : 'color')));
-                    issues.push({
-                      id: `issue_${++issueCounter}`,
-                      nodeId: node.id,
-                      nodeName: nodeName,
-                      layerType: nodeType,
-                      layerTypeName: layerTypeName,
-                      category: cat,
-                      categoryLabel: cat.charAt(0).toUpperCase() + cat.slice(1),
-                      property: bKey,
-                      propertyLabel: `${bKey} (${idx + 1})`,
-                      issueType: 'missing',
-                      value: 'Missing',
-                      formattedValue: `Missing Variable (${vStatus.name})`,
-                      varId: item.id,
-                      varName: vStatus.name,
-                      suggestion: 'Reassign to a valid variable',
-                    });
-                  }
+                  const cat: 'gap' | 'padding' | 'radius' | 'color' | 'stroke' = bKey.includes('radius')
+                    ? 'radius'
+                    : (bKey.includes('spacing') || bKey.includes('gap')
+                      ? 'gap'
+                      : (bKey.includes('padding')
+                        ? 'padding'
+                        : (bKey.toLowerCase().includes('weight') || bKey.toLowerCase().includes('width') || bKey === 'strokeWeight' ? 'stroke' : 'color')));
+                  reportBoundVariableIssue(vStatus, {
+                    nodeId: node.id,
+                    nodeName,
+                    layerType: nodeType,
+                    layerTypeName,
+                    category: cat,
+                    categoryLabel: cat.charAt(0).toUpperCase() + cat.slice(1),
+                    property: bKey,
+                    propertyLabel: `${bKey} (${idx + 1})`,
+                    value: vStatus.isMissing ? 'Missing' : vStatus.name,
+                    varId: item.id,
+                    missingSuggestion: 'Reassign to a valid variable',
+                  });
                 }
               }
             } else if (typeof bVal === 'object' && (bVal as any).type === 'VARIABLE_ALIAS' && (bVal as any).id) {
               const aliasId = (bVal as any).id;
               const vStatus = await checkVariableStatus(aliasId, node);
-              if (vStatus.isMissing && !markReported(node.id, `var:${aliasId}`)) {
-                const cat: 'gap' | 'padding' | 'radius' | 'color' | 'stroke' = bKey.includes('radius')
-                  ? 'radius'
-                  : (bKey.includes('spacing') || bKey.includes('gap')
-                    ? 'gap'
-                    : (bKey.includes('padding')
-                      ? 'padding'
-                      : (bKey.toLowerCase().includes('weight') || bKey.toLowerCase().includes('width') || bKey === 'strokeWeight' ? 'stroke' : 'color')));
-                issues.push({
-                  id: `issue_${++issueCounter}`,
-                  nodeId: node.id,
-                  nodeName: nodeName,
-                  layerType: nodeType,
-                  layerTypeName: layerTypeName,
-                  category: cat,
-                  categoryLabel: cat.charAt(0).toUpperCase() + cat.slice(1),
-                  property: bKey,
-                  propertyLabel: bKey,
-                  issueType: 'missing',
-                  value: 'Missing',
-                  formattedValue: `Missing Variable (${vStatus.name})`,
-                  varId: aliasId,
-                  varName: vStatus.name,
-                  suggestion: 'Reassign to a valid variable',
-                });
-              }
+              const cat: 'gap' | 'padding' | 'radius' | 'color' | 'stroke' = bKey.includes('radius')
+                ? 'radius'
+                : (bKey.includes('spacing') || bKey.includes('gap')
+                  ? 'gap'
+                  : (bKey.includes('padding')
+                    ? 'padding'
+                    : (bKey.toLowerCase().includes('weight') || bKey.toLowerCase().includes('width') || bKey === 'strokeWeight' ? 'stroke' : 'color')));
+              reportBoundVariableIssue(vStatus, {
+                nodeId: node.id,
+                nodeName,
+                layerType: nodeType,
+                layerTypeName,
+                category: cat,
+                categoryLabel: cat.charAt(0).toUpperCase() + cat.slice(1),
+                property: bKey,
+                propertyLabel: bKey,
+                value: vStatus.isMissing ? 'Missing' : vStatus.name,
+                varId: aliasId,
+                missingSuggestion: 'Reassign to a valid variable',
+              });
             }
           }
         }
@@ -1801,6 +1901,7 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
       totalOccurrences: rawIssues.filter(i => !i.isIgnored).length,
       unboundCount: activeIssues.filter(i => i.issueType === 'unbound').length,
       missingCount: activeIssues.filter(i => i.issueType === 'missing').length,
+      foreignCount: activeIssues.filter(i => i.issueType === 'foreign').length,
       gapCount: activeIssues.filter(i => i.category === 'gap').length,
       paddingCount: activeIssues.filter(i => i.category === 'padding').length,
       radiusCount: activeIssues.filter(i => i.category === 'radius').length,
@@ -1817,6 +1918,7 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
       scope,
       summary,
       issues: groupedIssues,
+      trustedLibraries,
     });
   } catch (err: any) {
     console.error('Audit error:', err);
@@ -1827,6 +1929,7 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
         totalIssues: 0,
         unboundCount: 0,
         missingCount: 0,
+        foreignCount: 0,
         gapCount: 0,
         paddingCount: 0,
         radiusCount: 0,
@@ -1836,6 +1939,7 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
         scope,
       },
       issues: [],
+      trustedLibraries: getTrustedAuditLibraries(),
       error: err ? err.message : String(err),
     });
   }

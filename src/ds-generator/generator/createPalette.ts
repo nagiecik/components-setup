@@ -46,7 +46,39 @@ import { exportVariablesToJson } from '../bridge/exportJson';
 export async function handleCreatePalette(msg: any): Promise<void> {
     const seeds = msg.seeds;
     const remValue = 16;
-    const { radiusPreset: msgRadiusPreset, spacingPreset: msgSpacingPreset, buttonHoverPreset: msgButtonHoverPreset, stylePreset, baseFontSize, lhHeading, lhDisplay, lhOthers, lsHeading, lsDisplay, lsOthers, psDisplay, psOthers, piDisplay, piOthers, wrapDisplay, wrapOthers, layoutMarginXl, layoutMarginLg, layoutMargin2xl, customGradients, customColors } = msg;
+    const {
+      radiusPreset: msgRadiusPreset,
+      spacingPreset: msgSpacingPreset,
+      buttonHoverPreset: msgButtonHoverPreset,
+      stylePreset,
+      baseFontSize,
+      lhHeading,
+      lhDisplay,
+      lhOthers,
+      lsHeading,
+      lsDisplay,
+      lsOthers,
+      psDisplay,
+      psOthers,
+      piDisplay,
+      piOthers,
+      wrapDisplay,
+      wrapOthers,
+      layoutMarginXl,
+      layoutMarginLg,
+      layoutMargin2xl,
+      smPhoneModel,
+      customGradients,
+      customColors,
+      includeMaterialIcons: msgIncludeMaterialIcons,
+      materialIconsFamily: msgMaterialIconsFamily,
+      materialIconsFill: msgMaterialIconsFill,
+      materialIconsWeight: msgMaterialIconsWeight
+    } = msg;
+    const includeMaterialIcons = msgIncludeMaterialIcons !== undefined ? !!msgIncludeMaterialIcons : true;
+    const materialIconsFamily = msgMaterialIconsFamily || "Material Symbols Rounded";
+    const materialIconsFill = msgMaterialIconsFill !== undefined ? (parseInt(msgMaterialIconsFill, 10) || 0) : 0;
+    const materialIconsWeight = msgMaterialIconsWeight !== undefined ? (parseInt(msgMaterialIconsWeight, 10) || 400) : 400;
     const buttonHoverPreset = msgButtonHoverPreset || 'color';
     const targetWrapDisplay = wrapDisplay || 'BALANCE';
     const targetWrapOthers = wrapOthers || 'BALANCE';
@@ -86,6 +118,8 @@ export async function handleCreatePalette(msg: any): Promise<void> {
 
       const createdVariablesMap = new Map();
       const metricsMap = new Map();
+      let metricsCol: any = null;
+      let mModeIds: any = null;
       const allLocalVars = await figma.variables.getLocalVariablesAsync();
       const fallbackRenamedMap = migrateFallbackColorVariables(allLocalVars);
       const highlightRenamedMap = migrateHighlightVariables(allLocalVars);
@@ -112,6 +146,12 @@ export async function handleCreatePalette(msg: any): Promise<void> {
       const headersStyles = msg.headersStyles || { regular: 'Regular', medium: 'Medium', bold: 'Bold' };
       const bodyStyles = msg.bodyStyles || { regular: 'Regular', medium: 'Medium', bold: 'Bold' };
 
+      const includeSecondaryFont = !!msg.includeSecondaryFont;
+      const secondaryHeadersFont = msg.secondaryHeadersFont || 'Inter';
+      const secondaryBodyFont = msg.secondaryBodyFont || 'Inter';
+      const secondaryHeadersStyles = msg.secondaryHeadersStyles || { regular: 'Regular', medium: 'Medium', bold: 'Bold' };
+      const secondaryBodyStyles = msg.secondaryBodyStyles || { regular: 'Regular', medium: 'Medium', bold: 'Bold' };
+
       if (!seeds.accessibility) seeds.accessibility = { name: "accessibility", color: "#ffed00" };
       const baseActionColor = seeds.action ? seeds.action.color : "#2979FF";
       const baseSuccessColor = seeds.success ? seeds.success.color : "#27AE60";
@@ -137,6 +177,11 @@ export async function handleCreatePalette(msg: any): Promise<void> {
       await figma.clientStorage.setAsync('pluginHeadersStyles', headersStyles);
       await figma.clientStorage.setAsync('pluginBodyFont', bodyFont);
       await figma.clientStorage.setAsync('pluginBodyStyles', bodyStyles);
+      await figma.clientStorage.setAsync('pluginIncludeSecondaryFont', includeSecondaryFont);
+      await figma.clientStorage.setAsync('pluginSecondaryHeadersFont', secondaryHeadersFont);
+      await figma.clientStorage.setAsync('pluginSecondaryHeadersStyles', secondaryHeadersStyles);
+      await figma.clientStorage.setAsync('pluginSecondaryBodyFont', secondaryBodyFont);
+      await figma.clientStorage.setAsync('pluginSecondaryBodyStyles', secondaryBodyStyles);
       await figma.clientStorage.setAsync('pluginLS_H', lsHeading !== undefined ? lsHeading : 0);
       await figma.clientStorage.setAsync('pluginLS_D', lsDisplay);
       await figma.clientStorage.setAsync('pluginLS_O', lsOthers);
@@ -149,17 +194,60 @@ export async function handleCreatePalette(msg: any): Promise<void> {
       await figma.clientStorage.setAsync('pluginLayoutMarginXl', layoutMarginXl);
       await figma.clientStorage.setAsync('pluginLayoutMarginLg', layoutMarginLg);
       await figma.clientStorage.setAsync('pluginLayoutMargin2xl', layoutMargin2xl);
+      await figma.clientStorage.setAsync('pluginSmPhoneModel', smPhoneModel || '393x852');
       await figma.clientStorage.setAsync('pluginCustomGradients', customGradients || []);
       await figma.clientStorage.setAsync('pluginCustomColors', customColors || []);
+      await figma.clientStorage.setAsync('pluginIncludeMaterialIcons', includeMaterialIcons);
+      await figma.clientStorage.setAsync('pluginMaterialIconsFamily', materialIconsFamily);
+      await figma.clientStorage.setAsync('pluginMaterialIconsFill', materialIconsFill);
+      await figma.clientStorage.setAsync('pluginMaterialIconsWeight', materialIconsWeight);
 
-      async function resolveMetric(value, col, modeId) {
+      async function resolveMetric(value: any, col?: any, modeId?: any) {
+        if (value === null || value === undefined) return null;
+        const numVal = typeof value === 'number' ? value : parseFloat(value);
+        if (isNaN(numVal)) return null;
+
+        const targetCol = col || metricsCol;
+        const targetMode = modeId || (mModeIds && mModeIds.default);
+
+        if (targetCol && targetCol.id && varLookupMap instanceof Map) {
+          const constKey = `${targetCol.id}:Constant/${numVal}`;
+          const constVar = varLookupMap.get(constKey);
+          if (constVar) return constVar.id;
+
+          for (const [k, v] of varLookupMap.entries()) {
+            if (k.startsWith(`${targetCol.id}:`) && v.resolvedType === 'FLOAT' && !(v as any).removed) {
+              const mVal = v.valuesByMode ? v.valuesByMode[targetMode || Object.keys(v.valuesByMode)[0]] : null;
+              if (typeof mVal === 'number' && Math.abs(mVal - numVal) < 0.001) {
+                return v.id;
+              }
+            }
+          }
+        }
+
+        if (Array.isArray(allLocalVars)) {
+          const floatVars = allLocalVars.filter(v => v.resolvedType === 'FLOAT' && !(v as any).removed);
+          const match = floatVars.find(v => {
+            if (!v.valuesByMode) return false;
+            for (const mId of Object.keys(v.valuesByMode)) {
+              const mVal = v.valuesByMode[mId];
+              if (typeof mVal === 'number' && Math.abs(mVal - numVal) < 0.001) return true;
+            }
+            return false;
+          });
+          if (match) return match.id;
+        }
+
         return null;
       }
 
       // Preload all available styles for the selected font families and existing text styles to avoid unloaded font errors
       const allAvailableFonts = await figma.listAvailableFontsAsync();
       const fontsToLoad = allAvailableFonts.filter(f => 
-        f.fontName.family === headersFont || f.fontName.family === bodyFont
+        f.fontName.family === headersFont ||
+        f.fontName.family === bodyFont ||
+        (includeSecondaryFont && (f.fontName.family === secondaryHeadersFont || f.fontName.family === secondaryBodyFont)) ||
+        (includeMaterialIcons && f.fontName.family === materialIconsFamily)
       );
       await Promise.all(fontsToLoad.map(f => figma.loadFontAsync(f.fontName).catch(() => {})));
 
@@ -201,6 +289,23 @@ export async function handleCreatePalette(msg: any): Promise<void> {
       const loadedBodyReg = await safeLoadFont(bodyFont, bodyStyles.regular, 'Regular');
       const loadedBodyMed = await safeLoadFont(bodyFont, bodyStyles.medium, loadedBodyReg);
       const loadedBodyBold = await safeLoadFont(bodyFont, bodyStyles.bold, loadedBodyMed);
+
+      let loadedSecHeadReg = 'Regular';
+      let loadedSecHeadMed = 'Medium';
+      let loadedSecHeadBold = 'Bold';
+      let loadedSecBodyReg = 'Regular';
+      let loadedSecBodyMed = 'Medium';
+      let loadedSecBodyBold = 'Bold';
+
+      if (includeSecondaryFont) {
+        loadedSecHeadReg = await safeLoadFont(secondaryHeadersFont, secondaryHeadersStyles.regular, 'Regular');
+        loadedSecHeadMed = await safeLoadFont(secondaryHeadersFont, secondaryHeadersStyles.medium, loadedSecHeadReg);
+        loadedSecHeadBold = await safeLoadFont(secondaryHeadersFont, secondaryHeadersStyles.bold, loadedSecHeadMed);
+
+        loadedSecBodyReg = await safeLoadFont(secondaryBodyFont, secondaryBodyStyles.regular, 'Regular');
+        loadedSecBodyMed = await safeLoadFont(secondaryBodyFont, secondaryBodyStyles.medium, loadedSecBodyReg);
+        loadedSecBodyBold = await safeLoadFont(secondaryBodyFont, secondaryBodyStyles.bold, loadedSecBodyMed);
+      }
 
       // ==========================================
       // KROK 1: Generowanie _Palettes (Primitives + Shades)
@@ -759,10 +864,10 @@ export async function handleCreatePalette(msg: any): Promise<void> {
 
         const subtleRules = isLightRole ? {
           light: 95,
-          lightContrast: 88,
-          dark: 22,
-          darkContrast: 22,
-          accessibility: 22
+          lightContrast: 85,
+          dark: 20,
+          darkContrast: 25,
+          accessibility: 20
         } : {
           light: 95,
           lightContrast: 85,
@@ -917,6 +1022,11 @@ export async function handleCreatePalette(msg: any): Promise<void> {
             if (modeId) {
               let targetRole = role;
               let finalTone = toneValue;
+              if (!neutralTones.includes(finalTone)) {
+                finalTone = neutralTones.reduce((prev, curr) =>
+                  Math.abs(curr - finalTone) < Math.abs(prev - finalTone) ? curr : prev
+                );
+              }
 
               const isAccessRole = ['primary', 'secondary', 'tertiary'].includes(role);
               const accessRoleName = seeds.accessibility ? seeds.accessibility.name : 'accessibility';
@@ -1063,10 +1173,10 @@ export async function handleCreatePalette(msg: any): Promise<void> {
 
           const subtleRules = isLightRole ? {
             light: 95,
-            lightContrast: 88,
-            dark: 22,
-            darkContrast: 22,
-            accessibility: 22
+            lightContrast: 85,
+            dark: 20,
+            darkContrast: 25,
+            accessibility: 20
           } : {
             light: 95,
             lightContrast: 85,
@@ -1186,11 +1296,16 @@ export async function handleCreatePalette(msg: any): Promise<void> {
 
             const assignAlias = (modeId, toneValue) => {
               if (modeId) {
-                const mapKey = `${pascalCustomName}/${toneValue}`;
+                const finalTone = neutralTones.includes(toneValue)
+                  ? toneValue
+                  : neutralTones.reduce((prev, curr) =>
+                      Math.abs(curr - toneValue) < Math.abs(prev - toneValue) ? curr : prev
+                    );
+                const mapKey = `${pascalCustomName}/${finalTone}`;
                 let targetId = createdVariablesMap.get(mapKey);
-                if (!targetId) targetId = createdVariablesMap.get(`${customName}/${toneValue}`);
+                if (!targetId) targetId = createdVariablesMap.get(`${customName}/${finalTone}`);
                 if (targetId) smartSetValueForMode(semanticVar, modeId, { type: 'VARIABLE_ALIAS', id: targetId });
-                return { role: pascalCustomName, tone: toneValue };
+                return { role: pascalCustomName, tone: finalTone };
               }
               return null;
             };
@@ -1427,7 +1542,7 @@ export async function handleCreatePalette(msg: any): Promise<void> {
       // KROK 8: Generowanie Metrics (OPUBLIKOWANE)
       // ==========================================
       const metricsColName = "Metrics";
-      let metricsCol = collections.find(c => c.name === metricsColName || c.name === "metrics" || normalizePathForMatch(c.name) === "metrics");
+      metricsCol = collections.find(c => c.name === metricsColName || c.name === "metrics" || normalizePathForMatch(c.name) === "metrics");
       if (metricsCol) {
         if (metricsCol.name !== metricsColName) metricsCol.name = metricsColName;
       } else {
@@ -1435,7 +1550,7 @@ export async function handleCreatePalette(msg: any): Promise<void> {
       }
 
       const metricsModesMap = ensureCollectionModes(metricsCol, ["Default"]);
-      const mModeIds = {
+      mModeIds = {
         default: metricsModesMap["Default"] || metricsModesMap["default"]
       };
 
@@ -1691,6 +1806,16 @@ export async function handleCreatePalette(msg: any): Promise<void> {
           default: { default: 96 },
           relaxed: { default: 104 }
         },
+        layoutAstronomical: {
+          compact: { default: 104 },
+          default: { default: 112 },
+          relaxed: { default: 120 }
+        },
+        layoutCosmic: {
+          compact: { default: 112 },
+          default: { default: 120 },
+          relaxed: { default: 128 }
+        },
         border: {
           thin: { default: 1 },
           default: { default: 1 },
@@ -1713,7 +1838,14 @@ export async function handleCreatePalette(msg: any): Promise<void> {
 
       const isShapeMorph = buttonHoverPreset === 'shape' || buttonHoverPreset === 'both';
 
-      const semanticMetrics = [
+      const semanticMetrics: Array<{
+        name: string;
+        oldName?: string | string[];
+        scope: VariableScope[];
+        hidden?: boolean;
+        description?: string;
+        values: Record<string, number>;
+      }> = [
         // --- Promienie zaokrągleń (Radii) ---
         { name: 'radius/extraSmall', scope: ['CORNER_RADIUS'], values: presetConfigs.radiusExtraSmall[radiusPreset] || presetConfigs.radiusExtraSmall.default },
         { name: 'radius/small', scope: ['CORNER_RADIUS'], values: presetConfigs.radiusSmall[radiusPreset] || presetConfigs.radiusSmall.default },
@@ -1785,6 +1917,8 @@ export async function handleCreatePalette(msg: any): Promise<void> {
         { name: 'layout/titanic', scope: ['GAP'], values: presetConfigs.layoutTitanic[gapPreset] || presetConfigs.layoutTitanic.default },
         { name: 'layout/monumental', scope: ['GAP'], values: presetConfigs.layoutMonumental[gapPreset] || presetConfigs.layoutMonumental.default },
         { name: 'layout/gargantuan', scope: ['GAP'], values: presetConfigs.layoutGargantuan[gapPreset] || presetConfigs.layoutGargantuan.default },
+        { name: 'layout/astronomical', scope: ['GAP'], values: presetConfigs.layoutAstronomical[gapPreset] || presetConfigs.layoutAstronomical.default },
+        { name: 'layout/cosmic', scope: ['GAP'], values: presetConfigs.layoutCosmic[gapPreset] || presetConfigs.layoutCosmic.default },
 
         // --- Ujemne odstępy (Negative Layout - niepublikowalne) ---
         { name: 'layout/_negative/extraSmall', scope: [], hidden: true, values: getNegativeLayoutConfig(presetConfigs.layoutExtraSmall[gapPreset] || presetConfigs.layoutExtraSmall.default) },
@@ -1793,15 +1927,14 @@ export async function handleCreatePalette(msg: any): Promise<void> {
         { name: 'layout/_negative/medium', scope: [], hidden: true, values: getNegativeLayoutConfig(presetConfigs.layoutMedium[gapPreset] || presetConfigs.layoutMedium.default) },
 
         // --- Stałe pomocnicze (Constants) ---
-        { name: 'constant/none', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 0 } },
+        { name: 'constant/none', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT', 'EFFECT_FLOAT'], values: { default: 0 } },
         { name: 'constant/full', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 9999 } },
         { name: 'constant/1', oldName: 'constant/one', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 1 } },
         { name: 'constant/2', oldName: 'constant/two', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 2 } },
         { name: 'constant/3', oldName: 'constant/three', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 3 } },
         { name: 'constant/4', oldName: 'constant/four', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 4 } },
         { name: 'constant/6', oldName: 'constant/six', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 6 } },
-        { name: 'constant/8', oldName: 'constant/eight', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 8 } },
-        { name: 'constant/wcagMinTarget', scope: ['WIDTH_HEIGHT'], values: { default: 44 }, description: 'WCAG 2.1/2.2 minimum target size for interactive elements (44x44px).' }
+        { name: 'constant/8', oldName: 'constant/eight', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 8 } }
       ];
 
       let constantNoneVar = null;
@@ -2456,8 +2589,10 @@ export async function handleCreatePalette(msg: any): Promise<void> {
       // KROK 10: Generowanie Stylów Blur & Glass (EFFECT STYLES)
       // ==========================================
       const blurTypes = [
-        { prefix: 'Blurs/Layer', rawPrefix: 'blurs/layer', type: 'LAYER_BLUR' },
-        { prefix: 'Blurs/Background', rawPrefix: 'blurs/background', type: 'BACKGROUND_BLUR' }
+        { prefix: 'Blurs/Layer', rawPrefix: 'blurs/layer', type: 'LAYER_BLUR', isProgressive: false, isReverse: false },
+        { prefix: 'Blurs/Background', rawPrefix: 'blurs/background', type: 'BACKGROUND_BLUR', isProgressive: false, isReverse: false },
+        { prefix: 'Blurs/Progressive', rawPrefix: 'blurs/progressive', type: 'BACKGROUND_BLUR', isProgressive: true, isReverse: false },
+        { prefix: 'Blurs/Progressive/Reverse', rawPrefix: 'blurs/progressive/reverse', type: 'BACKGROUND_BLUR', isProgressive: true, isReverse: true }
       ];
 
       for (const bType of blurTypes) {
@@ -2471,7 +2606,21 @@ export async function handleCreatePalette(msg: any): Promise<void> {
             s.name === styleName ||
             normalizePathForMatch(s.name) === targetNorm ||
             normalizePathForMatch(s.name) === normalizePathForMatch(`${bType.rawPrefix}/${rawCleanLevel}`) ||
-            normalizePathForMatch(s.name) === normalizePathForMatch(`${bType.rawPrefix}/${conf.level}`)
+            normalizePathForMatch(s.name) === normalizePathForMatch(`${bType.rawPrefix}/${conf.level}`) ||
+            (bType.isProgressive && !bType.isReverse && (
+              normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/background/progressive/${rawCleanLevel}`) ||
+              normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/backgroundprogressive/${rawCleanLevel}`) ||
+              normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/progressive/background/${rawCleanLevel}`)
+            )) ||
+            (bType.isProgressive && bType.isReverse && (
+              normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/progressive/reverse/${rawCleanLevel}`) ||
+              normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/progressivereverse/${rawCleanLevel}`) ||
+              normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/progressive reverse/${rawCleanLevel}`) ||
+              normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/reverseprogressive/${rawCleanLevel}`) ||
+              normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/reverse/progressive/${rawCleanLevel}`) ||
+              normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/background/progressive/reverse/${rawCleanLevel}`) ||
+              normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/background/progressivereverse/${rawCleanLevel}`)
+            ))
           );
           if (!effectStyle) {
             effectStyle = figma.createEffectStyle();
@@ -2480,19 +2629,63 @@ export async function handleCreatePalette(msg: any): Promise<void> {
           } else {
             effectStyle.name = styleName;
           }
-          const blurDesc = `Semantic generic blur effect style: ${styleName}`;
+          const blurDesc = bType.isProgressive
+            ? (bType.isReverse
+                ? `Semantic progressive reverse background blur effect style: ${styleName} (${conf.blurValue}px to 0px)`
+                : `Semantic progressive background blur effect style: ${styleName} (0px to ${conf.blurValue}px)`)
+            : `Semantic generic blur effect style: ${styleName}`;
           if (effectStyle.description !== blurDesc) effectStyle.description = blurDesc;
 
-          const newEffects: any = [{
+          const varAliasId = blurControlsMap.get(cleanLevel) || blurControlsMap.get(conf.level);
+          const baseEffect: any = {
             type: bType.type,
-            radius: conf.blurValue,
-            visible: true,
-            boundVariables: (blurControlsMap.has(conf.level) || blurControlsMap.has(cleanLevel)) ? {
-              radius: { type: 'VARIABLE_ALIAS', id: blurControlsMap.get(cleanLevel) || blurControlsMap.get(conf.level) }
-            } : {}
-          }];
+            visible: true
+          };
+
+          if (bType.isProgressive) {
+            baseEffect.blurType = 'PROGRESSIVE';
+            baseEffect.startOffset = { x: 0, y: 0 };
+            baseEffect.endOffset = { x: 0, y: 1 };
+
+            if (bType.isReverse) {
+              baseEffect.startRadius = conf.blurValue;
+              baseEffect.radius = 0;
+              baseEffect.boundVariables = constantNoneVar ? {
+                radius: { type: 'VARIABLE_ALIAS', id: constantNoneVar.id }
+              } : {};
+            } else {
+              baseEffect.startRadius = 0;
+              baseEffect.radius = conf.blurValue;
+              baseEffect.boundVariables = varAliasId ? {
+                radius: { type: 'VARIABLE_ALIAS', id: varAliasId }
+              } : {};
+            }
+          } else {
+            baseEffect.radius = conf.blurValue;
+            baseEffect.boundVariables = varAliasId ? {
+              radius: { type: 'VARIABLE_ALIAS', id: varAliasId }
+            } : {};
+          }
+
+          const newEffects: any = [baseEffect];
           if (!areEffectsEqual(effectStyle.effects, newEffects)) {
-            effectStyle.effects = newEffects as readonly Effect[];
+            try {
+              effectStyle.effects = newEffects as readonly Effect[];
+            } catch (err) {
+              if (bType.isReverse && newEffects[0]?.boundVariables?.radius) {
+                try {
+                  const fallbackEffects = [{
+                    ...newEffects[0],
+                    boundVariables: {}
+                  }];
+                  effectStyle.effects = fallbackEffects as readonly Effect[];
+                } catch (err2) {
+                  console.warn(`Could not set effect for ${styleName}:`, err2);
+                }
+              } else {
+                console.warn(`Could not set effect for ${styleName}:`, err);
+              }
+            }
           }
         }
       }
@@ -2555,30 +2748,52 @@ export async function handleCreatePalette(msg: any): Promise<void> {
         typoControlsCollection = figma.variables.createVariableCollection(typoControlsCollectionName);
       }
 
-      const typoModesMap = ensureCollectionModes(typoControlsCollection, ["Default"]);
-      const typoModeId = typoModesMap["Default"] || typoModesMap["default"];
+      const rawSecondaryModeName = (secondaryBodyFont !== bodyFont)
+        ? secondaryBodyFont
+        : (secondaryHeadersFont !== headersFont ? secondaryHeadersFont : secondaryBodyFont);
+      const secondaryModeFormatted = formatModeName(rawSecondaryModeName).toLowerCase() === 'default'
+        ? 'Secondary'
+        : formatModeName(rawSecondaryModeName);
 
-      const createTypoString = (varName, value, scope, oldName) => {
+      const typoModesMap = ensureCollectionModes(
+        typoControlsCollection,
+        includeSecondaryFont ? ["Default", secondaryModeFormatted] : ["Default"]
+      );
+      const typoModeId = typoModesMap["Default"] || typoModesMap["default"];
+      const secondaryTypoModeId = includeSecondaryFont
+        ? (typoModesMap[secondaryModeFormatted] || typoModesMap[secondaryModeFormatted.toLowerCase()])
+        : null;
+
+      const createTypoString = (
+        varName: string,
+        value: string,
+        scope: VariableScope | null,
+        oldName?: string | string[],
+        secondaryValue?: string
+      ) => {
         let strVar = ensureVariable(varName, typoControlsCollection, "STRING", varLookupMap, oldName);
         smartSetVariableMeta(strVar, {
           description: `Typography structural binding: ${varName}.`,
           scopes: scope ? [scope] : []
         });
         smartSetValueForMode(strVar, typoModeId, value);
+        if (secondaryTypoModeId && secondaryValue !== undefined) {
+          smartSetValueForMode(strVar, secondaryTypoModeId, secondaryValue);
+        }
         trackVariable(typoControlsCollection.id, varName);
         return strVar;
       };
 
-      const headFontVar = createTypoString('FontFamily/Heading', headersFont, 'FONT_FAMILY', ['fontFamily/header', 'fontFamily/heading', 'FontFamily/Heading']);
-      const bodyFontVar = createTypoString('FontFamily/Default', bodyFont, 'FONT_FAMILY', ['fontFamily/body', 'fontFamily/default', 'FontFamily/Default']);
+      const headFontVar = createTypoString('FontFamily/Heading', headersFont, 'FONT_FAMILY', ['fontFamily/header', 'fontFamily/heading', 'FontFamily/Heading'], secondaryHeadersFont);
+      const bodyFontVar = createTypoString('FontFamily/Default', bodyFont, 'FONT_FAMILY', ['fontFamily/body', 'fontFamily/default', 'FontFamily/Default'], secondaryBodyFont);
 
-      const headRegWeightVar = createTypoString('FontWeight/Heading/Base', loadedHeadReg, 'FONT_STYLE', ['fontWeight/header/base', 'fontWeight/heading/base', 'FontWeight/Heading/Base']);
-      const headMedWeightVar = createTypoString('FontWeight/Heading/Medium', loadedHeadMed, 'FONT_STYLE', ['fontWeight/header/medium', 'fontWeight/heading/medium', 'FontWeight/Heading/Medium']);
-      const headBoldWeightVar = createTypoString('FontWeight/Heading/Bold', loadedHeadBold, 'FONT_STYLE', ['fontWeight/header/bold', 'fontWeight/heading/bold', 'FontWeight/Heading/Bold']);
+      const headRegWeightVar = createTypoString('FontWeight/Heading/Base', loadedHeadReg, 'FONT_STYLE', ['fontWeight/header/base', 'fontWeight/heading/base', 'FontWeight/Heading/Base'], loadedSecHeadReg);
+      const headMedWeightVar = createTypoString('FontWeight/Heading/Medium', loadedHeadMed, 'FONT_STYLE', ['fontWeight/header/medium', 'fontWeight/heading/medium', 'FontWeight/Heading/Medium'], loadedSecHeadMed);
+      const headBoldWeightVar = createTypoString('FontWeight/Heading/Bold', loadedHeadBold, 'FONT_STYLE', ['fontWeight/header/bold', 'fontWeight/heading/bold', 'FontWeight/Heading/Bold'], loadedSecHeadBold);
 
-      const regWeightVar = createTypoString('FontWeight/Default/Base', loadedBodyReg, 'FONT_STYLE', ['fontWeight/base', 'fontWeight/regular', 'fontWeight/default/base', 'FontWeight/Default/Base']);
-      const medWeightVar = createTypoString('FontWeight/Default/Medium', loadedBodyMed, 'FONT_STYLE', ['fontWeight/medium', 'fontWeight/default/medium', 'FontWeight/Default/Medium']);
-      const boldWeightVar = createTypoString('FontWeight/Default/Bold', loadedBodyBold, 'FONT_STYLE', ['fontWeight/bold', 'fontWeight/default/bold', 'FontWeight/Default/Bold']);
+      const regWeightVar = createTypoString('FontWeight/Default/Base', loadedBodyReg, 'FONT_STYLE', ['fontWeight/base', 'fontWeight/regular', 'fontWeight/default/base', 'FontWeight/Default/Base'], loadedSecBodyReg);
+      const medWeightVar = createTypoString('FontWeight/Default/Medium', loadedBodyMed, 'FONT_STYLE', ['fontWeight/medium', 'fontWeight/default/medium', 'FontWeight/Default/Medium'], loadedSecBodyMed);
+      const boldWeightVar = createTypoString('FontWeight/Default/Bold', loadedBodyBold, 'FONT_STYLE', ['fontWeight/bold', 'fontWeight/default/bold', 'FontWeight/Default/Bold'], loadedSecBodyBold);
 
       const lsId_H = await resolveMetric(lsHeading, null, null);
       const lsId_D = await resolveMetric(lsDisplay, null, null);
@@ -2888,6 +3103,286 @@ export async function handleCreatePalette(msg: any): Promise<void> {
       }
 
       // ==========================================
+      // KROK 12.5: Generowanie _MaterialIconsControls & Stylów Tekstowych dla Ikon
+      // ==========================================
+      if (includeMaterialIcons) {
+        const iconControlsCollectionName = "_MaterialIconsControls";
+        let iconControlsCollection = collections.find(c => c.name === iconControlsCollectionName || c.name === "_materialIconsControls" || normalizePathForMatch(c.name) === "materialiconscontrols");
+        if (iconControlsCollection) {
+          if (iconControlsCollection.name !== iconControlsCollectionName) iconControlsCollection.name = iconControlsCollectionName;
+        } else {
+          iconControlsCollection = figma.variables.createVariableCollection(iconControlsCollectionName);
+        }
+
+        const iconModesMap = ensureCollectionModes(iconControlsCollection, ["Default"]);
+        const iconModeId = iconModesMap["Default"] || iconModesMap["default"] || iconControlsCollection.defaultModeId;
+
+        const targetWeights = ['ExtraLight', 'Light', 'Regular', 'Medium'] as const;
+
+        const matchedFamily = allAvailableFonts.find(f => f.fontName.family.trim().toLowerCase() === materialIconsFamily.trim().toLowerCase())?.fontName.family || materialIconsFamily;
+        const familyFonts = allAvailableFonts.filter(f => f.fontName.family.trim().toLowerCase() === matchedFamily.trim().toLowerCase());
+        const availableStyles = familyFonts.map(f => f.fontName.style);
+
+        function resolveIconStyle(weight: string, fill: number): string {
+          const isFill = fill === 1;
+          const numWeight = weight === 'ExtraLight' ? 200 : (weight === 'Light' ? 300 : (weight === 'Medium' ? 500 : 400));
+
+          if (isFill) {
+            const fillMatch = availableStyles.find(s => {
+              const sl = s.toLowerCase();
+              return (sl.includes(weight.toLowerCase()) || sl.includes(String(numWeight))) && (sl.includes('fill') || sl.includes('filled'));
+            });
+            if (fillMatch) return fillMatch;
+
+            const genericFillMatch = availableStyles.find(s => s.toLowerCase().includes('fill') || s.toLowerCase().includes('filled'));
+            if (genericFillMatch && (weight === 'Regular' || availableStyles.length === 1)) return genericFillMatch;
+          }
+
+          const exactMatch = availableStyles.find(s => s.toLowerCase() === weight.toLowerCase() || s.toLowerCase() === String(numWeight));
+          if (exactMatch) return exactMatch;
+
+          if (weight === 'ExtraLight') {
+            const elMatch = availableStyles.find(s => {
+              const sl = s.toLowerCase();
+              return sl === '200' || sl === 'extralight' || sl === 'extra light' || sl === 'thin' || sl === '100';
+            });
+            if (elMatch) return elMatch;
+          }
+
+          if (weight === 'Light') {
+            const lMatch = availableStyles.find(s => {
+              const sl = s.toLowerCase();
+              return sl === '300' || sl === 'light';
+            });
+            if (lMatch) return lMatch;
+          }
+
+          if (weight === 'Medium') {
+            const medMatch = availableStyles.find(s => {
+              const sl = s.toLowerCase();
+              return sl === '500' || sl === 'medium' || sl === 'semibold' || sl === '600';
+            });
+            if (medMatch) return medMatch;
+          }
+
+          const regMatch = availableStyles.find(s => {
+            const sl = s.toLowerCase();
+            return sl === 'regular' || sl === 'normal' || sl === 'book' || sl === '400';
+          });
+          if (regMatch) return regMatch;
+
+          if (availableStyles.length > 0) {
+            return availableStyles[0];
+          }
+
+          return weight;
+        }
+
+        const resolvedStyles: Record<string, string> = {
+          ExtraLight: resolveIconStyle('ExtraLight', materialIconsFill),
+          Light: resolveIconStyle('Light', materialIconsFill),
+          Regular: resolveIconStyle('Regular', materialIconsFill),
+          Medium: resolveIconStyle('Medium', materialIconsFill)
+        };
+
+        for (const styleName of Object.values(resolvedStyles)) {
+          await safeLoadFont(matchedFamily, styleName, 'Regular');
+        }
+
+        // Grupa FontFamily (typ STRING)
+        const iconFontFamilyVar = ensureVariable('FontFamily/Icon', iconControlsCollection, 'STRING', varLookupMap, ['fontFamily/icon', 'FontFamily/Icon']);
+        smartSetVariableMeta(iconFontFamilyVar, {
+          description: `Material Symbols font family: ${matchedFamily}.`,
+          scopes: ['FONT_FAMILY']
+        });
+        smartSetValueForMode(iconFontFamilyVar, iconModeId, matchedFamily);
+        trackVariable(iconControlsCollection.id, 'FontFamily/Icon');
+
+        // Grupa FontWeight (typ STRING – 3 wagi)
+        const iconFontWeightVars: Record<string, any> = {};
+        for (const w of targetWeights) {
+          const varName = `FontWeight/${w}`;
+          const wVar = ensureVariable(varName, iconControlsCollection, 'STRING', varLookupMap, [`fontWeight/${w.toLowerCase()}`, varName]);
+          smartSetVariableMeta(wVar, {
+            description: `Material Symbols font weight style for ${w}.`,
+            scopes: ['FONT_STYLE']
+          });
+          smartSetValueForMode(wVar, iconModeId, resolvedStyles[w]);
+          trackVariable(iconControlsCollection.id, varName);
+          iconFontWeightVars[w] = wVar;
+        }
+
+        // Grupa VariableAxes (typ FLOAT)
+        const varAxesSpecs = [
+          { name: 'VariableAxes/Fill', value: materialIconsFill, desc: 'Variable font axis: Fill (0 for outlined, 1 for filled).' },
+          { name: 'VariableAxes/Weight', value: materialIconsWeight, desc: 'Variable font axis: Default Weight (100–700).' },
+          { name: 'VariableAxes/WeightExtraLight', value: 200, desc: 'Variable font axis: Weight for ExtraLight (200).' },
+          { name: 'VariableAxes/WeightLight', value: 300, desc: 'Variable font axis: Weight for Light (300).' },
+          { name: 'VariableAxes/WeightRegular', value: 400, desc: 'Variable font axis: Weight for Regular (400).' },
+          { name: 'VariableAxes/WeightMedium', value: 500, desc: 'Variable font axis: Weight for Medium (500).' },
+          { name: 'VariableAxes/Grade', value: 0, desc: 'Variable font axis: Grade (0).' },
+          { name: 'VariableAxes/OpticalSize', value: 24, desc: 'Variable font axis: Optical Size (24px).' }
+        ];
+
+        for (const va of varAxesSpecs) {
+          const vaVar = ensureVariable(va.name, iconControlsCollection, 'FLOAT', varLookupMap, [va.name.toLowerCase(), va.name]);
+          smartSetVariableMeta(vaVar, {
+            description: va.desc,
+            scopes: []
+          });
+          smartSetValueForMode(vaVar, iconModeId, va.value);
+          trackVariable(iconControlsCollection.id, va.name);
+        }
+
+        // Grupy FontSize/Icon oraz LineHeight/Icon (typ FLOAT – 8 do 32 co 4)
+        const iconSizes = [8, 12, 16, 20, 24, 28, 32];
+        const iconFontSizeVars: Record<number, any> = {};
+        const iconLineHeightVars: Record<number, any> = {};
+
+        for (const size of iconSizes) {
+          const metricAliasId = await resolveMetric(size, metricsCol, mModeIds.default);
+          const sizeVal = metricAliasId ? { type: 'VARIABLE_ALIAS', id: metricAliasId } : size;
+
+          const fsVarName = `FontSize/Icon/${size}`;
+          const fsVar = ensureVariable(fsVarName, iconControlsCollection, 'FLOAT', varLookupMap, [
+            `fontSize/icon/${size}`,
+            fsVarName
+          ]);
+          smartSetVariableMeta(fsVar, {
+            description: `Material Symbols icon font size ${size}px.`,
+            scopes: ['FONT_SIZE']
+          });
+          smartSetValueForMode(fsVar, iconModeId, sizeVal);
+          trackVariable(iconControlsCollection.id, fsVarName);
+          iconFontSizeVars[size] = fsVar;
+
+          const lhVarName = `LineHeight/Icon/${size}`;
+          const lhVar = ensureVariable(lhVarName, iconControlsCollection, 'FLOAT', varLookupMap, [
+            `lineHeight/icon/${size}`,
+            lhVarName
+          ]);
+          smartSetVariableMeta(lhVar, {
+            description: `Material Symbols icon line height ${size}px (equal to font size for square bounding box).`,
+            scopes: ['LINE_HEIGHT']
+          });
+          smartSetValueForMode(lhVar, iconModeId, sizeVal);
+          trackVariable(iconControlsCollection.id, lhVarName);
+          iconLineHeightVars[size] = lhVar;
+        }
+
+        // Generowanie localTextStyles dla Material Icons
+        const createdIconStylesCatalog: any[] = [];
+
+        for (const size of iconSizes) {
+          for (const weight of targetWeights) {
+            const resolvedStyle = resolvedStyles[weight];
+            const targetStyleName = `Icon/${size}/${weight}`;
+            const targetNorm = normalizePathForMatch(targetStyleName);
+
+            let tStyle = localTextStyles.find(s => s.name === targetStyleName || normalizePathForMatch(s.name) === targetNorm);
+            if (!tStyle) {
+              const defaultPrefixNorm = normalizePathForMatch(`Default/Icon/${size}/${weight}`);
+              tStyle = localTextStyles.find(s => normalizePathForMatch(s.name) === defaultPrefixNorm);
+            }
+
+            if (tStyle) {
+              if (tStyle.name !== targetStyleName) {
+                tStyle.name = targetStyleName;
+              }
+            } else {
+              tStyle = figma.createTextStyle();
+              tStyle.name = targetStyleName;
+              localTextStyles.push(tStyle);
+            }
+
+            const targetDesc = `Material Symbols Text Icon (${materialIconsFamily}) • Size: ${size}px • Weight: ${weight} • Fill: ${materialIconsFill}`;
+            if (tStyle.description !== targetDesc) {
+              tStyle.description = targetDesc;
+            }
+
+            try {
+              const actualStyle = await safeLoadFont(matchedFamily, resolvedStyle, 'Regular');
+              tStyle.fontName = { family: matchedFamily, style: actualStyle };
+            } catch (err) {
+              console.warn(`Could not load font ${matchedFamily} ${resolvedStyle}:`, err);
+              try {
+                await figma.loadFontAsync({ family: 'Inter', style: 'Regular' });
+                tStyle.fontName = { family: 'Inter', style: 'Regular' };
+              } catch (e) {}
+            }
+
+            const isFsBound = tStyle.boundVariables && tStyle.boundVariables.fontSize && tStyle.boundVariables.fontSize.id === iconFontSizeVars[size].id;
+            if (!isFsBound && Math.abs((tStyle.fontSize || 0) - size) > 0.01) {
+              tStyle.fontSize = size;
+            }
+
+            const isLhBound = tStyle.boundVariables && tStyle.boundVariables.lineHeight && tStyle.boundVariables.lineHeight.id === iconLineHeightVars[size].id;
+            if (!isLhBound && !isLineHeightEqual(tStyle.lineHeight, { value: size, unit: 'PIXELS' })) {
+              tStyle.lineHeight = { value: size, unit: 'PIXELS' };
+            }
+
+            if (!tStyle.letterSpacing || tStyle.letterSpacing.unit !== 'PIXELS' || Math.abs((tStyle.letterSpacing.value || 0)) > 0.01) {
+              tStyle.letterSpacing = { value: 0, unit: 'PIXELS' };
+            }
+
+            smartSetBoundVariable(tStyle, 'fontFamily', iconFontFamilyVar);
+            smartSetBoundVariable(tStyle, 'fontStyle', iconFontWeightVars[weight]);
+            smartSetBoundVariable(tStyle, 'fontSize', iconFontSizeVars[size]);
+            smartSetBoundVariable(tStyle, 'lineHeight', iconLineHeightVars[size]);
+
+            createdIconStylesCatalog.push({
+              id: tStyle.id,
+              name: tStyle.name,
+              key: tStyle.key,
+              description: tStyle.description,
+              family: materialIconsFamily,
+              weight: resolvedStyle,
+              fontSize: size,
+              lineHeightPx: size,
+              lineHeight: size,
+              fontFamily: materialIconsFamily,
+              fontStyle: resolvedStyle,
+              fill: materialIconsFill,
+              isIcon: true
+            });
+          }
+        }
+
+        // Automatyczny zapis do clientStorage (dla Auto-Bindera)
+        try {
+          const existingCatalog = await figma.clientStorage.getAsync('ds_library_text_styles');
+          let catalogList: any[] = [];
+          if (Array.isArray(existingCatalog)) {
+            catalogList = existingCatalog.filter((item: any) => !item.name?.startsWith('Icon/'));
+          }
+          catalogList.push(...createdIconStylesCatalog);
+          await figma.clientStorage.setAsync('ds_library_text_styles', catalogList);
+        } catch (err) {
+          console.warn("Could not save to ds_library_text_styles:", err);
+        }
+      } else {
+        if (msg.cleanUnused) {
+          const iconControlsCollectionName = "_MaterialIconsControls";
+          const iconControlsCollection = collections.find(c => c.name === iconControlsCollectionName || c.name === "_materialIconsControls" || normalizePathForMatch(c.name) === "materialiconscontrols");
+          if (iconControlsCollection) {
+            try {
+              iconControlsCollection.remove();
+            } catch (e) {
+              console.warn("Could not remove _MaterialIconsControls:", e);
+            }
+          }
+          const iconStyles = localTextStyles.filter(s => s.name.startsWith('Icon/') || s.name.startsWith('Default/Icon/'));
+          for (const s of iconStyles) {
+            try {
+              s.remove();
+            } catch (e) {
+              console.warn("Could not remove icon style:", e);
+            }
+          }
+        }
+      }
+
+      // ==========================================
       // KROK 13: Generowanie Stylów Layout (GRID STYLES)
       // ==========================================
       const oldInternalCol = collections.find(c => c.name === "_layoutControls" || c.name === "_LayoutControls");
@@ -2902,20 +3397,33 @@ export async function handleCreatePalette(msg: any): Promise<void> {
       }
 
       const layoutModesMap = ensureCollectionModes(layoutCollection, ['SM', 'MD', 'LG', 'XL', '2XL']);
-      const m_xl = Math.max(32, Math.min(parseInt(layoutMarginXl, 10) || 72, 200));
+      const parsedXl = parseInt(layoutMarginXl, 10);
+      const m_xl = !isNaN(parsedXl) ? Math.max(0, parsedXl) : 72;
       const m_lg = (layoutMarginLg !== null && layoutMarginLg !== undefined)
-        ? Math.max(16, Math.min(parseInt(layoutMarginLg, 10), 200))
+        ? Math.max(0, parseInt(layoutMarginLg, 10) || 0)
         : Math.round(m_xl * (1366 / 1536));
       const m_2xl = (layoutMargin2xl !== null && layoutMargin2xl !== undefined)
-        ? Math.max(32, Math.min(parseInt(layoutMargin2xl, 10), 300))
+        ? Math.max(0, parseInt(layoutMargin2xl, 10) || 0)
         : Math.round(m_xl * (1920 / 1536));
+
+      let smWidth = 393;
+      let smHeight = 852;
+      if (smPhoneModel && typeof smPhoneModel === 'string' && smPhoneModel.includes('x')) {
+        const parts = smPhoneModel.split('x').map((p: string) => parseInt(p.trim(), 10));
+        if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1]) && parts[0] > 0 && parts[1] > 0) {
+          smWidth = parts[0];
+          smHeight = parts[1];
+        }
+      }
+      const smMargin = 16;
+      const smContentWidth = smWidth - 2 * smMargin;
 
       const layoutConfigs = [
         { name: '2XL', oldName: '2xl', platform: 'Desktop', range: '>= 1920', count: 16, margin: m_2xl, gutter: 16, maxWidth: 1920, maxHeight: 1080, maxElementWidth: 640 },
         { name: 'XL', oldName: 'xl', platform: 'Desktop', range: '1536 - 1919', count: 16, margin: m_xl, gutter: 16, maxWidth: 1536, maxHeight: 960, maxElementWidth: 640 },
         { name: 'LG', oldName: 'lg', platform: 'Desktop', range: '801 - 1535', count: 12, margin: m_lg, gutter: 16, maxWidth: 1366, maxHeight: 768, maxElementWidth: 560 },
-        { name: 'MD', oldName: 'md', platform: 'Tablet', range: '441 - 800', count: 8, margin: 32, gutter: 16, maxWidth: 800, maxHeight: 1280, maxElementWidth: 480 },
-        { name: 'SM', oldName: 'sm', platform: 'Mobile', range: '<= 393', count: 4, margin: 16, gutter: 16, maxWidth: 393, maxHeight: 852, maxElementWidth: 361 }
+        { name: 'MD', oldName: 'md', platform: 'Tablet', range: `${smWidth + 1} - 800`, count: 8, margin: 32, gutter: 16, maxWidth: 800, maxHeight: 1280, maxElementWidth: 480 },
+        { name: 'SM', oldName: 'sm', platform: 'Mobile', range: `<= ${smWidth}`, count: 4, margin: smMargin, gutter: 16, maxWidth: smWidth, maxHeight: smHeight, maxElementWidth: smContentWidth }
       ];
 
       const localGridStyles = await figma.getLocalGridStylesAsync();
@@ -2940,13 +3448,15 @@ export async function handleCreatePalette(msg: any): Promise<void> {
         { name: 'MinMax/Small', oldName: ['min-max/small', 'MinMax/Small', 'minMax/small'], hidden: false, scopes: ['WIDTH_HEIGHT'] },
         { name: 'MinMax/Base', oldName: ['min-max/base', 'min-max/regular', 'MinMax/Base', 'minMax/base'], hidden: false, scopes: ['WIDTH_HEIGHT'] },
         { name: 'MinMax/Medium', oldName: ['min-max/medium', 'MinMax/Medium', 'minMax/medium'], hidden: false, scopes: ['WIDTH_HEIGHT'] },
+        { name: 'MinMax/SemiLarge', oldName: ['min-max/semiLarge', 'MinMax/SemiLarge', 'minMax/semiLarge'], hidden: false, scopes: ['WIDTH_HEIGHT'] },
         { name: 'MinMax/Large', oldName: ['min-max/large', 'MinMax/Large', 'minMax/large'], hidden: false, scopes: ['WIDTH_HEIGHT'] },
         { name: 'MinMax/ExtraLarge', oldName: ['min-max/extraLarge', 'MinMax/ExtraLarge', 'minMax/extraLarge'], hidden: false, scopes: ['WIDTH_HEIGHT'] },
         { name: 'MinMax/Huge', oldName: ['min-max/huge', 'MinMax/Huge', 'minMax/huge'], hidden: false, scopes: ['WIDTH_HEIGHT'] },
         { name: 'MinMax/ExtraHuge', oldName: ['min-max/extraHuge', 'MinMax/ExtraHuge', 'minMax/extraHuge', 'min-max/semiExtraHuge', 'MinMax/SemiExtraHuge', 'min-max/semi-extra-huge'], hidden: false, scopes: ['WIDTH_HEIGHT'] },
         { name: 'MinMax/Massive', oldName: ['min-max/massive', 'MinMax/Massive', 'minMax/massive'], hidden: false, scopes: ['WIDTH_HEIGHT'] },
         { name: 'MinMax/Gigantic', oldName: ['min-max/gigantic', 'MinMax/Gigantic', 'minMax/gigantic'], hidden: false, scopes: ['WIDTH_HEIGHT'] },
-        { name: 'MinMax/Colossal', oldName: ['min-max/colossal', 'MinMax/Colossal', 'minMax/colossal'], hidden: false, scopes: ['WIDTH_HEIGHT'] }
+        { name: 'MinMax/Colossal', oldName: ['min-max/colossal', 'MinMax/Colossal', 'minMax/colossal'], hidden: false, scopes: ['WIDTH_HEIGHT'] },
+        { name: 'MinMax/Titanic', oldName: ['min-max/titanic', 'MinMax/Titanic', 'minMax/titanic'], hidden: false, scopes: ['WIDTH_HEIGHT'] }
       ];
 
       for (const spec of varSpecs) {
@@ -3039,13 +3549,15 @@ export async function handleCreatePalette(msg: any): Promise<void> {
         smartSetValueForMode(layoutVarsMap['MinMax/Small'], modeId, 20);
         smartSetValueForMode(layoutVarsMap['MinMax/Base'], modeId, 24);
         smartSetValueForMode(layoutVarsMap['MinMax/Medium'], modeId, 32);
-        smartSetValueForMode(layoutVarsMap['MinMax/Large'], modeId, 44);
-        smartSetValueForMode(layoutVarsMap['MinMax/ExtraLarge'], modeId, 48);
-        smartSetValueForMode(layoutVarsMap['MinMax/Huge'], modeId, 56);
-        smartSetValueForMode(layoutVarsMap['MinMax/ExtraHuge'], modeId, 64);
-        smartSetValueForMode(layoutVarsMap['MinMax/Massive'], modeId, 112);
-        smartSetValueForMode(layoutVarsMap['MinMax/Gigantic'], modeId, 128);
-        smartSetValueForMode(layoutVarsMap['MinMax/Colossal'], modeId, 144);
+        smartSetValueForMode(layoutVarsMap['MinMax/SemiLarge'], modeId, 36);
+        smartSetValueForMode(layoutVarsMap['MinMax/Large'], modeId, 40);
+        smartSetValueForMode(layoutVarsMap['MinMax/ExtraLarge'], modeId, 44);
+        smartSetValueForMode(layoutVarsMap['MinMax/Huge'], modeId, 48);
+        smartSetValueForMode(layoutVarsMap['MinMax/ExtraHuge'], modeId, 56);
+        smartSetValueForMode(layoutVarsMap['MinMax/Massive'], modeId, 64);
+        smartSetValueForMode(layoutVarsMap['MinMax/Gigantic'], modeId, 112);
+        smartSetValueForMode(layoutVarsMap['MinMax/Colossal'], modeId, 128);
+        smartSetValueForMode(layoutVarsMap['MinMax/Titanic'], modeId, 144);
       }
 
       // Create/Update a single Responsive Grid Style

@@ -2,6 +2,7 @@ import { ComponentNodeDef, FillOrStrokeDef } from '../types/generator';
 import { parseHexOrRgb } from '../utils/colors';
 import { ensureFontLoaded } from '../utils/fonts';
 import { dsRegistry } from '../audit/registry';
+import { safeGetComponentPropertyDefinitions } from '../utils/nodes';
 
 export function cleanUtilityColorToken(raw: string): string {
   if (!raw) return '';
@@ -1714,7 +1715,7 @@ export class VariableEngine {
     const preferredInstancesMap: Record<string, string[]> = {};
 
     const rawPropDefs = ('componentPropertyDefinitions' in node)
-      ? ((node as any).componentPropertyDefinitions || {})
+      ? safeGetComponentPropertyDefinitions(node as any)
       : {};
 
     for (const [propKey, def] of Object.entries(rawPropDefs)) {

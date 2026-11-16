@@ -296,6 +296,93 @@
       min-width: 0;
     }
 
+    /* Toggle Switch */
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+      position: absolute;
+    }
+
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #27272A;
+      transition: 0.2s ease;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 2px;
+      bottom: 2px;
+      background-color: #ffffff;
+      transition: 0.2s ease;
+      border-radius: 50%;
+    }
+
+    .toggle-switch input:checked + .toggle-slider {
+      background-color: #3B82F6;
+      border-color: #3B82F6;
+    }
+
+    .toggle-switch input:checked + .toggle-slider:before {
+      transform: translateX(16px);
+    }
+
+    /* Segmented Control */
+    .segmented-control {
+      display: flex;
+      background: #141417;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+      padding: 2px;
+      gap: 2px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .segmented-btn {
+      flex: 1;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      color: #71717A;
+      font-size: 11px;
+      font-weight: 500;
+      padding: 5px 8px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      text-align: center;
+      white-space: nowrap;
+      font-family: inherit;
+    }
+
+    .segmented-btn:hover {
+      color: #D4D4D8;
+    }
+
+    .segmented-btn.active {
+      background: #27272A;
+      color: #FFFFFF;
+      font-weight: 600;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    }
+
     /* --- BENTO CARDS (SYSTEM COLORS & SEED PALETTE) --- */
     .ds-colors-bento-grid {
       display: grid;
@@ -1553,6 +1640,37 @@
         </div>
       </div>
 
+      <!-- Row: SM Phone Model Bento Card -->
+      <div style="margin-bottom: 12px;">
+        <div class="ds-param-bento">
+          <div class="ds-param-header">
+            <div class="ds-param-icon-box">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect width="14" height="20" x="5" y="2" rx="2" ry="2"/>
+                <path d="M12 18h.01"/>
+              </svg>
+            </div>
+            <div class="ds-param-meta">
+              <span class="ds-param-title">Layout SM (Mobile Phone)</span>
+              <span class="ds-param-desc">Base dimensions for SM mode in Layout collection</span>
+            </div>
+          </div>
+          <select id="sm-phone-model" class="bento-select">
+            <option value="393x852" selected>iPhone 16, 14 &amp; 15 Pro (393 × 852)</option>
+            <option value="402x874">iPhone 18 Pro, 17, 16 &amp; 17 Pro (402 × 874)</option>
+            <option value="440x956">iPhone 18 Pro Max, 16 &amp; 17 Pro Max (440 × 956)</option>
+            <option value="430x932">iPhone 16 Plus, 14 &amp; 15 Pro Max (430 × 932)</option>
+            <option value="428x926">iPhone 14 Plus (428 × 926)</option>
+            <option value="420x912">iPhone Air (420 × 912)</option>
+            <option value="412x917">Android Compact (412 × 917)</option>
+            <option value="390x844">iPhone 13 &amp; 14 (390 × 844)</option>
+            <option value="466x678">iPhone Duo, Closed (466 × 678)</option>
+            <option value="700x840">Android Medium (700 × 840)</option>
+            <option value="951x669">iPhone Duo, Open (951 × 669)</option>
+          </select>
+        </div>
+      </div>
+
       <!-- Row 2: 2 Fonts Bento Cards -->
       <div class="ds-fonts-grid">
         <div class="ds-param-bento">
@@ -1623,6 +1741,152 @@
                 <span class="field-sublabel" style="font-size: 8px;">Bold</span>
                 <select id="body-weight-bold" class="bento-select style-select"></select>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row 2.5: Secondary Font Mode Bento Card -->
+      <div class="ds-param-bento" id="secondary-font-card" style="margin-top: 8px;">
+        <div class="ds-param-header" style="justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+            <div class="ds-param-icon-box" style="background: rgba(167, 139, 250, 0.15); color: #A78BFA;">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="4 7 4 4 20 4 20 7"/>
+                <line x1="9" y1="20" x2="15" y2="20"/>
+                <line x1="12" y1="4" x2="12" y2="20"/>
+              </svg>
+            </div>
+            <div class="ds-param-meta">
+              <span class="ds-param-title">Secondary Font Mode</span>
+              <span class="ds-param-desc">Add a second mode in _TypographyControls named after the font</span>
+            </div>
+          </div>
+          <label class="toggle-switch" title="Toggle Secondary Font Mode">
+            <input type="checkbox" id="include-secondary-font" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div id="secondary-font-options" style="display: none; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.06);">
+          <div class="ds-fonts-grid">
+            <div class="ds-param-bento">
+              <div class="ds-param-header">
+                <div class="ds-param-icon-box">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 7V4h16v3M9 20h6M12 4v16"/>
+                  </svg>
+                </div>
+                <div class="ds-param-meta">
+                  <span class="ds-param-title">Headers Font</span>
+                  <span class="ds-param-desc">Heading typeface</span>
+                </div>
+              </div>
+              <select id="secondary-headers-font" class="bento-select">
+                <option value="Inter">Loading fonts...</option>
+              </select>
+              <div class="row font-weights-subrow" id="secondary-headers-weights-row" style="display: none; margin-top: 6px; margin-bottom: 0;">
+                <div class="field-sublabel" style="font-size: 8px; margin-bottom: 3px;">Header Styles</div>
+                <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; width: 100%;">
+                  <div class="field-stack" style="min-width: 0;">
+                    <span class="field-sublabel" style="font-size: 8px;">Regular</span>
+                    <select id="secondary-headers-weight-reg" class="bento-select style-select"></select>
+                  </div>
+                  <div class="field-stack" style="min-width: 0;">
+                    <span class="field-sublabel" style="font-size: 8px;">Medium</span>
+                    <select id="secondary-headers-weight-med" class="bento-select style-select"></select>
+                  </div>
+                  <div class="field-stack" style="min-width: 0;">
+                    <span class="field-sublabel" style="font-size: 8px;">Bold</span>
+                    <select id="secondary-headers-weight-bold" class="bento-select style-select"></select>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="ds-param-bento">
+              <div class="ds-param-header">
+                <div class="ds-param-icon-box">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="4 7 4 4 20 4 20 7"/>
+                    <line x1="9" y1="20" x2="15" y2="20"/>
+                    <line x1="12" y1="4" x2="12" y2="20"/>
+                  </svg>
+                </div>
+                <div class="ds-param-meta">
+                  <span class="ds-param-title">Text Font</span>
+                  <span class="ds-param-desc">Body &amp; UI typeface</span>
+                </div>
+              </div>
+              <select id="secondary-body-font" class="bento-select">
+                <option value="Inter">Loading fonts...</option>
+              </select>
+              <div class="row font-weights-subrow" id="secondary-body-weights-row" style="display: none; margin-top: 6px; margin-bottom: 0;">
+                <div class="field-sublabel" style="font-size: 8px; margin-bottom: 3px;">Text Styles</div>
+                <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; width: 100%;">
+                  <div class="field-stack" style="min-width: 0;">
+                    <span class="field-sublabel" style="font-size: 8px;">Regular</span>
+                    <select id="secondary-body-weight-reg" class="bento-select style-select"></select>
+                  </div>
+                  <div class="field-stack" style="min-width: 0;">
+                    <span class="field-sublabel" style="font-size: 8px;">Medium</span>
+                    <select id="secondary-body-weight-med" class="bento-select style-select"></select>
+                  </div>
+                  <div class="field-stack" style="min-width: 0;">
+                    <span class="field-sublabel" style="font-size: 8px;">Bold</span>
+                    <select id="secondary-body-weight-bold" class="bento-select style-select"></select>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row 3: Material Symbols (Text Icons) Bento Card -->
+      <div class="ds-param-bento" id="material-symbols-card" style="margin-top: 8px;">
+        <div class="ds-param-header" style="justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+            <div class="ds-param-icon-box" style="background: rgba(56, 189, 248, 0.15); color: #38BDF8;">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+              </svg>
+            </div>
+            <div class="ds-param-meta">
+              <span class="ds-param-title">Material Icons Included</span>
+              <span class="ds-param-desc">Generate _MaterialIconsControls &amp; Icon Text Styles (8–32px)</span>
+            </div>
+          </div>
+          <label class="toggle-switch" title="Toggle Material Symbols inclusion">
+            <input type="checkbox" id="include-material-icons" checked />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div id="material-icons-options" style="display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.06);">
+          <div class="field-stack" style="min-width: 0;">
+            <span class="field-sublabel" style="font-size: 8px; margin-bottom: 3px;">Icon Style (Family)</span>
+            <div class="segmented-control" id="material-icons-family-segmented">
+              <button type="button" class="segmented-btn active" data-value="Material Symbols Rounded">Rounded</button>
+              <button type="button" class="segmented-btn" data-value="Material Symbols Outlined">Outlined</button>
+              <button type="button" class="segmented-btn" data-value="Material Symbols Sharp">Sharp</button>
+            </div>
+            <input type="hidden" id="material-icons-family" value="Material Symbols Rounded" />
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; width: 100%;">
+            <div class="field-stack" style="min-width: 0;">
+              <span class="field-sublabel" style="font-size: 8px; margin-bottom: 3px;">Fill Axis</span>
+              <div class="segmented-control" id="material-icons-fill-segmented">
+                <button type="button" class="segmented-btn active" data-value="0">0 (Outlined)</button>
+                <button type="button" class="segmented-btn" data-value="1">1 (Filled)</button>
+              </div>
+              <input type="hidden" id="material-icons-fill" value="0" />
+            </div>
+            <div class="field-stack" style="min-width: 0;">
+              <span class="field-sublabel" style="font-size: 8px; margin-bottom: 3px;">Default Axis Weight</span>
+              <input type="number" id="material-icons-weight" value="400" min="100" max="700" step="100" class="bento-select" style="background-image: none; padding-right: 8px; text-align: center;" />
+              <span style="font-size: 8px; color: #71717A; margin-top: 2px;">ExtraLight (200), Light (300), Regular (400), Medium (500)</span>
             </div>
           </div>
         </div>
@@ -1897,21 +2161,21 @@
             <div class="field-stack">
               <span class="field-sublabel">LG (1366)</span>
               <div class="input-with-unit">
-                <input type="number" id="layout-margin-lg" min="16" max="200" placeholder="Auto" />
+                <input type="number" id="layout-margin-lg" min="0" placeholder="Auto" />
                 <span class="unit-tag">px</span>
               </div>
             </div>
             <div class="field-stack">
               <span class="field-sublabel">XL (1536)</span>
               <div class="input-with-unit">
-                <input type="number" id="layout-margin-xl" min="32" max="200" value="72" />
+                <input type="number" id="layout-margin-xl" min="0" value="72" />
                 <span class="unit-tag">px</span>
               </div>
             </div>
             <div class="field-stack">
               <span class="field-sublabel">2XL (1920)</span>
               <div class="input-with-unit">
-                <input type="number" id="layout-margin-2xl" min="32" max="300" placeholder="Auto" />
+                <input type="number" id="layout-margin-2xl" min="0" placeholder="Auto" />
                 <span class="unit-tag">px</span>
               </div>
             </div>
@@ -3068,6 +3332,48 @@
       return hslToHex(hDark, sDark, lDark);
     }
 
+    // --- MATERIAL SYMBOLS CONTROLS WIRING ---
+    const includeMaterialIconsEl = document.getElementById("include-material-icons");
+    const materialIconsOptionsEl = document.getElementById("material-icons-options");
+
+    function setSegmentedValue(containerId, hiddenInputId, val) {
+      const container = document.getElementById(containerId);
+      const hiddenInput = document.getElementById(hiddenInputId);
+      if (!container || !hiddenInput) return;
+      hiddenInput.value = val;
+      const btns = container.querySelectorAll(".segmented-btn");
+      btns.forEach(btn => {
+        if (btn.dataset.value === String(val)) {
+          btn.classList.add("active");
+        } else {
+          btn.classList.remove("active");
+        }
+      });
+    }
+
+    if (includeMaterialIconsEl && materialIconsOptionsEl) {
+      includeMaterialIconsEl.addEventListener("change", function () {
+        materialIconsOptionsEl.style.display = this.checked ? "flex" : "none";
+      });
+    }
+
+    function initSegmentedControl(containerId, hiddenInputId) {
+      const container = document.getElementById(containerId);
+      const hiddenInput = document.getElementById(hiddenInputId);
+      if (!container || !hiddenInput) return;
+      const btns = container.querySelectorAll(".segmented-btn");
+      btns.forEach(btn => {
+        btn.addEventListener("click", () => {
+          btns.forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          hiddenInput.value = btn.dataset.value;
+        });
+      });
+    }
+
+    initSegmentedControl("material-icons-family-segmented", "material-icons-family");
+    initSegmentedControl("material-icons-fill-segmented", "material-icons-fill");
+
     document.getElementById("create").onclick = () => {
       const actionColor = "#2979FF";
       const successColor = "#27AE60";
@@ -3129,15 +3435,14 @@
       const wrapDisplay = document.getElementById("wrap-display").value || 'BALANCE';
       const wrapOthers = document.getElementById("wrap-others").value || 'BALANCE';
 
-      let layoutMarginXl = parseInt(document.getElementById("layout-margin-xl").value, 10) || 72;
-      if (layoutMarginXl < 32) layoutMarginXl = 32;
-      if (layoutMarginXl > 200) layoutMarginXl = 200;
+      const parsedXl = parseInt(document.getElementById("layout-margin-xl").value, 10);
+      const layoutMarginXl = !isNaN(parsedXl) ? Math.max(0, parsedXl) : 72;
 
       const lgVal = document.getElementById("layout-margin-lg").value.trim();
-      const layoutMarginLg = lgVal !== "" ? Math.max(16, Math.min(parseInt(lgVal, 10) || 0, 200)) : null;
+      const layoutMarginLg = lgVal !== "" ? Math.max(0, parseInt(lgVal, 10) || 0) : null;
 
       const val2xl = document.getElementById("layout-margin-2xl").value.trim();
-      const layoutMargin2xl = val2xl !== "" ? Math.max(32, Math.min(parseInt(val2xl, 10) || 0, 300)) : null;
+      const layoutMargin2xl = val2xl !== "" ? Math.max(0, parseInt(val2xl, 10) || 0) : null;
 
       const customColorsPayload = customColorsList.map(cc => ({
         name: (cc.name || 'custom').trim(),
@@ -3153,6 +3458,28 @@
         offsetY: cg.offsetY !== undefined ? cg.offsetY : 0,
         stops: cg.stops && cg.stops.length >= 2 ? cg.stops : [{ color: '#6750A4', position: 0 }, { color: '#FF8008', position: 100 }]
       })).filter(cg => cg.stops.length >= 2);
+
+      const includeMaterialIcons = document.getElementById("include-material-icons") ? document.getElementById("include-material-icons").checked : true;
+      const materialIconsFamily = document.getElementById("material-icons-family") ? document.getElementById("material-icons-family").value : "Material Symbols Rounded";
+      const materialIconsFill = document.getElementById("material-icons-fill") ? (parseInt(document.getElementById("material-icons-fill").value, 10) || 0) : 0;
+      const materialIconsWeight = document.getElementById("material-icons-weight") ? (parseInt(document.getElementById("material-icons-weight").value, 10) || 400) : 400;
+      const smPhoneModel = document.getElementById("sm-phone-model") ? document.getElementById("sm-phone-model").value : "393x852";
+
+      const includeSecondaryFont = document.getElementById("include-secondary-font")
+        ? document.getElementById("include-secondary-font").checked
+        : false;
+      const secondaryHeadersFont = document.getElementById("secondary-headers-font")?.value || 'Inter';
+      const secondaryBodyFont = document.getElementById("secondary-body-font")?.value || 'Inter';
+      const secondaryHeadersStyles = {
+        regular: document.getElementById("secondary-headers-weight-reg")?.value || 'Regular',
+        medium: document.getElementById("secondary-headers-weight-med")?.value || 'Medium',
+        bold: document.getElementById("secondary-headers-weight-bold")?.value || 'Bold'
+      };
+      const secondaryBodyStyles = {
+        regular: document.getElementById("secondary-body-weight-reg")?.value || 'Regular',
+        medium: document.getElementById("secondary-body-weight-med")?.value || 'Medium',
+        bold: document.getElementById("secondary-body-weight-bold")?.value || 'Bold'
+      };
 
       parent.postMessage(
         {
@@ -3170,6 +3497,11 @@
             headersStyles: headersStyles,
             bodyFont: bodyFont,
             bodyStyles: bodyStyles,
+            includeSecondaryFont,
+            secondaryHeadersFont,
+            secondaryHeadersStyles,
+            secondaryBodyFont,
+            secondaryBodyStyles,
             lsHeading, lsDisplay, lsOthers,
             psDisplay, psOthers,
             piDisplay, piOthers,
@@ -3177,8 +3509,13 @@
             layoutMarginXl,
             layoutMarginLg,
             layoutMargin2xl,
+            smPhoneModel,
             customColors: customColorsPayload,
-            customGradients: customGradientsPayload
+            customGradients: customGradientsPayload,
+            includeMaterialIcons,
+            materialIconsFamily,
+            materialIconsFill,
+            materialIconsWeight
           },
         },
         "*",
@@ -3187,9 +3524,13 @@
 
     let initialHeadersFont = "Inter";
     let initialBodyFont = "Inter";
+    let initialSecondaryHeadersFont = "Inter";
+    let initialSecondaryBodyFont = "Inter";
     let allFontStylesMap = {};
     let savedHeadersStyles = null;
     let savedBodyStyles = null;
+    let savedSecondaryHeadersStyles = null;
+    let savedSecondaryBodyStyles = null;
 
     function findBestMatchingStyle(styles, target) {
       if (!styles || styles.length === 0) return target;
@@ -3325,6 +3666,16 @@
     document.getElementById("body-font").addEventListener("change", (e) => {
       updateFontStylesUI('body', e.target.value);
     });
+    document.getElementById("include-secondary-font")?.addEventListener("change", (e) => {
+      const optEl = document.getElementById("secondary-font-options");
+      if (optEl) optEl.style.display = e.target.checked ? "flex" : "none";
+    });
+    document.getElementById("secondary-headers-font")?.addEventListener("change", (e) => {
+      updateFontStylesUI('secondary-headers', e.target.value);
+    });
+    document.getElementById("secondary-body-font")?.addEventListener("change", (e) => {
+      updateFontStylesUI('secondary-body', e.target.value);
+    });
 
     // --- Local Token Bridge Integration ---
     function updateBridgeUI(isOnline, text) {
@@ -3442,9 +3793,13 @@
         const fontList = msg.fonts;
         const headersSelect = document.getElementById("headers-font");
         const bodySelect = document.getElementById("body-font");
+        const secHeadersSelect = document.getElementById("secondary-headers-font");
+        const secBodySelect = document.getElementById("secondary-body-font");
 
         headersSelect.innerHTML = "";
         bodySelect.innerHTML = "";
+        if (secHeadersSelect) secHeadersSelect.innerHTML = "";
+        if (secBodySelect) secBodySelect.innerHTML = "";
 
         fontList.forEach((font) => {
           const opt1 = document.createElement("option");
@@ -3456,13 +3811,31 @@
           opt2.value = font;
           opt2.innerText = font;
           bodySelect.appendChild(opt2);
+
+          if (secHeadersSelect) {
+            const opt3 = document.createElement("option");
+            opt3.value = font;
+            opt3.innerText = font;
+            secHeadersSelect.appendChild(opt3);
+          }
+
+          if (secBodySelect) {
+            const opt4 = document.createElement("option");
+            opt4.value = font;
+            opt4.innerText = font;
+            secBodySelect.appendChild(opt4);
+          }
         });
 
         headersSelect.value = initialHeadersFont;
         bodySelect.value = initialBodyFont;
+        if (secHeadersSelect) secHeadersSelect.value = initialSecondaryHeadersFont;
+        if (secBodySelect) secBodySelect.value = initialSecondaryBodyFont;
 
         updateFontStylesUI('headers', headersSelect.value, savedHeadersStyles);
         updateFontStylesUI('body', bodySelect.value, savedBodyStyles);
+        if (secHeadersSelect) updateFontStylesUI('secondary-headers', secHeadersSelect.value, savedSecondaryHeadersStyles);
+        if (secBodySelect) updateFontStylesUI('secondary-body', secBodySelect.value, savedSecondaryBodyStyles);
       }
       else if (msg.type === "load-settings") {
         const savedSeeds = msg.seeds;
@@ -3470,6 +3843,8 @@
 
         if (msg.headersStyles) savedHeadersStyles = msg.headersStyles;
         if (msg.bodyStyles) savedBodyStyles = msg.bodyStyles;
+        if (msg.secondaryHeadersStyles) savedSecondaryHeadersStyles = msg.secondaryHeadersStyles;
+        if (msg.secondaryBodyStyles) savedSecondaryBodyStyles = msg.secondaryBodyStyles;
 
         if (msg.headersFont) {
           initialHeadersFont = msg.headersFont;
@@ -3485,9 +3860,38 @@
             bodySelect.value = msg.bodyFont;
           }
         }
+        if (msg.secondaryHeadersFont) {
+          initialSecondaryHeadersFont = msg.secondaryHeadersFont;
+          const secHeadersSelect = document.getElementById("secondary-headers-font");
+          if (secHeadersSelect && Array.from(secHeadersSelect.options).some(opt => opt.value === msg.secondaryHeadersFont)) {
+            secHeadersSelect.value = msg.secondaryHeadersFont;
+          }
+        }
+        if (msg.secondaryBodyFont) {
+          initialSecondaryBodyFont = msg.secondaryBodyFont;
+          const secBodySelect = document.getElementById("secondary-body-font");
+          if (secBodySelect && Array.from(secBodySelect.options).some(opt => opt.value === msg.secondaryBodyFont)) {
+            secBodySelect.value = msg.secondaryBodyFont;
+          }
+        }
+
+        if (msg.includeSecondaryFont !== undefined) {
+          const secToggle = document.getElementById("include-secondary-font");
+          if (secToggle) {
+            secToggle.checked = !!msg.includeSecondaryFont;
+            const secOptEl = document.getElementById("secondary-font-options");
+            if (secOptEl) secOptEl.style.display = secToggle.checked ? "flex" : "none";
+          }
+        }
 
         updateFontStylesUI('headers', document.getElementById("headers-font").value, savedHeadersStyles);
         updateFontStylesUI('body', document.getElementById("body-font").value, savedBodyStyles);
+        if (document.getElementById("secondary-headers-font")) {
+          updateFontStylesUI('secondary-headers', document.getElementById("secondary-headers-font").value, savedSecondaryHeadersStyles);
+        }
+        if (document.getElementById("secondary-body-font")) {
+          updateFontStylesUI('secondary-body', document.getElementById("secondary-body-font").value, savedSecondaryBodyStyles);
+        }
 
         if (msg.radiusPreset) document.getElementById("radius-preset").value = msg.radiusPreset;
         if (msg.spacingPreset) document.getElementById("spacing-preset").value = msg.spacingPreset;
@@ -3525,6 +3929,29 @@
         }
         if (msg.layoutMargin2xl !== undefined && msg.layoutMargin2xl !== null) {
           document.getElementById("layout-margin-2xl").value = msg.layoutMargin2xl;
+        }
+
+        if (msg.smPhoneModel && document.getElementById("sm-phone-model")) {
+          document.getElementById("sm-phone-model").value = msg.smPhoneModel;
+        }
+
+        if (msg.includeMaterialIcons !== undefined) {
+          const incEl = document.getElementById("include-material-icons");
+          if (incEl) {
+            incEl.checked = !!msg.includeMaterialIcons;
+            const optEl = document.getElementById("material-icons-options");
+            if (optEl) optEl.style.display = incEl.checked ? "flex" : "none";
+          }
+        }
+        if (msg.materialIconsFamily) {
+          setSegmentedValue("material-icons-family-segmented", "material-icons-family", msg.materialIconsFamily);
+        }
+        if (msg.materialIconsFill !== undefined) {
+          setSegmentedValue("material-icons-fill-segmented", "material-icons-fill", msg.materialIconsFill);
+        }
+        if (msg.materialIconsWeight !== undefined) {
+          const wEl = document.getElementById("material-icons-weight");
+          if (wEl) wEl.value = msg.materialIconsWeight;
         }
 
         if (msg.customColors && Array.isArray(msg.customColors)) {

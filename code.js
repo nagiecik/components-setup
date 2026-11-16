@@ -1,5 +1,5 @@
 (() => {
-  // ../../../../plugins/components-setup/src/audit/registry.ts
+  // src/audit/registry.ts
   var DEFAULT_DS_COLORS = {
     "primary": { hex: "#F04248", variableName: "primary" },
     "on-primary-unstable": { hex: "#FFFFFF", variableName: "on-primary-unstable" },
@@ -322,8 +322,47 @@
       console.warn("Failed to set pluginData for audit ignore on node:", node == null ? void 0 : node.id, e);
     }
   }
+  var TRUSTED_LIBRARIES_KEY = "audit_trusted_libraries";
+  function getTrustedAuditLibraries() {
+    try {
+      const raw = figma.root.getPluginData(TRUSTED_LIBRARIES_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.filter(
+          (item) => Boolean(item && typeof item.key === "string" && typeof item.label === "string")
+        );
+      }
+    } catch (e) {
+    }
+    return [];
+  }
+  function addTrustedAuditLibrary(entry) {
+    try {
+      if (!entry || !entry.key) return;
+      const existing = getTrustedAuditLibraries();
+      if (existing.some((t) => t.key === entry.key)) return;
+      existing.push({
+        key: entry.key,
+        label: entry.label || entry.key,
+        source: entry.source === "remote" ? "remote" : "local-other"
+      });
+      figma.root.setPluginData(TRUSTED_LIBRARIES_KEY, JSON.stringify(existing));
+    } catch (e) {
+      console.warn("Failed to save trusted audit library:", e);
+    }
+  }
+  function removeTrustedAuditLibrary(key) {
+    try {
+      if (!key) return;
+      const filtered = getTrustedAuditLibraries().filter((t) => t.key !== key);
+      figma.root.setPluginData(TRUSTED_LIBRARIES_KEY, JSON.stringify(filtered));
+    } catch (e) {
+      console.warn("Failed to remove trusted audit library:", e);
+    }
+  }
 
-  // ../../../../plugins/components-setup/src/utils/colors.ts
+  // src/utils/colors.ts
   function rgbToHex(r, g, b) {
     const to255 = (c) => Math.max(0, Math.min(255, Math.round(c > 1 ? c : c * 255)));
     const hex = (c) => to255(c).toString(16).padStart(2, "0").toUpperCase();
@@ -356,7 +395,7 @@
     return { r: 0, g: 0, b: 0 };
   }
 
-  // ../../../../plugins/components-setup/src/audit/inspector.ts
+  // src/audit/inspector.ts
   function isEffectRelated(varName, categoryNames) {
     const nameLower = varName.toLowerCase();
     const effectKeywords = ["shadow", "glass", "blur", "effect", "elevation", "frost"];
@@ -699,6 +738,8 @@
           return {};
         }
       };
+      const trustedLibraries = getTrustedAuditLibraries();
+      const trustedLibraryKeys = new Set(trustedLibraries.map((t) => t.key));
       let targetRoots = [];
       if (scope === "selection") {
         targetRoots = figma.currentPage.selection || [];
@@ -710,6 +751,7 @@
               totalIssues: 0,
               unboundCount: 0,
               missingCount: 0,
+              foreignCount: 0,
               gapCount: 0,
               paddingCount: 0,
               radiusCount: 0,
@@ -719,6 +761,7 @@
               scope: "selection"
             },
             issues: [],
+            trustedLibraries,
             emptyReason: "no-selection"
           });
           return;
@@ -784,15 +827,64 @@
         return false;
       }
       let availableLibraryCollectionKeys = null;
+      const libraryInfoByKey = /* @__PURE__ */ new Map();
       try {
         if (figma.teamLibrary && typeof figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync === "function") {
           const libs = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
           if (Array.isArray(libs)) {
             availableLibraryCollectionKeys = new Set(libs.map((l) => l.key));
+            for (const l of libs) {
+              if (l && l.key) {
+                libraryInfoByKey.set(l.key, {
+                  name: l.name || "Remote Collection",
+                  libraryName: l.libraryName || "External Library"
+                });
+              }
+            }
           }
         }
       } catch (e) {
         availableLibraryCollectionKeys = null;
+      }
+      let localCollections = [];
+      try {
+        localCollections = await figma.variables.getLocalVariableCollectionsAsync();
+      } catch (e) {
+        localCollections = [];
+      }
+      const STANDARD_DS_COLLECTION_NAMES = /* @__PURE__ */ new Set([
+        "schemes",
+        "metrics",
+        "_metrics",
+        "layout",
+        "typography",
+        "accessibility",
+        "palettes",
+        "_palettes",
+        "schemes controls",
+        "typography controls",
+        "variables"
+      ]);
+      const CORE_DS_COLLECTION_NAMES = /* @__PURE__ */ new Set([
+        "schemes",
+        "metrics",
+        "_metrics",
+        "layout",
+        "typography",
+        "accessibility"
+      ]);
+      const allowedLocalCollectionIds = /* @__PURE__ */ new Set();
+      const hasCoreLocalDsCollection = localCollections.some(
+        (c) => CORE_DS_COLLECTION_NAMES.has((c.name || "").trim().toLowerCase())
+      );
+      if (hasCoreLocalDsCollection) {
+        for (const c of localCollections) {
+          if (STANDARD_DS_COLLECTION_NAMES.has((c.name || "").trim().toLowerCase())) {
+            allowedLocalCollectionIds.add(c.id);
+          }
+        }
+      } else if (localCollections.length === 1) {
+        allowedLocalCollectionIds.add(localCollections[0].id);
       }
       async function collectNodes(nodes) {
         if (!nodes) return;
@@ -812,10 +904,44 @@
         }
       }
       await collectNodes(targetRoots);
+      if (allowedLocalCollectionIds.size === 0 && localCollections.length > 1) {
+        const localUsageCounts = /* @__PURE__ */ new Map();
+        const localVarColMap = /* @__PURE__ */ new Map();
+        try {
+          const localVars = await figma.variables.getLocalVariablesAsync();
+          for (const lv of localVars) {
+            localVarColMap.set(lv.id, lv.variableCollectionId);
+          }
+          const scanBoundMap = /* @__PURE__ */ new Map();
+          const unusedNumSet = /* @__PURE__ */ new Set();
+          for (const n of allNodes) {
+            if (n.boundVariables) {
+              extractVariableAliases(n.boundVariables, scanBoundMap, unusedNumSet);
+            }
+          }
+          for (const vId of scanBoundMap.keys()) {
+            const cid = localVarColMap.get(vId);
+            if (cid) {
+              localUsageCounts.set(cid, (localUsageCounts.get(cid) || 0) + 1);
+            }
+          }
+        } catch (e) {
+        }
+        let primaryColId = localCollections[0].id;
+        let maxCount = -1;
+        for (const c of localCollections) {
+          const count = localUsageCounts.get(c.id) || 0;
+          if (count > maxCount) {
+            maxCount = count;
+            primaryColId = c.id;
+          }
+        }
+        allowedLocalCollectionIds.add(primaryColId);
+      }
       const varStatusCache = /* @__PURE__ */ new Map();
       async function checkVariableStatus(varId, consumerNode) {
         if (!varId || typeof varId !== "string") {
-          return { variable: null, isMissing: true, name: "Unknown" };
+          return { variable: null, isMissing: true, isForeign: false, name: "Unknown" };
         }
         if (varStatusCache.has(varId)) {
           const cached = varStatusCache.get(varId);
@@ -824,10 +950,10 @@
             try {
               const resolved = cached.variable.resolveForConsumer(consumerNode);
               if (!resolved || resolved.value === void 0 || resolved.value === null) {
-                return { variable: cached.variable, isMissing: true, name: cached.name };
+                return { variable: cached.variable, isMissing: true, isForeign: false, name: cached.name };
               }
             } catch (e) {
-              return { variable: cached.variable, isMissing: true, name: cached.name };
+              return { variable: cached.variable, isMissing: true, isForeign: false, name: cached.name };
             }
           }
           return cached;
@@ -840,7 +966,7 @@
             variable = null;
           }
           if (!variable) {
-            const res2 = { variable: null, isMissing: true, name: `Missing Variable (${varId})` };
+            const res2 = { variable: null, isMissing: true, isForeign: false, name: `Missing Variable (${varId})` };
             varStatusCache.set(varId, res2);
             return res2;
           }
@@ -851,40 +977,67 @@
             collection = null;
           }
           if (!collection) {
-            const res2 = { variable, isMissing: true, name: variable.name };
+            const res2 = { variable, isMissing: true, isForeign: false, name: variable.name };
             varStatusCache.set(varId, res2);
             return res2;
           }
           if (collection && collection.variableIds && Array.isArray(collection.variableIds) && !collection.variableIds.includes(variable.id)) {
-            const res2 = { variable, isMissing: true, name: variable.name };
+            const res2 = { variable, isMissing: true, isForeign: false, name: variable.name };
             varStatusCache.set(varId, res2);
             return res2;
           }
           if (collection && collection.remote && availableLibraryCollectionKeys && !availableLibraryCollectionKeys.has(collection.key)) {
-            const res2 = { variable, isMissing: true, name: variable.name };
+            const res2 = { variable, isMissing: true, isForeign: false, name: variable.name };
             varStatusCache.set(varId, res2);
             return res2;
+          }
+          let isForeign = false;
+          let foreignSource;
+          let foreignLibraryKey;
+          let collectionName = collection.name || void 0;
+          let libraryName;
+          if (collection.remote || variable.remote) {
+            foreignSource = "remote";
+            const libMeta = collection.key ? libraryInfoByKey.get(collection.key) : void 0;
+            libraryName = (libMeta == null ? void 0 : libMeta.libraryName) || "External Library";
+            collectionName = collection.name || (libMeta == null ? void 0 : libMeta.name) || "Remote Collection";
+            foreignLibraryKey = `remote:${(libraryName || collectionName || "External Library").trim()}`;
+            isForeign = !trustedLibraryKeys.has(foreignLibraryKey);
+          } else if (allowedLocalCollectionIds.size > 0 && !allowedLocalCollectionIds.has(collection.id)) {
+            foreignSource = "local-other";
+            collectionName = collection.name || "Other Collection";
+            foreignLibraryKey = `local:${collectionName.trim()}`;
+            isForeign = !trustedLibraryKeys.has(foreignLibraryKey);
           }
           if (consumerNode && typeof variable.resolveForConsumer === "function") {
             try {
               const resolved = variable.resolveForConsumer(consumerNode);
               if (!resolved || resolved.value === void 0 || resolved.value === null) {
-                const res2 = { variable, isMissing: true, name: variable.name };
+                const res2 = { variable, isMissing: true, isForeign: false, name: variable.name };
                 varStatusCache.set(varId, res2);
                 return res2;
               }
             } catch (e) {
-              const res2 = { variable, isMissing: true, name: variable.name };
+              const res2 = { variable, isMissing: true, isForeign: false, name: variable.name };
               varStatusCache.set(varId, res2);
               return res2;
             }
           }
           const { isMissing } = await resolveVariableValueAndStatus(variable);
-          const res = { variable, isMissing, name: variable.name };
+          const res = {
+            variable,
+            isMissing,
+            isForeign: isMissing ? false : isForeign,
+            foreignSource: isMissing ? void 0 : foreignSource,
+            foreignLibraryKey: isMissing ? void 0 : foreignLibraryKey,
+            collectionName,
+            libraryName,
+            name: variable.name
+          };
           varStatusCache.set(varId, res);
           return res;
         } catch (err) {
-          const res = { variable: null, isMissing: true, name: `Missing (${varId})` };
+          const res = { variable: null, isMissing: true, isForeign: false, name: `Missing (${varId})` };
           varStatusCache.set(varId, res);
           return res;
         }
@@ -897,6 +1050,53 @@
         if (reportedBindingsOnNode.has(k)) return true;
         reportedBindingsOnNode.add(k);
         return false;
+      };
+      const reportBoundVariableIssue = (vStatus, opts) => {
+        if (!vStatus.isMissing && !vStatus.isForeign) return false;
+        if (markReported(opts.nodeId, `var:${opts.varId}`)) return false;
+        if (vStatus.isMissing) {
+          issues.push({
+            id: `issue_${++issueCounter}`,
+            nodeId: opts.nodeId,
+            nodeName: opts.nodeName,
+            layerType: opts.layerType,
+            layerTypeName: opts.layerTypeName,
+            category: opts.category,
+            categoryLabel: opts.categoryLabel,
+            property: opts.property,
+            propertyLabel: opts.propertyLabel,
+            issueType: "missing",
+            value: opts.value,
+            formattedValue: opts.styleName ? `Missing Variable (${vStatus.name}) in "${opts.styleName}"` : `Missing Variable (${vStatus.name})`,
+            varId: opts.varId,
+            varName: vStatus.name,
+            suggestion: opts.missingSuggestion
+          });
+          return true;
+        }
+        const sourceLabel = vStatus.foreignSource === "remote" ? `${vStatus.libraryName || "External Library"}${vStatus.collectionName ? ` \xB7 ${vStatus.collectionName}` : ""}` : `Local: ${vStatus.collectionName || "Other Collection"}`;
+        issues.push({
+          id: `issue_${++issueCounter}`,
+          nodeId: opts.nodeId,
+          nodeName: opts.nodeName,
+          layerType: opts.layerType,
+          layerTypeName: opts.layerTypeName,
+          category: opts.category,
+          categoryLabel: opts.categoryLabel,
+          property: opts.property,
+          propertyLabel: opts.propertyLabel,
+          issueType: "foreign",
+          value: opts.value,
+          formattedValue: opts.styleName ? `${vStatus.name} [${sourceLabel}] in "${opts.styleName}"` : `${vStatus.name} [${sourceLabel}]`,
+          varId: opts.varId,
+          varName: vStatus.name,
+          foreignSource: vStatus.foreignSource,
+          foreignLibraryKey: vStatus.foreignLibraryKey,
+          collectionName: vStatus.collectionName,
+          libraryName: vStatus.libraryName,
+          suggestion: vStatus.foreignSource === "remote" ? `External library variable ("${vStatus.libraryName || vStatus.collectionName}") \u2014 replace with a local Design System token` : `Variable from another local collection ("${vStatus.collectionName}") \u2014 replace with a token from the active Design System`
+        });
+        return true;
       };
       const nodeIgnoredMap = /* @__PURE__ */ new Map();
       for (const node of allNodes) {
@@ -916,25 +1116,19 @@
               const gapBinding = boundVars.itemSpacing;
               if (gapBinding && gapBinding.type === "VARIABLE_ALIAS" && gapBinding.id) {
                 const vStatus = await checkVariableStatus(gapBinding.id, node);
-                if (vStatus.isMissing && !markReported(node.id, `var:${gapBinding.id}`)) {
-                  issues.push({
-                    id: `issue_${++issueCounter}`,
-                    nodeId: node.id,
-                    nodeName,
-                    layerType: nodeType,
-                    layerTypeName,
-                    category: "gap",
-                    categoryLabel: "Gap",
-                    property: "itemSpacing",
-                    propertyLabel: "Gap",
-                    issueType: "missing",
-                    value: itemSpacing,
-                    formattedValue: `Missing Variable (${vStatus.name})`,
-                    varId: gapBinding.id,
-                    varName: vStatus.name,
-                    suggestion: "Reassign to a valid Spacing variable"
-                  });
-                }
+                reportBoundVariableIssue(vStatus, {
+                  nodeId: node.id,
+                  nodeName,
+                  layerType: nodeType,
+                  layerTypeName,
+                  category: "gap",
+                  categoryLabel: "Gap",
+                  property: "itemSpacing",
+                  propertyLabel: "Gap",
+                  value: itemSpacing,
+                  varId: gapBinding.id,
+                  missingSuggestion: "Reassign to a valid Spacing variable"
+                });
               } else {
                 const tokenMatch = dsRegistry.matchSpacing(itemSpacing);
                 const isArbitrary = tokenMatch.startsWith("[");
@@ -961,25 +1155,19 @@
               const counterBinding = boundVars.counterAxisSpacing;
               if (counterBinding && counterBinding.type === "VARIABLE_ALIAS" && counterBinding.id) {
                 const vStatus = await checkVariableStatus(counterBinding.id, node);
-                if (vStatus.isMissing && !markReported(node.id, `var:${counterBinding.id}`)) {
-                  issues.push({
-                    id: `issue_${++issueCounter}`,
-                    nodeId: node.id,
-                    nodeName,
-                    layerType: nodeType,
-                    layerTypeName,
-                    category: "gap",
-                    categoryLabel: "Gap",
-                    property: "counterAxisSpacing",
-                    propertyLabel: "Counter Gap",
-                    issueType: "missing",
-                    value: counterSpacing,
-                    formattedValue: `Missing Variable (${vStatus.name})`,
-                    varId: counterBinding.id,
-                    varName: vStatus.name,
-                    suggestion: "Reassign to a valid Spacing variable"
-                  });
-                }
+                reportBoundVariableIssue(vStatus, {
+                  nodeId: node.id,
+                  nodeName,
+                  layerType: nodeType,
+                  layerTypeName,
+                  category: "gap",
+                  categoryLabel: "Gap",
+                  property: "counterAxisSpacing",
+                  propertyLabel: "Counter Gap",
+                  value: counterSpacing,
+                  varId: counterBinding.id,
+                  missingSuggestion: "Reassign to a valid Spacing variable"
+                });
               } else {
                 const tokenMatch = dsRegistry.matchSpacing(counterSpacing);
                 const isArbitrary = tokenMatch.startsWith("[");
@@ -1013,25 +1201,19 @@
               const binding = boundVars[p.key];
               if (binding && binding.type === "VARIABLE_ALIAS" && binding.id) {
                 const vStatus = await checkVariableStatus(binding.id, node);
-                if (vStatus.isMissing && !markReported(node.id, `var:${binding.id}`)) {
-                  issues.push({
-                    id: `issue_${++issueCounter}`,
-                    nodeId: node.id,
-                    nodeName,
-                    layerType: nodeType,
-                    layerTypeName,
-                    category: "padding",
-                    categoryLabel: "Padding",
-                    property: p.key,
-                    propertyLabel: p.label,
-                    issueType: "missing",
-                    value: p.val,
-                    formattedValue: `Missing Variable (${vStatus.name})`,
-                    varId: binding.id,
-                    varName: vStatus.name,
-                    suggestion: "Reassign to a valid Spacing variable"
-                  });
-                }
+                reportBoundVariableIssue(vStatus, {
+                  nodeId: node.id,
+                  nodeName,
+                  layerType: nodeType,
+                  layerTypeName,
+                  category: "padding",
+                  categoryLabel: "Padding",
+                  property: p.key,
+                  propertyLabel: p.label,
+                  value: p.val,
+                  varId: binding.id,
+                  missingSuggestion: "Reassign to a valid Spacing variable"
+                });
               } else {
                 const tokenMatch = dsRegistry.matchSpacing(p.val);
                 const isArbitrary = tokenMatch.startsWith("[");
@@ -1067,25 +1249,19 @@
                 const binding = boundVars[c.key];
                 if (binding && binding.type === "VARIABLE_ALIAS" && binding.id) {
                   const vStatus = await checkVariableStatus(binding.id, node);
-                  if (vStatus.isMissing && !markReported(node.id, `var:${binding.id}`)) {
-                    issues.push({
-                      id: `issue_${++issueCounter}`,
-                      nodeId: node.id,
-                      nodeName,
-                      layerType: nodeType,
-                      layerTypeName,
-                      category: "radius",
-                      categoryLabel: "Radius",
-                      property: c.key,
-                      propertyLabel: c.label,
-                      issueType: "missing",
-                      value: c.val,
-                      formattedValue: `Missing Variable (${vStatus.name})`,
-                      varId: binding.id,
-                      varName: vStatus.name,
-                      suggestion: "Reassign to a valid Radius variable"
-                    });
-                  }
+                  reportBoundVariableIssue(vStatus, {
+                    nodeId: node.id,
+                    nodeName,
+                    layerType: nodeType,
+                    layerTypeName,
+                    category: "radius",
+                    categoryLabel: "Radius",
+                    property: c.key,
+                    propertyLabel: c.label,
+                    value: c.val,
+                    varId: binding.id,
+                    missingSuggestion: "Reassign to a valid Radius variable"
+                  });
                 } else {
                   const tokenMatch = dsRegistry.matchRadius(c.val);
                   const isArbitrary = tokenMatch.startsWith("[");
@@ -1111,47 +1287,36 @@
               const indBindings = [boundVars.topLeftRadius, boundVars.topRightRadius, boundVars.bottomLeftRadius, boundVars.bottomRightRadius].filter(Boolean);
               if (binding && binding.type === "VARIABLE_ALIAS" && binding.id) {
                 const vStatus = await checkVariableStatus(binding.id, node);
-                if (vStatus.isMissing && !markReported(node.id, `var:${binding.id}`)) {
-                  issues.push({
-                    id: `issue_${++issueCounter}`,
-                    nodeId: node.id,
-                    nodeName,
-                    layerType: nodeType,
-                    layerTypeName,
-                    category: "radius",
-                    categoryLabel: "Radius",
-                    property: "cornerRadius",
-                    propertyLabel: "Corner Radius",
-                    issueType: "missing",
-                    value: cornerRadius,
-                    formattedValue: `Missing Variable (${vStatus.name})`,
-                    varId: binding.id,
-                    varName: vStatus.name,
-                    suggestion: "Reassign to a valid Radius variable"
-                  });
-                }
+                reportBoundVariableIssue(vStatus, {
+                  nodeId: node.id,
+                  nodeName,
+                  layerType: nodeType,
+                  layerTypeName,
+                  category: "radius",
+                  categoryLabel: "Radius",
+                  property: "cornerRadius",
+                  propertyLabel: "Corner Radius",
+                  value: cornerRadius,
+                  varId: binding.id,
+                  missingSuggestion: "Reassign to a valid Radius variable"
+                });
               } else if (indBindings.length > 0) {
                 for (const indBinding of indBindings) {
                   if (indBinding.type === "VARIABLE_ALIAS" && indBinding.id) {
                     const vStatus = await checkVariableStatus(indBinding.id, node);
-                    if (vStatus.isMissing && !markReported(node.id, `var:${indBinding.id}`)) {
-                      issues.push({
-                        id: `issue_${++issueCounter}`,
-                        nodeId: node.id,
-                        nodeName,
-                        layerType: nodeType,
-                        layerTypeName,
-                        category: "radius",
-                        categoryLabel: "Radius",
-                        property: "cornerRadius",
-                        propertyLabel: "Corner Radius",
-                        issueType: "missing",
-                        value: cornerRadius,
-                        formattedValue: `Missing Variable (${vStatus.name})`,
-                        varId: indBinding.id,
-                        varName: vStatus.name,
-                        suggestion: "Reassign to a valid Radius variable"
-                      });
+                    if (reportBoundVariableIssue(vStatus, {
+                      nodeId: node.id,
+                      nodeName,
+                      layerType: nodeType,
+                      layerTypeName,
+                      category: "radius",
+                      categoryLabel: "Radius",
+                      property: "cornerRadius",
+                      propertyLabel: "Corner Radius",
+                      value: cornerRadius,
+                      varId: indBinding.id,
+                      missingSuggestion: "Reassign to a valid Radius variable"
+                    })) {
                       break;
                     }
                   }
@@ -1192,25 +1357,19 @@
                   const binding = boundVars[s.key] || boundVars.strokeWeight;
                   if (binding && binding.type === "VARIABLE_ALIAS" && binding.id) {
                     const vStatus = await checkVariableStatus(binding.id, node);
-                    if (vStatus.isMissing && !markReported(node.id, `var:${binding.id}`)) {
-                      issues.push({
-                        id: `issue_${++issueCounter}`,
-                        nodeId: node.id,
-                        nodeName,
-                        layerType: nodeType,
-                        layerTypeName,
-                        category: "stroke",
-                        categoryLabel: "Stroke",
-                        property: s.key,
-                        propertyLabel: s.label,
-                        issueType: "missing",
-                        value: s.val,
-                        formattedValue: `Missing Variable (${vStatus.name})`,
-                        varId: binding.id,
-                        varName: vStatus.name,
-                        suggestion: "Reassign to a valid Stroke variable"
-                      });
-                    }
+                    reportBoundVariableIssue(vStatus, {
+                      nodeId: node.id,
+                      nodeName,
+                      layerType: nodeType,
+                      layerTypeName,
+                      category: "stroke",
+                      categoryLabel: "Stroke",
+                      property: s.key,
+                      propertyLabel: s.label,
+                      value: s.val,
+                      varId: binding.id,
+                      missingSuggestion: "Reassign to a valid Stroke variable"
+                    });
                   } else {
                     const tokenMatch = dsRegistry.matchStroke(s.val);
                     const isArbitrary = tokenMatch.startsWith("[");
@@ -1237,47 +1396,36 @@
               const indBindings = [boundVars.strokeTopWeight, boundVars.strokeRightWeight, boundVars.strokeBottomWeight, boundVars.strokeLeftWeight].filter(Boolean);
               if (binding && binding.type === "VARIABLE_ALIAS" && binding.id) {
                 const vStatus = await checkVariableStatus(binding.id, node);
-                if (vStatus.isMissing && !markReported(node.id, `var:${binding.id}`)) {
-                  issues.push({
-                    id: `issue_${++issueCounter}`,
-                    nodeId: node.id,
-                    nodeName,
-                    layerType: nodeType,
-                    layerTypeName,
-                    category: "stroke",
-                    categoryLabel: "Stroke",
-                    property: "strokeWeight",
-                    propertyLabel: "Stroke Weight",
-                    issueType: "missing",
-                    value: sw,
-                    formattedValue: `Missing Variable (${vStatus.name})`,
-                    varId: binding.id,
-                    varName: vStatus.name,
-                    suggestion: "Reassign to a valid Stroke variable"
-                  });
-                }
+                reportBoundVariableIssue(vStatus, {
+                  nodeId: node.id,
+                  nodeName,
+                  layerType: nodeType,
+                  layerTypeName,
+                  category: "stroke",
+                  categoryLabel: "Stroke",
+                  property: "strokeWeight",
+                  propertyLabel: "Stroke Weight",
+                  value: sw,
+                  varId: binding.id,
+                  missingSuggestion: "Reassign to a valid Stroke variable"
+                });
               } else if (indBindings.length > 0) {
                 for (const indBinding of indBindings) {
                   if (indBinding.type === "VARIABLE_ALIAS" && indBinding.id) {
                     const vStatus = await checkVariableStatus(indBinding.id, node);
-                    if (vStatus.isMissing && !markReported(node.id, `var:${indBinding.id}`)) {
-                      issues.push({
-                        id: `issue_${++issueCounter}`,
-                        nodeId: node.id,
-                        nodeName,
-                        layerType: nodeType,
-                        layerTypeName,
-                        category: "stroke",
-                        categoryLabel: "Stroke",
-                        property: "strokeWeight",
-                        propertyLabel: "Stroke Weight",
-                        issueType: "missing",
-                        value: sw,
-                        formattedValue: `Missing Variable (${vStatus.name})`,
-                        varId: indBinding.id,
-                        varName: vStatus.name,
-                        suggestion: "Reassign to a valid Stroke variable"
-                      });
+                    if (reportBoundVariableIssue(vStatus, {
+                      nodeId: node.id,
+                      nodeName,
+                      layerType: nodeType,
+                      layerTypeName,
+                      category: "stroke",
+                      categoryLabel: "Stroke",
+                      property: "strokeWeight",
+                      propertyLabel: "Stroke Weight",
+                      value: sw,
+                      varId: indBinding.id,
+                      missingSuggestion: "Reassign to a valid Stroke variable"
+                    })) {
                       break;
                     }
                   }
@@ -1360,25 +1508,20 @@
                       const spBinding = (_a = sp.boundVariables) == null ? void 0 : _a.color;
                       if (spBinding && spBinding.type === "VARIABLE_ALIAS" && spBinding.id) {
                         const vStatus = await checkVariableStatus(spBinding.id, node);
-                        if (vStatus.isMissing && !markReported(node.id, `var:${spBinding.id}`)) {
-                          issues.push({
-                            id: `issue_${++issueCounter}`,
-                            nodeId: node.id,
-                            nodeName,
-                            layerType: nodeType,
-                            layerTypeName,
-                            category: "color",
-                            categoryLabel: "Color",
-                            property: "fills",
-                            propertyLabel: `Style "${style.name}"`,
-                            issueType: "missing",
-                            value: sp.type === "SOLID" ? rgbToHex(sp.color.r, sp.color.g, sp.color.b) : "#888888",
-                            formattedValue: `Missing Variable (${vStatus.name}) in "${style.name}"`,
-                            varId: spBinding.id,
-                            varName: vStatus.name,
-                            suggestion: "Reassign to a valid Color variable"
-                          });
-                        }
+                        reportBoundVariableIssue(vStatus, {
+                          nodeId: node.id,
+                          nodeName,
+                          layerType: nodeType,
+                          layerTypeName,
+                          category: "color",
+                          categoryLabel: "Color",
+                          property: "fills",
+                          propertyLabel: `Style "${style.name}"`,
+                          value: sp.type === "SOLID" ? rgbToHex(sp.color.r, sp.color.g, sp.color.b) : "#888888",
+                          varId: spBinding.id,
+                          missingSuggestion: "Reassign to a valid Color variable",
+                          styleName: style.name
+                        });
                       }
                     }
                   }
@@ -1397,26 +1540,20 @@
                 const colorBinding = ((_b = paint.boundVariables) == null ? void 0 : _b.color) || boundFill;
                 if (colorBinding && colorBinding.type === "VARIABLE_ALIAS" && colorBinding.id) {
                   const vStatus = await checkVariableStatus(colorBinding.id, node);
-                  if (vStatus.isMissing && !markReported(node.id, `var:${colorBinding.id}`)) {
-                    const valHex = paint.type === "SOLID" ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : "#888888";
-                    issues.push({
-                      id: `issue_${++issueCounter}`,
-                      nodeId: node.id,
-                      nodeName,
-                      layerType: nodeType,
-                      layerTypeName,
-                      category: "color",
-                      categoryLabel: "Color",
-                      property: "fills",
-                      propertyLabel: propLabel,
-                      issueType: "missing",
-                      value: valHex,
-                      formattedValue: `Missing Variable (${vStatus.name})`,
-                      varId: colorBinding.id,
-                      varName: vStatus.name,
-                      suggestion: "Reassign to a valid Color variable"
-                    });
-                  }
+                  const valHex = paint.type === "SOLID" ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : "#888888";
+                  reportBoundVariableIssue(vStatus, {
+                    nodeId: node.id,
+                    nodeName,
+                    layerType: nodeType,
+                    layerTypeName,
+                    category: "color",
+                    categoryLabel: "Color",
+                    property: "fills",
+                    propertyLabel: propLabel,
+                    value: valHex,
+                    varId: colorBinding.id,
+                    missingSuggestion: "Reassign to a valid Color variable"
+                  });
                 } else if (paint.type === "SOLID") {
                   const hasStyle = typeof node.fillStyleId === "string" && node.fillStyleId.length > 0;
                   if (!hasStyle) {
@@ -1448,25 +1585,19 @@
                       const stopBinding = (_c = stop.boundVariables) == null ? void 0 : _c.color;
                       if (stopBinding && stopBinding.type === "VARIABLE_ALIAS" && stopBinding.id) {
                         const vStatus = await checkVariableStatus(stopBinding.id, node);
-                        if (vStatus.isMissing && !markReported(node.id, `var:${stopBinding.id}`)) {
-                          issues.push({
-                            id: `issue_${++issueCounter}`,
-                            nodeId: node.id,
-                            nodeName,
-                            layerType: nodeType,
-                            layerTypeName,
-                            category: "color",
-                            categoryLabel: "Color",
-                            property: "fills",
-                            propertyLabel: `${propLabel} Stop (${sIdx + 1})`,
-                            issueType: "missing",
-                            value: rgbToHex(stop.color.r, stop.color.g, stop.color.b),
-                            formattedValue: `Missing Variable (${vStatus.name})`,
-                            varId: stopBinding.id,
-                            varName: vStatus.name,
-                            suggestion: "Reassign to a valid Color variable"
-                          });
-                        }
+                        reportBoundVariableIssue(vStatus, {
+                          nodeId: node.id,
+                          nodeName,
+                          layerType: nodeType,
+                          layerTypeName,
+                          category: "color",
+                          categoryLabel: "Color",
+                          property: "fills",
+                          propertyLabel: `${propLabel} Stop (${sIdx + 1})`,
+                          value: rgbToHex(stop.color.r, stop.color.g, stop.color.b),
+                          varId: stopBinding.id,
+                          missingSuggestion: "Reassign to a valid Color variable"
+                        });
                       }
                     }
                   }
@@ -1474,25 +1605,19 @@
                 const paintOpBinding = (_d = paint.boundVariables) == null ? void 0 : _d.opacity;
                 if (paintOpBinding && paintOpBinding.type === "VARIABLE_ALIAS" && paintOpBinding.id) {
                   const vStatus = await checkVariableStatus(paintOpBinding.id, node);
-                  if (vStatus.isMissing && !markReported(node.id, `var:${paintOpBinding.id}`)) {
-                    issues.push({
-                      id: `issue_${++issueCounter}`,
-                      nodeId: node.id,
-                      nodeName,
-                      layerType: nodeType,
-                      layerTypeName,
-                      category: "color",
-                      categoryLabel: "Color",
-                      property: "fills",
-                      propertyLabel: `${propLabel} Opacity`,
-                      issueType: "missing",
-                      value: (_e = paint.opacity) != null ? _e : 1,
-                      formattedValue: `Missing Variable (${vStatus.name})`,
-                      varId: paintOpBinding.id,
-                      varName: vStatus.name,
-                      suggestion: "Reassign to a valid Number variable"
-                    });
-                  }
+                  reportBoundVariableIssue(vStatus, {
+                    nodeId: node.id,
+                    nodeName,
+                    layerType: nodeType,
+                    layerTypeName,
+                    category: "color",
+                    categoryLabel: "Color",
+                    property: "fills",
+                    propertyLabel: `${propLabel} Opacity`,
+                    value: (_e = paint.opacity) != null ? _e : 1,
+                    varId: paintOpBinding.id,
+                    missingSuggestion: "Reassign to a valid Number variable"
+                  });
                 }
               }
             } else if (node.type === "TEXT" && node.fills === figma.mixed) {
@@ -1509,25 +1634,19 @@
                       const segLabel = segments.length > 1 ? `Text Segment (${sIdx + 1})` : "Text Fill";
                       if (colorBinding && colorBinding.type === "VARIABLE_ALIAS" && colorBinding.id) {
                         const vStatus = await checkVariableStatus(colorBinding.id, node);
-                        if (vStatus.isMissing && !markReported(node.id, `var:${colorBinding.id}`)) {
-                          issues.push({
-                            id: `issue_${++issueCounter}`,
-                            nodeId: node.id,
-                            nodeName,
-                            layerType: nodeType,
-                            layerTypeName,
-                            category: "color",
-                            categoryLabel: "Color",
-                            property: "fills",
-                            propertyLabel: segLabel,
-                            issueType: "missing",
-                            value: paint.type === "SOLID" ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : "#888888",
-                            formattedValue: `Missing Variable (${vStatus.name})`,
-                            varId: colorBinding.id,
-                            varName: vStatus.name,
-                            suggestion: "Reassign to a valid Color variable"
-                          });
-                        }
+                        reportBoundVariableIssue(vStatus, {
+                          nodeId: node.id,
+                          nodeName,
+                          layerType: nodeType,
+                          layerTypeName,
+                          category: "color",
+                          categoryLabel: "Color",
+                          property: "fills",
+                          propertyLabel: segLabel,
+                          value: paint.type === "SOLID" ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : "#888888",
+                          varId: colorBinding.id,
+                          missingSuggestion: "Reassign to a valid Color variable"
+                        });
                       } else if (paint.type === "SOLID") {
                         const hasSegStyle = typeof seg.fillStyleId === "string" && seg.fillStyleId.length > 0;
                         if (!hasSegStyle) {
@@ -1644,25 +1763,20 @@
                       const spBinding = (_i = sp.boundVariables) == null ? void 0 : _i.color;
                       if (spBinding && spBinding.type === "VARIABLE_ALIAS" && spBinding.id) {
                         const vStatus = await checkVariableStatus(spBinding.id, node);
-                        if (vStatus.isMissing && !markReported(node.id, `var:${spBinding.id}`)) {
-                          issues.push({
-                            id: `issue_${++issueCounter}`,
-                            nodeId: node.id,
-                            nodeName,
-                            layerType: nodeType,
-                            layerTypeName,
-                            category: "color",
-                            categoryLabel: "Color",
-                            property: "strokes",
-                            propertyLabel: `Style "${style.name}"`,
-                            issueType: "missing",
-                            value: sp.type === "SOLID" ? rgbToHex(sp.color.r, sp.color.g, sp.color.b) : "#888888",
-                            formattedValue: `Missing Variable (${vStatus.name}) in "${style.name}"`,
-                            varId: spBinding.id,
-                            varName: vStatus.name,
-                            suggestion: "Reassign to a valid Color variable"
-                          });
-                        }
+                        reportBoundVariableIssue(vStatus, {
+                          nodeId: node.id,
+                          nodeName,
+                          layerType: nodeType,
+                          layerTypeName,
+                          category: "color",
+                          categoryLabel: "Color",
+                          property: "strokes",
+                          propertyLabel: `Style "${style.name}"`,
+                          value: sp.type === "SOLID" ? rgbToHex(sp.color.r, sp.color.g, sp.color.b) : "#888888",
+                          varId: spBinding.id,
+                          missingSuggestion: "Reassign to a valid Color variable",
+                          styleName: style.name
+                        });
                       }
                     }
                   }
@@ -1683,26 +1797,20 @@
                   const colorBinding = ((_j = paint.boundVariables) == null ? void 0 : _j.color) || boundStroke;
                   if (colorBinding && colorBinding.type === "VARIABLE_ALIAS" && colorBinding.id) {
                     const vStatus = await checkVariableStatus(colorBinding.id, node);
-                    if (vStatus.isMissing && !markReported(node.id, `var:${colorBinding.id}`)) {
-                      const valHex = paint.type === "SOLID" ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : "#888888";
-                      issues.push({
-                        id: `issue_${++issueCounter}`,
-                        nodeId: node.id,
-                        nodeName,
-                        layerType: nodeType,
-                        layerTypeName,
-                        category: "color",
-                        categoryLabel: "Color",
-                        property: "strokes",
-                        propertyLabel: propLabel,
-                        issueType: "missing",
-                        value: valHex,
-                        formattedValue: `Missing Variable (${vStatus.name})`,
-                        varId: colorBinding.id,
-                        varName: vStatus.name,
-                        suggestion: "Reassign to a valid Color variable"
-                      });
-                    }
+                    const valHex = paint.type === "SOLID" ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : "#888888";
+                    reportBoundVariableIssue(vStatus, {
+                      nodeId: node.id,
+                      nodeName,
+                      layerType: nodeType,
+                      layerTypeName,
+                      category: "color",
+                      categoryLabel: "Color",
+                      property: "strokes",
+                      propertyLabel: propLabel,
+                      value: valHex,
+                      varId: colorBinding.id,
+                      missingSuggestion: "Reassign to a valid Color variable"
+                    });
                   } else if (paint.type === "SOLID") {
                     const hasStyle = typeof node.strokeStyleId === "string" && node.strokeStyleId.length > 0;
                     if (!hasStyle) {
@@ -1733,25 +1841,19 @@
                         const stopBinding = (_k = stop.boundVariables) == null ? void 0 : _k.color;
                         if (stopBinding && stopBinding.type === "VARIABLE_ALIAS" && stopBinding.id) {
                           const vStatus = await checkVariableStatus(stopBinding.id, node);
-                          if (vStatus.isMissing && !markReported(node.id, `var:${stopBinding.id}`)) {
-                            issues.push({
-                              id: `issue_${++issueCounter}`,
-                              nodeId: node.id,
-                              nodeName,
-                              layerType: nodeType,
-                              layerTypeName,
-                              category: "color",
-                              categoryLabel: "Color",
-                              property: "strokes",
-                              propertyLabel: `${propLabel} Stop (${sIdx + 1})`,
-                              issueType: "missing",
-                              value: rgbToHex(stop.color.r, stop.color.g, stop.color.b),
-                              formattedValue: `Missing Variable (${vStatus.name})`,
-                              varId: stopBinding.id,
-                              varName: vStatus.name,
-                              suggestion: "Reassign to a valid Color variable"
-                            });
-                          }
+                          reportBoundVariableIssue(vStatus, {
+                            nodeId: node.id,
+                            nodeName,
+                            layerType: nodeType,
+                            layerTypeName,
+                            category: "color",
+                            categoryLabel: "Color",
+                            property: "strokes",
+                            propertyLabel: `${propLabel} Stop (${sIdx + 1})`,
+                            value: rgbToHex(stop.color.r, stop.color.g, stop.color.b),
+                            varId: stopBinding.id,
+                            missingSuggestion: "Reassign to a valid Color variable"
+                          });
                         }
                       }
                     }
@@ -1796,25 +1898,19 @@
                   const effLabel = effects.length > 1 ? `Shadow (${eIdx + 1})` : "Shadow";
                   if (effColorBinding && effColorBinding.type === "VARIABLE_ALIAS" && effColorBinding.id) {
                     const vStatus = await checkVariableStatus(effColorBinding.id, node);
-                    if (vStatus.isMissing && !markReported(node.id, `var:${effColorBinding.id}`)) {
-                      issues.push({
-                        id: `issue_${++issueCounter}`,
-                        nodeId: node.id,
-                        nodeName,
-                        layerType: nodeType,
-                        layerTypeName,
-                        category: "color",
-                        categoryLabel: "Color",
-                        property: "effects",
-                        propertyLabel: effLabel,
-                        issueType: "missing",
-                        value: rgbToHex(eff.color.r, eff.color.g, eff.color.b),
-                        formattedValue: `Missing Variable (${vStatus.name})`,
-                        varId: effColorBinding.id,
-                        varName: vStatus.name,
-                        suggestion: "Reassign to a valid Color variable"
-                      });
-                    }
+                    reportBoundVariableIssue(vStatus, {
+                      nodeId: node.id,
+                      nodeName,
+                      layerType: nodeType,
+                      layerTypeName,
+                      category: "color",
+                      categoryLabel: "Color",
+                      property: "effects",
+                      propertyLabel: effLabel,
+                      value: rgbToHex(eff.color.r, eff.color.g, eff.color.b),
+                      varId: effColorBinding.id,
+                      missingSuggestion: "Reassign to a valid Color variable"
+                    });
                   }
                 }
               }
@@ -1874,51 +1970,39 @@
                   const item = bVal[idx];
                   if (item && item.type === "VARIABLE_ALIAS" && item.id) {
                     const vStatus = await checkVariableStatus(item.id, node);
-                    if (vStatus.isMissing && !markReported(node.id, `var:${item.id}`)) {
-                      const cat = bKey.includes("radius") ? "radius" : bKey.includes("spacing") || bKey.includes("gap") ? "gap" : bKey.includes("padding") ? "padding" : bKey.toLowerCase().includes("weight") || bKey.toLowerCase().includes("width") || bKey === "strokeWeight" ? "stroke" : "color";
-                      issues.push({
-                        id: `issue_${++issueCounter}`,
-                        nodeId: node.id,
-                        nodeName,
-                        layerType: nodeType,
-                        layerTypeName,
-                        category: cat,
-                        categoryLabel: cat.charAt(0).toUpperCase() + cat.slice(1),
-                        property: bKey,
-                        propertyLabel: `${bKey} (${idx + 1})`,
-                        issueType: "missing",
-                        value: "Missing",
-                        formattedValue: `Missing Variable (${vStatus.name})`,
-                        varId: item.id,
-                        varName: vStatus.name,
-                        suggestion: "Reassign to a valid variable"
-                      });
-                    }
+                    const cat = bKey.includes("radius") ? "radius" : bKey.includes("spacing") || bKey.includes("gap") ? "gap" : bKey.includes("padding") ? "padding" : bKey.toLowerCase().includes("weight") || bKey.toLowerCase().includes("width") || bKey === "strokeWeight" ? "stroke" : "color";
+                    reportBoundVariableIssue(vStatus, {
+                      nodeId: node.id,
+                      nodeName,
+                      layerType: nodeType,
+                      layerTypeName,
+                      category: cat,
+                      categoryLabel: cat.charAt(0).toUpperCase() + cat.slice(1),
+                      property: bKey,
+                      propertyLabel: `${bKey} (${idx + 1})`,
+                      value: vStatus.isMissing ? "Missing" : vStatus.name,
+                      varId: item.id,
+                      missingSuggestion: "Reassign to a valid variable"
+                    });
                   }
                 }
               } else if (typeof bVal === "object" && bVal.type === "VARIABLE_ALIAS" && bVal.id) {
                 const aliasId = bVal.id;
                 const vStatus = await checkVariableStatus(aliasId, node);
-                if (vStatus.isMissing && !markReported(node.id, `var:${aliasId}`)) {
-                  const cat = bKey.includes("radius") ? "radius" : bKey.includes("spacing") || bKey.includes("gap") ? "gap" : bKey.includes("padding") ? "padding" : bKey.toLowerCase().includes("weight") || bKey.toLowerCase().includes("width") || bKey === "strokeWeight" ? "stroke" : "color";
-                  issues.push({
-                    id: `issue_${++issueCounter}`,
-                    nodeId: node.id,
-                    nodeName,
-                    layerType: nodeType,
-                    layerTypeName,
-                    category: cat,
-                    categoryLabel: cat.charAt(0).toUpperCase() + cat.slice(1),
-                    property: bKey,
-                    propertyLabel: bKey,
-                    issueType: "missing",
-                    value: "Missing",
-                    formattedValue: `Missing Variable (${vStatus.name})`,
-                    varId: aliasId,
-                    varName: vStatus.name,
-                    suggestion: "Reassign to a valid variable"
-                  });
-                }
+                const cat = bKey.includes("radius") ? "radius" : bKey.includes("spacing") || bKey.includes("gap") ? "gap" : bKey.includes("padding") ? "padding" : bKey.toLowerCase().includes("weight") || bKey.toLowerCase().includes("width") || bKey === "strokeWeight" ? "stroke" : "color";
+                reportBoundVariableIssue(vStatus, {
+                  nodeId: node.id,
+                  nodeName,
+                  layerType: nodeType,
+                  layerTypeName,
+                  category: cat,
+                  categoryLabel: cat.charAt(0).toUpperCase() + cat.slice(1),
+                  property: bKey,
+                  propertyLabel: bKey,
+                  value: vStatus.isMissing ? "Missing" : vStatus.name,
+                  varId: aliasId,
+                  missingSuggestion: "Reassign to a valid variable"
+                });
               }
             }
           }
@@ -1963,6 +2047,7 @@
         totalOccurrences: rawIssues.filter((i) => !i.isIgnored).length,
         unboundCount: activeIssues.filter((i) => i.issueType === "unbound").length,
         missingCount: activeIssues.filter((i) => i.issueType === "missing").length,
+        foreignCount: activeIssues.filter((i) => i.issueType === "foreign").length,
         gapCount: activeIssues.filter((i) => i.category === "gap").length,
         paddingCount: activeIssues.filter((i) => i.category === "padding").length,
         radiusCount: activeIssues.filter((i) => i.category === "radius").length,
@@ -1977,7 +2062,8 @@
         type: "audit-results",
         scope,
         summary,
-        issues: groupedIssues
+        issues: groupedIssues,
+        trustedLibraries
       });
     } catch (err) {
       console.error("Audit error:", err);
@@ -1988,6 +2074,7 @@
           totalIssues: 0,
           unboundCount: 0,
           missingCount: 0,
+          foreignCount: 0,
           gapCount: 0,
           paddingCount: 0,
           radiusCount: 0,
@@ -1997,12 +2084,13 @@
           scope
         },
         issues: [],
+        trustedLibraries: getTrustedAuditLibraries(),
         error: err ? err.message : String(err)
       });
     }
   }
 
-  // ../../../../plugins/components-setup/src/utils/fonts.ts
+  // src/utils/fonts.ts
   async function loadFontsForTextNode(node) {
     if (node.fontName !== figma.mixed) {
       try {
@@ -2155,7 +2243,557 @@
     }
   }
 
-  // ../../../../plugins/components-setup/src/generator/engine.ts
+  // src/utils/strings.ts
+  function toPascalCase(str) {
+    if (!str) return str;
+    const trimmed = str.trim();
+    if (!trimmed) return trimmed;
+    if (trimmed.includes("/")) {
+      return trimmed.split("/").map((segment) => {
+        const segTrim = segment.trim();
+        return segTrim ? toPascalCase(segTrim) : segment;
+      }).join("/");
+    }
+    const withoutId = trimmed.split("#")[0].trim();
+    if (!withoutId) return trimmed;
+    const protectedStr = withoutId.replace(/\b([iI][oO][sS])\b/g, " ___IOS___ ").replace(/(^|[^a-zA-Z])([iI][oO][sS])(?=[A-Z0-9])/g, "$1 ___IOS___ ").replace(/([a-z0-9])([iI][oO][sS])(?=[^a-zA-Z]|$)/g, "$1 ___IOS___ ").replace(/([a-z0-9])([iI][oO][sS])(?=[A-Z0-9])/g, "$1 ___IOS___ ");
+    const withSpaces = protectedStr.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[-–—_.\s,:]+/g, " ").replace(/[^a-zA-Z0-9\u00C0-\u024F\s_]+/g, " ").trim();
+    const words = withSpaces.split(/\s+/).filter(Boolean);
+    if (words.length === 0) return withoutId;
+    const result = words.map((word) => {
+      if (word === "___IOS___" || word.toLowerCase() === "ios") {
+        return "iOS";
+      }
+      if (word === word.toUpperCase() && word.length > 1) {
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+      }
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    }).join("");
+    return result.replace(/(^|[^a-zA-Z]|(?<=[a-z0-9]))(Ios|IOS|ios)(?=[^a-zA-Z]|[A-Z0-9]|$)/g, "$1iOS");
+  }
+  function sanitizePascalCase(str) {
+    if (!str) return "Wrapper";
+    let cleaned = str.trim().replace(/[_\-\/\s]+/g, " ").replace(/[^a-zA-Z0-9\s]/g, "");
+    if (!cleaned) return "Wrapper";
+    const parts = cleaned.split(/\s+/).filter(Boolean);
+    const pascal = parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("");
+    return pascal || "Wrapper";
+  }
+  var TITLE_CASE_STOP_WORDS = /* @__PURE__ */ new Set([
+    "a",
+    "an",
+    "the",
+    "and",
+    "but",
+    "or",
+    "for",
+    "nor",
+    "on",
+    "at",
+    "to",
+    "from",
+    "by",
+    "in",
+    "of",
+    "w",
+    "z",
+    "i",
+    "o",
+    "na",
+    "do",
+    "od",
+    "po",
+    "za",
+    "ze",
+    "we",
+    "dla",
+    "pod",
+    "nad",
+    "ku"
+  ]);
+  function extractWordsForCasing(text) {
+    if (!text) return [];
+    const splitBoundaries = text.replace(/([a-z\p{Ll}])([A-Z\p{Lu}])/gu, "$1 $2").replace(/([A-Z\p{Lu}]+)([A-Z\p{Lu}][a-z\p{Ll}])/gu, "$1 $2");
+    const words = splitBoundaries.match(/[\p{L}\p{N}]+/gu);
+    return words ? Array.from(words) : [];
+  }
+  function convertStringToCase(text, caseType) {
+    if (!text) return text;
+    switch (caseType) {
+      case "sentence": {
+        const lower = text.toLowerCase();
+        return lower.replace(/(^|[.!?\n]\s*[\s"'\(\[\{„”«»]*)([\p{L}])/gu, (_, prefix, char) => prefix + char.toUpperCase());
+      }
+      case "title": {
+        const wordRegex = /[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu;
+        const matches = [];
+        let m;
+        while ((m = wordRegex.exec(text)) !== null) {
+          matches.push({ word: m[0], index: m.index });
+        }
+        if (matches.length === 0) return text;
+        const firstWordIndex = matches[0].index;
+        const lastWordIndex = matches[matches.length - 1].index;
+        return text.replace(wordRegex, (word, offset) => {
+          const lower = word.toLowerCase();
+          const isFirst = offset === firstWordIndex;
+          const isLast = offset === lastWordIndex;
+          const prevSlice = text.slice(0, offset).replace(/\s+$/, "");
+          const isAfterSentence = prevSlice.length > 0 && /[.!?:\n]$/.test(prevSlice);
+          if (!isFirst && !isLast && !isAfterSentence && TITLE_CASE_STOP_WORDS.has(lower)) {
+            return lower;
+          }
+          return lower.charAt(0).toUpperCase() + lower.slice(1);
+        });
+      }
+      case "upper":
+        return text.toUpperCase();
+      case "lower":
+        return text.toLowerCase();
+      case "camel": {
+        const words = extractWordsForCasing(text);
+        if (words.length === 0) return text;
+        return words.map((w, i) => {
+          const lower = w.toLowerCase();
+          if (i === 0) return lower;
+          return lower.charAt(0).toUpperCase() + lower.slice(1);
+        }).join("");
+      }
+      case "pascal": {
+        const words = extractWordsForCasing(text);
+        if (words.length === 0) return text;
+        return words.map((w) => {
+          const lower = w.toLowerCase();
+          return lower.charAt(0).toUpperCase() + lower.slice(1);
+        }).join("");
+      }
+      case "kebab": {
+        const words = extractWordsForCasing(text);
+        if (words.length === 0) return text;
+        return words.map((w) => w.toLowerCase()).join("-");
+      }
+      default:
+        return text;
+    }
+  }
+  function isGenericLayerName(name) {
+    if (!name) return true;
+    const n = name.trim().toLowerCase();
+    if (/^(frame|group|rectangle|vector|ellipse|line|star|polygon|auto layout|container|box|wrapper|div|element|stack|row|contentstack|contentrow|containerstack)[\s\d_#-]*$/i.test(n)) {
+      return true;
+    }
+    if (/^frame\s*\d+$/i.test(n) || /^group\s*\d+$/i.test(n)) {
+      return true;
+    }
+    return false;
+  }
+
+  // src/utils/nodes.ts
+  function normalizeToken(str) {
+    return (str || "").split("#")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+  var IGNORED_KEYWORDS = [
+    "statusbar",
+    "homeindicator",
+    "bezel",
+    "dynamicisland",
+    "notch",
+    "systembar",
+    "navigationbarsystem",
+    "iphone",
+    // dla Bezel = "iPhone 18 Pro"
+    "wrapper",
+    // dla "Wrapper [locked]"
+    "liquidglass",
+    "blurbg",
+    "backdrop"
+  ];
+  function isIgnoredName(rawName) {
+    if (!rawName || typeof rawName !== "string") return false;
+    const norm = normalizeToken(rawName);
+    if (!norm) return false;
+    const withoutShow = norm.startsWith("show") ? norm.slice(4) : norm;
+    if (norm === "bg" || norm === "background" || norm === "glass" || withoutShow === "bg" || withoutShow === "background" || withoutShow === "glass") {
+      return true;
+    }
+    const cleanLower = rawName.split("#")[0].trim().toLowerCase();
+    if (/^(show\s*)?(bg|background|glass)([\/\-_\s]|$)/i.test(cleanLower)) {
+      return true;
+    }
+    for (const kw of IGNORED_KEYWORDS) {
+      if (norm.includes(kw) || withoutShow.includes(kw)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  var isSystemOrIgnoredPropName = isIgnoredName;
+  async function isSystemOrIgnoredNodeAsync(node, rootBoundary) {
+    if (!node) return false;
+    if (node.type === "COMPONENT_SET" || node.type === "COMPONENT") {
+      return false;
+    }
+    if ("locked" in node && node.locked === true) return true;
+    if ("name" in node && isIgnoredName(node.name)) return true;
+    let curr = node.parent;
+    while (curr && curr !== rootBoundary && curr.type !== "COMPONENT" && curr.type !== "COMPONENT_SET" && curr.type !== "PAGE" && curr.type !== "DOCUMENT") {
+      if ("locked" in curr && curr.locked === true) return true;
+      if ("name" in curr && isIgnoredName(curr.name)) return true;
+      curr = curr.parent;
+    }
+    if ("type" in node && node.type === "INSTANCE") {
+      try {
+        const inst = node;
+        const mainComp = (typeof inst.getMainComponentAsync === "function" ? await inst.getMainComponentAsync() : null) || inst.mainComponent;
+        if (mainComp) {
+          if (isIgnoredName(mainComp.name)) return true;
+          if (mainComp.parent && mainComp.parent.type === "COMPONENT_SET" && isIgnoredName(mainComp.parent.name)) {
+            return true;
+          }
+        }
+      } catch (e) {
+      }
+    }
+    return false;
+  }
+  function isSystemOrIgnoredNode(node, rootBoundary) {
+    if (!node) return false;
+    if (node.type === "COMPONENT_SET" || node.type === "COMPONENT") {
+      return false;
+    }
+    if ("locked" in node && node.locked === true) return true;
+    if ("name" in node && isIgnoredName(node.name)) return true;
+    let curr = node.parent;
+    while (curr && curr !== rootBoundary && curr.type !== "COMPONENT" && curr.type !== "COMPONENT_SET" && curr.type !== "PAGE" && curr.type !== "DOCUMENT") {
+      if ("locked" in curr && curr.locked === true) return true;
+      if ("name" in curr && isIgnoredName(curr.name)) return true;
+      curr = curr.parent;
+    }
+    if ("type" in node && node.type === "INSTANCE") {
+      const inst = node;
+      let mainComp = null;
+      try {
+        mainComp = inst.mainComponent;
+      } catch (_) {
+      }
+      if (mainComp) {
+        if (isIgnoredName(mainComp.name)) return true;
+        if (mainComp.parent && mainComp.parent.type === "COMPONENT_SET" && isIgnoredName(mainComp.parent.name)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  function repairComponentSetVariants(compSet) {
+    if (!compSet || compSet.type !== "COMPONENT_SET" || compSet.removed) return;
+    const variants = compSet.children.filter((c) => c.type === "COMPONENT");
+    if (variants.length === 0) return;
+    let existingVariantKeys = [];
+    try {
+      const rawDefs = compSet.componentPropertyDefinitions;
+      if (rawDefs) {
+        for (const [k, def] of Object.entries(rawDefs)) {
+          if (def && def.type === "VARIANT") {
+            existingVariantKeys.push(k.split("#")[0].trim());
+          }
+        }
+      }
+    } catch (_) {
+      for (const v of variants) {
+        if (v.name && v.name.includes("=")) {
+          const parts = v.name.split(",");
+          const restored = parts.map((p) => {
+            const eq = p.indexOf("=");
+            if (eq === -1) return p;
+            const val = p.substring(eq + 1).trim();
+            return `Property 1=${val || "Default"}`;
+          }).join(", ");
+          try {
+            v.name = restored;
+          } catch (_2) {
+          }
+        }
+      }
+      try {
+        const retryDefs = compSet.componentPropertyDefinitions;
+        if (retryDefs) {
+          for (const [k, def] of Object.entries(retryDefs)) {
+            if (def && def.type === "VARIANT") {
+              existingVariantKeys.push(k.split("#")[0].trim());
+            }
+          }
+        }
+      } catch (_2) {
+      }
+    }
+    if (existingVariantKeys.length > 0 && typeof compSet.editComponentProperty === "function") {
+      for (let i = 0; i < existingVariantKeys.length; i++) {
+        const vk = existingVariantKeys[i];
+        if (/^property\s*\d+$/i.test(vk)) {
+          try {
+            compSet.editComponentProperty(vk, { name: "Type" });
+            existingVariantKeys[i] = "Type";
+          } catch (_) {
+          }
+        }
+      }
+    }
+    const propKeys = existingVariantKeys.length > 0 ? [...existingVariantKeys] : [];
+    if (propKeys.length === 0) {
+      for (const v of variants) {
+        const parts = (v.name || "").split(",").map((p) => p.trim()).filter(Boolean);
+        for (const part of parts) {
+          const eqIdx = part.indexOf("=");
+          if (eqIdx !== -1) {
+            const k = part.substring(0, eqIdx).trim();
+            const cleanK = toPascalCase(k) || "Type";
+            if (cleanK && !propKeys.includes(cleanK)) {
+              propKeys.push(cleanK);
+            }
+          }
+        }
+      }
+    }
+    if (propKeys.length === 0) {
+      propKeys.push("Property 1");
+    }
+    const usedNames = /* @__PURE__ */ new Set();
+    for (let i = 0; i < variants.length; i++) {
+      const v = variants[i];
+      const rawName = (v.name || "").trim();
+      const parts = rawName.split(",").map((p) => p.trim()).filter(Boolean);
+      let fixedParts = [];
+      if (parts.length === 0 || parts.length === 1 && !parts[0].includes("=")) {
+        const val = parts.length === 1 ? toPascalCase(parts[0]) : "Default";
+        fixedParts = [`${propKeys[0]}=${val || "Default"}`];
+      } else {
+        for (let pIdx = 0; pIdx < parts.length; pIdx++) {
+          const part = parts[pIdx];
+          const eqIdx = part.indexOf("=");
+          if (eqIdx === -1) {
+            const k = propKeys[pIdx] || `Property${pIdx + 1}`;
+            fixedParts.push(`${k}=${toPascalCase(part) || "Default"}`);
+          } else {
+            const k = part.substring(0, eqIdx).trim();
+            const val = part.substring(eqIdx + 1).trim();
+            const pascalK = toPascalCase(k) || propKeys[pIdx] || "Type";
+            const pascalVal = toPascalCase(val) || "Default";
+            fixedParts.push(`${pascalK}=${pascalVal}`);
+          }
+        }
+      }
+      for (const expectedKey of propKeys) {
+        if (!fixedParts.some((p) => p.startsWith(`${expectedKey}=`))) {
+          fixedParts.push(`${expectedKey}=Default`);
+        }
+      }
+      let candidateName = fixedParts.join(", ");
+      let counter = 2;
+      while (usedNames.has(candidateName.toLowerCase())) {
+        candidateName = `${fixedParts.slice(0, -1).join(", ")}${fixedParts.length > 1 ? ", " : ""}${propKeys[propKeys.length - 1]}=Variant${counter}`;
+        counter++;
+      }
+      usedNames.add(candidateName.toLowerCase());
+      if (v.name !== candidateName) {
+        try {
+          v.name = candidateName;
+        } catch (_) {
+        }
+      }
+    }
+  }
+  function safeGetComponentPropertyDefinitions(propertyHost) {
+    if (!propertyHost || propertyHost.removed) return {};
+    try {
+      return propertyHost.componentPropertyDefinitions || {};
+    } catch (err) {
+      console.warn(`[safeGetDefs] Error accessing componentPropertyDefinitions on "${propertyHost.name}":`, err);
+      return {};
+    }
+  }
+  async function purgeIgnoredPropertiesAndReferences(propertyHost) {
+    if (!propertyHost || propertyHost.removed) return [];
+    const deletedProps = [];
+    try {
+      const variants = propertyHost.type === "COMPONENT_SET" ? propertyHost.children.filter((c) => c.type === "COMPONENT") : [propertyHost];
+      const cleanNode = async (n) => {
+        try {
+          if (!n || n.removed) return;
+          const isIgnored = await isSystemOrIgnoredNodeAsync(n, propertyHost);
+          if (isIgnored) {
+            if (n.type === "INSTANCE") {
+              try {
+                n.isExposedInstance = false;
+              } catch (_) {
+              }
+            }
+            if ("componentPropertyReferences" in n && n.componentPropertyReferences) {
+              try {
+                n.componentPropertyReferences = null;
+              } catch (_) {
+              }
+            }
+          }
+          if ("children" in n && n.children) {
+            for (const ch of n.children) {
+              await cleanNode(ch);
+            }
+          }
+        } catch (_) {
+        }
+      };
+      for (const v of variants) {
+        if ("children" in v && v.children) {
+          for (const ch of v.children) {
+            await cleanNode(ch);
+          }
+        }
+      }
+      const defs = safeGetComponentPropertyDefinitions(propertyHost);
+      for (const [propKey, def] of Object.entries(defs)) {
+        if (def.type === "VARIANT" || def.type === "SLOT") continue;
+        if (isIgnoredName(propKey)) {
+          const unbindKey = (n) => {
+            try {
+              if (!n || n.removed) return;
+              if ("componentPropertyReferences" in n && n.componentPropertyReferences) {
+                const rawRefs = n.componentPropertyReferences;
+                const refs = {};
+                let changed = false;
+                for (const [refName, boundKey] of Object.entries(rawRefs)) {
+                  if (boundKey === propKey) {
+                    changed = true;
+                  } else if (typeof boundKey === "string") {
+                    refs[refName] = boundKey;
+                  }
+                }
+                if (changed) {
+                  try {
+                    n.componentPropertyReferences = Object.keys(refs).length > 0 ? refs : null;
+                  } catch (_) {
+                  }
+                }
+              }
+            } catch (_) {
+            }
+            if ("children" in n && n.children) {
+              try {
+                for (const ch of n.children) {
+                  unbindKey(ch);
+                }
+              } catch (_) {
+              }
+            }
+          };
+          for (const v of variants) {
+            unbindKey(v);
+          }
+          try {
+            propertyHost.deleteComponentProperty(propKey);
+            deletedProps.push(propKey.split("#")[0]);
+          } catch (delErr) {
+            console.warn(`[Purge] Failed to deleteComponentProperty "${propKey}":`, delErr);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[Purge] Warning in purgeIgnoredPropertiesAndReferences:", err);
+    }
+    return deletedProps;
+  }
+  function purgeIgnoredPropertiesAndReferencesSync(propertyHost) {
+    if (!propertyHost || propertyHost.removed) return [];
+    const deletedProps = [];
+    try {
+      const variants = propertyHost.type === "COMPONENT_SET" ? propertyHost.children.filter((c) => c.type === "COMPONENT") : [propertyHost];
+      const cleanNode = (n) => {
+        try {
+          if (!n || n.removed) return;
+          const isIgnored = isSystemOrIgnoredNode(n, propertyHost) || isIgnoredName(n.name);
+          if (isIgnored) {
+            if (n.type === "INSTANCE") {
+              try {
+                n.isExposedInstance = false;
+              } catch (_) {
+              }
+            }
+            if ("componentPropertyReferences" in n && n.componentPropertyReferences) {
+              try {
+                n.componentPropertyReferences = null;
+              } catch (_) {
+              }
+            }
+          }
+          if ("children" in n && n.children) {
+            for (const ch of n.children) {
+              cleanNode(ch);
+            }
+          }
+        } catch (_) {
+        }
+      };
+      for (const v of variants) {
+        if ("children" in v && v.children) {
+          for (const ch of v.children) {
+            cleanNode(ch);
+          }
+        }
+      }
+      const defs = safeGetComponentPropertyDefinitions(propertyHost);
+      for (const [propKey, def] of Object.entries(defs)) {
+        if (def.type === "VARIANT" || def.type === "SLOT") continue;
+        if (isIgnoredName(propKey)) {
+          const unbindKey = (n) => {
+            try {
+              if (!n || n.removed) return;
+              if ("componentPropertyReferences" in n && n.componentPropertyReferences) {
+                const rawRefs = n.componentPropertyReferences;
+                const refs = {};
+                let changed = false;
+                for (const [refName, boundKey] of Object.entries(rawRefs)) {
+                  if (boundKey === propKey) {
+                    changed = true;
+                  } else if (typeof boundKey === "string") {
+                    refs[refName] = boundKey;
+                  }
+                }
+                if (changed) {
+                  try {
+                    n.componentPropertyReferences = Object.keys(refs).length > 0 ? refs : null;
+                  } catch (_) {
+                  }
+                }
+              }
+            } catch (_) {
+            }
+            if ("children" in n && n.children) {
+              try {
+                for (const ch of n.children) {
+                  unbindKey(ch);
+                }
+              } catch (_) {
+              }
+            }
+          };
+          for (const v of variants) {
+            unbindKey(v);
+          }
+          try {
+            propertyHost.deleteComponentProperty(propKey);
+            deletedProps.push(propKey.split("#")[0]);
+          } catch (delErr) {
+            console.warn(`[PurgeSync] Failed to deleteComponentProperty "${propKey}":`, delErr);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[PurgeSync] Warning in purgeIgnoredPropertiesAndReferencesSync:", err);
+    }
+    return deletedProps;
+  }
+
+  // src/generator/engine.ts
   function cleanUtilityColorToken(raw) {
     if (!raw) return "";
     return raw.trim().replace(/^var\(--(?:color-)?([^)]+)\)$/, "$1").replace(/^--(?:color-)?/, "").replace(/^(?:bg|text|border|stroke|fill)-/, "").replace(/\/\d+$/, "");
@@ -3593,7 +4231,7 @@ ${indent}</${tag}>`;
       let variants = [];
       let defaultVariantNode = null;
       const preferredInstancesMap = {};
-      const rawPropDefs = "componentPropertyDefinitions" in node ? node.componentPropertyDefinitions || {} : {};
+      const rawPropDefs = "componentPropertyDefinitions" in node ? safeGetComponentPropertyDefinitions(node) : {};
       for (const [propKey, def] of Object.entries(rawPropDefs)) {
         const cleanKey = propKey.split("#")[0].replace(/[^a-zA-Z0-9]/g, "");
         const propPascal = cleanKey.charAt(0).toUpperCase() + cleanKey.slice(1);
@@ -4857,7 +5495,7 @@ ${usageJsx}
     return node;
   }
 
-  // ../../../../plugins/components-setup/src/export/exporter.ts
+  // src/export/exporter.ts
   function findTopmostComponentOrSet(node) {
     if (!node) return null;
     let curr = node;
@@ -5214,152 +5852,7 @@ ${usageJsx}
     })();
   }
 
-  // ../../../../plugins/components-setup/src/utils/strings.ts
-  function toPascalCase(str) {
-    if (!str) return str;
-    const trimmed = str.trim();
-    if (!trimmed) return trimmed;
-    if (trimmed.includes("/")) {
-      return trimmed.split("/").map((segment) => {
-        const segTrim = segment.trim();
-        return segTrim ? toPascalCase(segTrim) : segment;
-      }).join("/");
-    }
-    const withoutId = trimmed.split("#")[0].trim();
-    if (!withoutId) return trimmed;
-    const protectedStr = withoutId.replace(/\b([iI][oO][sS])\b/g, " ___IOS___ ").replace(/(^|[^a-zA-Z])([iI][oO][sS])(?=[A-Z0-9])/g, "$1 ___IOS___ ").replace(/([a-z0-9])([iI][oO][sS])(?=[^a-zA-Z]|$)/g, "$1 ___IOS___ ").replace(/([a-z0-9])([iI][oO][sS])(?=[A-Z0-9])/g, "$1 ___IOS___ ");
-    const withSpaces = protectedStr.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[-–—_.\s,:]+/g, " ").replace(/[^a-zA-Z0-9\u00C0-\u024F\s_]+/g, " ").trim();
-    const words = withSpaces.split(/\s+/).filter(Boolean);
-    if (words.length === 0) return withoutId;
-    const result = words.map((word) => {
-      if (word === "___IOS___" || word.toLowerCase() === "ios") {
-        return "iOS";
-      }
-      if (word === word.toUpperCase() && word.length > 1) {
-        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-      }
-      return word.charAt(0).toUpperCase() + word.slice(1);
-    }).join("");
-    return result.replace(/(^|[^a-zA-Z]|(?<=[a-z0-9]))(Ios|IOS|ios)(?=[^a-zA-Z]|[A-Z0-9]|$)/g, "$1iOS");
-  }
-  function sanitizePascalCase(str) {
-    if (!str) return "Wrapper";
-    let cleaned = str.trim().replace(/[_\-\/\s]+/g, " ").replace(/[^a-zA-Z0-9\s]/g, "");
-    if (!cleaned) return "Wrapper";
-    const parts = cleaned.split(/\s+/).filter(Boolean);
-    const pascal = parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("");
-    return pascal || "Wrapper";
-  }
-  var TITLE_CASE_STOP_WORDS = /* @__PURE__ */ new Set([
-    "a",
-    "an",
-    "the",
-    "and",
-    "but",
-    "or",
-    "for",
-    "nor",
-    "on",
-    "at",
-    "to",
-    "from",
-    "by",
-    "in",
-    "of",
-    "w",
-    "z",
-    "i",
-    "o",
-    "na",
-    "do",
-    "od",
-    "po",
-    "za",
-    "ze",
-    "we",
-    "dla",
-    "pod",
-    "nad",
-    "ku"
-  ]);
-  function extractWordsForCasing(text) {
-    if (!text) return [];
-    const splitBoundaries = text.replace(/([a-z\p{Ll}])([A-Z\p{Lu}])/gu, "$1 $2").replace(/([A-Z\p{Lu}]+)([A-Z\p{Lu}][a-z\p{Ll}])/gu, "$1 $2");
-    const words = splitBoundaries.match(/[\p{L}\p{N}]+/gu);
-    return words ? Array.from(words) : [];
-  }
-  function convertStringToCase(text, caseType) {
-    if (!text) return text;
-    switch (caseType) {
-      case "sentence": {
-        const lower = text.toLowerCase();
-        return lower.replace(/(^|[.!?\n]\s*[\s"'\(\[\{„”«»]*)([\p{L}])/gu, (_, prefix, char) => prefix + char.toUpperCase());
-      }
-      case "title": {
-        const wordRegex = /[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu;
-        const matches = [];
-        let m;
-        while ((m = wordRegex.exec(text)) !== null) {
-          matches.push({ word: m[0], index: m.index });
-        }
-        if (matches.length === 0) return text;
-        const firstWordIndex = matches[0].index;
-        const lastWordIndex = matches[matches.length - 1].index;
-        return text.replace(wordRegex, (word, offset) => {
-          const lower = word.toLowerCase();
-          const isFirst = offset === firstWordIndex;
-          const isLast = offset === lastWordIndex;
-          const prevSlice = text.slice(0, offset).replace(/\s+$/, "");
-          const isAfterSentence = prevSlice.length > 0 && /[.!?:\n]$/.test(prevSlice);
-          if (!isFirst && !isLast && !isAfterSentence && TITLE_CASE_STOP_WORDS.has(lower)) {
-            return lower;
-          }
-          return lower.charAt(0).toUpperCase() + lower.slice(1);
-        });
-      }
-      case "upper":
-        return text.toUpperCase();
-      case "lower":
-        return text.toLowerCase();
-      case "camel": {
-        const words = extractWordsForCasing(text);
-        if (words.length === 0) return text;
-        return words.map((w, i) => {
-          const lower = w.toLowerCase();
-          if (i === 0) return lower;
-          return lower.charAt(0).toUpperCase() + lower.slice(1);
-        }).join("");
-      }
-      case "pascal": {
-        const words = extractWordsForCasing(text);
-        if (words.length === 0) return text;
-        return words.map((w) => {
-          const lower = w.toLowerCase();
-          return lower.charAt(0).toUpperCase() + lower.slice(1);
-        }).join("");
-      }
-      case "kebab": {
-        const words = extractWordsForCasing(text);
-        if (words.length === 0) return text;
-        return words.map((w) => w.toLowerCase()).join("-");
-      }
-      default:
-        return text;
-    }
-  }
-  function isGenericLayerName(name) {
-    if (!name) return true;
-    const n = name.trim().toLowerCase();
-    if (/^(frame|group|rectangle|vector|ellipse|line|star|polygon|auto layout|container|box|wrapper|div|element|stack|row|contentstack|contentrow|containerstack)[\s\d_#-]*$/i.test(n)) {
-      return true;
-    }
-    if (/^frame\s*\d+$/i.test(n) || /^group\s*\d+$/i.test(n)) {
-      return true;
-    }
-    return false;
-  }
-
-  // ../../../../plugins/components-setup/src/utils/geometry.ts
+  // src/utils/geometry.ts
   function isNodeEffectivelyVisible(node) {
     let curr = node;
     while (curr && curr.type !== "PAGE") {
@@ -5395,14 +5888,116 @@ ${usageJsx}
     }
     return [];
   }
-  function getStructuralSignature(frame) {
-    if (frame.type !== "FRAME" || frame.type === "INSTANCE") return null;
-    if (!("children" in frame) || !Array.isArray(frame.children) || frame.children.length === 0) return null;
-    const textNodes = frame.findAll ? frame.findAll((n) => n.type === "TEXT") : [];
-    if (textNodes.length === 0) return null;
-    const directSig = frame.children.map((c) => `${c.type}:${c.name}`).join("|");
-    const textSig = textNodes.map((t) => t.name).join("|");
-    return `${frame.layoutMode || "NONE"}[${directSig}]<${textSig}>`;
+  function areFramesMatchingItems(a, b) {
+    if (!a || !b) return false;
+    if (a.type !== "FRAME" || b.type !== "FRAME") return false;
+    if (a.type === "INSTANCE" || b.type === "INSTANCE") return false;
+    const nameA = (a.name || "").trim().toLowerCase();
+    const nameB = (b.name || "").trim().toLowerCase();
+    if (nameA === nameB && nameA.length > 0) {
+      return true;
+    }
+    const baseA = nameA.replace(/\d+/g, "").replace(/[-_#\s]+$/, "").trim();
+    const baseB = nameB.replace(/\d+/g, "").replace(/[-_#\s]+$/, "").trim();
+    if (baseA === baseB && baseA.length > 0) {
+      return true;
+    }
+    const layoutA = a.layoutMode || "NONE";
+    const layoutB = b.layoutMode || "NONE";
+    if (layoutA !== layoutB) return false;
+    const countA = "children" in a && Array.isArray(a.children) ? a.children.length : 0;
+    const countB = "children" in b && Array.isArray(b.children) ? b.children.length : 0;
+    if (countA !== countB) return false;
+    if (countA === 0) {
+      return true;
+    }
+    const typesA = a.children.map((c) => c.type).join(",");
+    const typesB = b.children.map((c) => c.type).join(",");
+    if (typesA === typesB) {
+      return true;
+    }
+    return false;
+  }
+  function getNodeVisualChunk(node) {
+    var _a, _b;
+    const parts = [];
+    parts.push(`t:${node.type}`);
+    parts.push(`v:${node.visible !== false ? "1" : "0"}`);
+    if ("opacity" in node && typeof node.opacity === "number") {
+      parts.push(`op:${node.opacity.toFixed(2)}`);
+    }
+    if ("fills" in node && Array.isArray(node.fills)) {
+      const fills = node.fills;
+      const bvFills = (_a = node.boundVariables) == null ? void 0 : _a.fills;
+      if (bvFills && Array.isArray(bvFills) && bvFills.length > 0) {
+        parts.push(`bvFills:${bvFills.map((b) => b && b.id || "").join(",")}`);
+      } else {
+        const fillDescs = fills.map((f) => {
+          var _a2;
+          if (!f || f.visible === false) return "none";
+          if (f.type === "SOLID") {
+            return `${rgbToHex(f.color.r, f.color.g, f.color.b)}@${((_a2 = f.opacity) != null ? _a2 : 1).toFixed(2)}`;
+          }
+          return f.type;
+        });
+        parts.push(`fills:[${fillDescs.join(",")}]`);
+      }
+    }
+    if ("strokes" in node && Array.isArray(node.strokes)) {
+      const strokes = node.strokes;
+      const bvStrokes = (_b = node.boundVariables) == null ? void 0 : _b.strokes;
+      if (bvStrokes && Array.isArray(bvStrokes) && bvStrokes.length > 0) {
+        parts.push(`bvStrokes:${bvStrokes.map((b) => b && b.id || "").join(",")}`);
+      } else {
+        const strokeDescs = strokes.map((s) => {
+          if (!s || s.visible === false) return "none";
+          if (s.type === "SOLID") return rgbToHex(s.color.r, s.color.g, s.color.b);
+          return s.type;
+        });
+        parts.push(`strokes:[${strokeDescs.join(",")}]`);
+      }
+      if ("strokeWeight" in node && typeof node.strokeWeight === "number") {
+        parts.push(`sw:${node.strokeWeight}`);
+      }
+    }
+    if ("cornerRadius" in node) {
+      const cr = node.cornerRadius;
+      parts.push(`cr:${cr === figma.mixed ? "mixed" : cr}`);
+    }
+    if (node.type === "TEXT") {
+      const fn = node.fontName;
+      if (fn !== figma.mixed && fn && typeof fn === "object") {
+        parts.push(`style:${fn.style}`);
+      }
+    }
+    if (node.type === "INSTANCE") {
+      const inst = node;
+      if (inst.variantProperties) {
+        const vp = Object.entries(inst.variantProperties).map(([k, v]) => `${k}=${v}`).sort().join(";");
+        parts.push(`vp:{${vp}}`);
+      }
+      if (inst.mainComponent) {
+        parts.push(`mc:${inst.mainComponent.name}`);
+      }
+    }
+    return parts.join(";");
+  }
+  function getVisualSignature(frame) {
+    const chunks = [getNodeVisualChunk(frame)];
+    function recurse(ch) {
+      chunks.push(getNodeVisualChunk(ch));
+      if ("children" in ch && Array.isArray(ch.children)) {
+        for (const sub of ch.children) {
+          recurse(sub);
+        }
+      }
+    }
+    if ("children" in frame && Array.isArray(frame.children)) {
+      for (const child of frame.children) {
+        recurse(child);
+      }
+    }
+    return chunks.join("|");
   }
   function getInstanceBaseName(inst) {
     if (inst.mainComponent) {
@@ -5483,7 +6078,7 @@ ${usageJsx}
     return false;
   }
 
-  // ../../../../plugins/components-setup/src/retextifier/retextifier.ts
+  // src/retextifier/retextifier.ts
   function buildRetextifierLayerPath(node, rootNode) {
     try {
       const parts = [];
@@ -5661,7 +6256,7 @@ ${usageJsx}
     });
   }
 
-  // ../../../../plugins/components-setup/src/variables/variables.ts
+  // src/variables/variables.ts
   async function getAllRelevantVariablesForComponentSet() {
     const allVariables = [];
     try {
@@ -6294,7 +6889,7 @@ ${usageJsx}
     return metricsCollectionPromise;
   }
 
-  // ../../../../plugins/components-setup/src/slots/slots.ts
+  // src/slots/slots.ts
   function isSlotLayer(node) {
     const name = (node.name || "").trim().toLowerCase();
     if (name.includes("slot") || name === "actions") {
@@ -6705,6 +7300,7 @@ ${usageJsx}
     const candidateParents = [];
     unwrapRedundantSlotWrappers(root, preloadedVars);
     const inspectNode = (n) => {
+      if (isSystemOrIgnoredNode(n)) return;
       if (n.type === "INSTANCE") return;
       if (isSlotContainer(n)) return;
       if (n.type === "FRAME" || n.type === "COMPONENT" || n.type === "SLOT") {
@@ -6865,7 +7461,7 @@ ${usageJsx}
       let currentCompKey = null;
       const instanceRuns = [];
       for (const child of children) {
-        if (child.type === "INSTANCE") {
+        if (child.type === "INSTANCE" && !isSystemOrIgnoredNode(child) && !isSystemOrIgnoredPropName(child.name)) {
           const inst = child;
           const compKey = getInstanceFamilyKey(inst);
           if (currentCompKey && compKey === currentCompKey) {
@@ -7028,7 +7624,7 @@ ${usageJsx}
         for (const inst of run) {
           slotNode.appendChild(inst);
           try {
-            inst.componentPropertyReferences = {};
+            inst.componentPropertyReferences = null;
           } catch (_) {
           }
           if (effectiveLayoutMode === "VERTICAL") {
@@ -7046,12 +7642,13 @@ ${usageJsx}
     return slotFrames;
   }
 
-  // ../../../../plugins/components-setup/src/properties/collectors.ts
+  // src/properties/collectors.ts
   function collectDirectTextNodes(root) {
     const result = [];
     function recurse(n) {
       if (n.type === "INSTANCE") return;
       if (isSlotContainer(n)) return;
+      if (isSystemOrIgnoredNode(n) || n.name && isSystemOrIgnoredPropName(n.name)) return;
       if (n.type === "TEXT") {
         result.push(n);
         return;
@@ -7101,6 +7698,16 @@ ${usageJsx}
     const result = [];
     function recurse(n) {
       if (isSlotContainer(n)) return;
+      const raw = (n.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (raw.includes("statusbar") || raw.includes("homeindicator") || raw.includes("bezel") || raw.includes("wrapper") || raw.includes("iphone") || raw === "bg" || raw.startsWith("bg") || raw.includes("glass") || "locked" in n && n.locked || isSystemOrIgnoredNode(n) || isIgnoredName(n.name)) {
+        if (n.type === "INSTANCE") {
+          try {
+            n.isExposedInstance = false;
+          } catch (_) {
+          }
+        }
+        return;
+      }
       if (n.type === "INSTANCE") {
         const inst = n;
         const nameLower = (inst.name || "").trim().toLowerCase();
@@ -7155,7 +7762,7 @@ ${usageJsx}
     return node;
   }
 
-  // ../../../../plugins/components-setup/src/utils/sorting.ts
+  // src/utils/sorting.ts
   function getVisualSortScore(node, fallbackRoot) {
     const container = getContainingVariantOrRoot(node) || fallbackRoot || node;
     let nodeX = 0, nodeY = 0, contX = 0, contY = 0;
@@ -7199,9 +7806,9 @@ ${usageJsx}
     return 0;
   }
 
-  // ../../../../plugins/components-setup/src/properties/rebuilder.ts
+  // src/properties/rebuilder.ts
   function cleanRebuildComponentProperties(propertyHost, variants, options) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
     let textPropsCount = 0;
     let instanceSwapPropsCount = 0;
     let booleanPropsCount = 0;
@@ -7209,565 +7816,631 @@ ${usageJsx}
     if (variants.length === 0) {
       return { textPropsCount: 0, instanceSwapPropsCount: 0, booleanPropsCount: 0, nestedInstancesCount: 0 };
     }
-    let primaryVariant = propertyHost;
-    if (propertyHost.type === "COMPONENT_SET") {
-      const compSet = propertyHost;
-      primaryVariant = compSet.defaultVariant || variants[0] || compSet;
-    } else if (variants.length > 0) {
-      primaryVariant = variants[0];
-    }
-    const oldDefs = propertyHost.componentPropertyDefinitions || {};
-    const existingBindingsByPropKey = /* @__PURE__ */ new Map();
-    for (const variant of variants) {
-      const scanBindings = (n) => {
-        var _a2;
-        if (isInsideSlot(n, variant)) return;
-        if (isSlotContainer(n)) {
-          if ("componentPropertyReferences" in n && ((_a2 = n.componentPropertyReferences) == null ? void 0 : _a2.slot)) {
-            const slotRef = n.componentPropertyReferences.slot;
-            if (!existingBindingsByPropKey.has(slotRef)) existingBindingsByPropKey.set(slotRef, []);
-            existingBindingsByPropKey.get(slotRef).push({ node: n, refType: "slot" });
-          }
-          return;
-        }
-        if ("componentPropertyReferences" in n && n.componentPropertyReferences) {
-          const refs = n.componentPropertyReferences;
-          if (refs.visible) {
-            if (!existingBindingsByPropKey.has(refs.visible)) existingBindingsByPropKey.set(refs.visible, []);
-            existingBindingsByPropKey.get(refs.visible).push({ node: n, refType: "visible" });
-          }
-          if (refs.characters) {
-            if (!existingBindingsByPropKey.has(refs.characters)) existingBindingsByPropKey.set(refs.characters, []);
-            existingBindingsByPropKey.get(refs.characters).push({ node: n, refType: "characters" });
-          }
-          if (refs.mainComponent) {
-            if (!existingBindingsByPropKey.has(refs.mainComponent)) existingBindingsByPropKey.set(refs.mainComponent, []);
-            existingBindingsByPropKey.get(refs.mainComponent).push({ node: n, refType: "mainComponent" });
-          }
-          if (refs.slot) {
-            const slotRef = refs.slot;
-            if (!existingBindingsByPropKey.has(slotRef)) existingBindingsByPropKey.set(slotRef, []);
-            existingBindingsByPropKey.get(slotRef).push({ node: n, refType: "slot" });
-          }
-        }
-        if ("children" in n && Array.isArray(n.children)) {
-          for (const ch of n.children) {
-            scanBindings(ch);
-          }
-        }
-      };
-      scanBindings(variant);
-    }
-    const maxTextOccurrences = /* @__PURE__ */ new Map();
-    for (const variant of variants) {
-      const texts = collectDirectTextNodes(variant);
-      const countInVariant = /* @__PURE__ */ new Map();
-      for (const t of texts) {
-        countInVariant.set(t.name, (countInVariant.get(t.name) || 0) + 1);
+    try {
+      let primaryVariant = propertyHost;
+      if (propertyHost.type === "COMPONENT_SET") {
+        const compSet = propertyHost;
+        primaryVariant = compSet.defaultVariant || variants[0] || compSet;
+      } else if (variants.length > 0) {
+        primaryVariant = variants[0];
       }
-      for (const [name, count] of countInVariant.entries()) {
-        if (count > (maxTextOccurrences.get(name) || 0)) {
-          maxTextOccurrences.set(name, count);
-        }
+      try {
+        purgeIgnoredPropertiesAndReferencesSync(propertyHost);
+      } catch (_) {
       }
-    }
-    const maxInstanceOccurrences = /* @__PURE__ */ new Map();
-    for (const variant of variants) {
-      const instances = collectDirectInstances(variant);
-      const countInVariant = /* @__PURE__ */ new Map();
-      for (const inst of instances) {
-        const cleanInfo = cleanInstancePropertyName(inst.name);
-        countInVariant.set(cleanInfo.propName, (countInVariant.get(cleanInfo.propName) || 0) + 1);
-      }
-      for (const [name, count] of countInVariant.entries()) {
-        if (count > (maxInstanceOccurrences.get(name) || 0)) {
-          maxInstanceOccurrences.set(name, count);
-        }
-      }
-    }
-    const defsByGroup = {
-      group3: /* @__PURE__ */ new Map(),
-      group4: /* @__PURE__ */ new Map(),
-      group5: /* @__PURE__ */ new Map(),
-      group6: /* @__PURE__ */ new Map()
-    };
-    if ((options == null ? void 0 : options.enableText) !== false) {
-      for (const variant of variants) {
-        const texts = collectDirectTextNodes(variant);
-        texts.sort((a, b) => compareVisualSortScore(a, b, variant));
-        const nameIndex = /* @__PURE__ */ new Map();
-        for (const textNode of texts) {
-          if ((options == null ? void 0 : options.disabledTextNames) && (options.disabledTextNames.includes(textNode.name) || options.disabledTextNames.includes(textNode.id))) {
-            continue;
-          }
-          const maxCount = maxTextOccurrences.get(textNode.name) || 1;
-          let propName = textNode.name;
-          if (maxCount > 1) {
-            const idx = (nameIndex.get(textNode.name) || 0) + 1;
-            nameIndex.set(textNode.name, idx);
-            propName = `${textNode.name} ${idx}`;
-          }
-          if (!defsByGroup.group4.has(propName)) {
-            defsByGroup.group4.set(propName, {
-              name: propName,
-              group: 4,
-              type: "TEXT",
-              defaultValue: propName,
-              representativeNode: textNode,
-              bindings: []
-            });
-          }
-          const def = defsByGroup.group4.get(propName);
-          if (variant === primaryVariant) {
-            def.representativeNode = textNode;
-            def.defaultValue = propName;
-          }
-          if (!def.bindings.some((b) => b.node === textNode && b.refType === "characters")) {
-            def.bindings.push({ node: textNode, refType: "characters" });
-          }
-          const hasExistingTextVisibilityBinding = Boolean(
-            textNode.componentPropertyReferences && textNode.componentPropertyReferences.visible
-          );
-          const allowTextVisibility = (options == null ? void 0 : options.enableTextVisibility) === true || hasExistingTextVisibilityBinding || (options == null ? void 0 : options.textVisibilityDecisions) && (options.textVisibilityDecisions[propName] === true || options.textVisibilityDecisions[textNode.name] === true || options.textVisibilityDecisions[textNode.id] === true);
-          if (allowTextVisibility && (options == null ? void 0 : options.enableBoolean) !== false) {
-            const textBoolPropName = propName.startsWith("Show") ? propName : `Show${propName.charAt(0).toUpperCase() + propName.slice(1)}`;
-            if (!defsByGroup.group3.has(textBoolPropName)) {
-              defsByGroup.group3.set(textBoolPropName, {
-                name: textBoolPropName,
-                group: 3,
-                type: "BOOLEAN",
-                defaultValue: textNode.visible !== false,
-                representativeNode: textNode,
-                bindings: []
-              });
-            }
-            const textBoolDef = defsByGroup.group3.get(textBoolPropName);
-            if (variant === primaryVariant) {
-              textBoolDef.representativeNode = textNode;
-              textBoolDef.defaultValue = textNode.visible !== false;
-            }
-            if (!textBoolDef.bindings.some((b) => b.node === textNode && b.refType === "visible")) {
-              textBoolDef.bindings.push({ node: textNode, refType: "visible" });
-            }
-          }
-        }
-      }
-    }
-    for (const variant of variants) {
-      const instances = collectDirectInstances(variant);
-      instances.sort((a, b) => compareVisualSortScore(a, b, variant));
-      const instanceNameIndex = /* @__PURE__ */ new Map();
-      for (const inst of instances) {
-        if (isInsideSlot(inst, variant)) continue;
-        const cleanInfo = cleanInstancePropertyName(inst.name);
-        if (cleanInfo.isSlot || /slot/i.test(inst.name)) continue;
-        const maxCount = maxInstanceOccurrences.get(cleanInfo.propName) || 1;
-        let propBaseName = cleanInfo.propName;
-        if (maxCount > 1) {
-          const idx = (instanceNameIndex.get(cleanInfo.propName) || 0) + 1;
-          instanceNameIndex.set(cleanInfo.propName, idx);
-          propBaseName = `${cleanInfo.propName} ${idx}`;
-        }
-        const allowSwap = (options == null ? void 0 : options.enableInstanceSwap) !== false;
-        const isSpecificSwapDisabled = ((_a = options == null ? void 0 : options.disabledInstanceSwapNames) == null ? void 0 : _a.some((n) => n.toLowerCase() === propBaseName.toLowerCase() || n.toLowerCase() === cleanInfo.propName.toLowerCase())) || (options == null ? void 0 : options.instanceSwapDecisions) && (options.instanceSwapDecisions[propBaseName] === false || options.instanceSwapDecisions[cleanInfo.propName] === false);
-        const mainComp = inst.mainComponent;
-        if (allowSwap && !isSpecificSwapDisabled && mainComp && mainComp.id) {
-          if (!defsByGroup.group5.has(propBaseName)) {
-            defsByGroup.group5.set(propBaseName, {
-              name: propBaseName,
-              group: 5,
-              type: "INSTANCE_SWAP",
-              defaultValue: mainComp.id,
-              representativeNode: inst,
-              bindings: []
-            });
-          }
-          const swapDef = defsByGroup.group5.get(propBaseName);
-          if (variant === primaryVariant) {
-            swapDef.representativeNode = inst;
-            swapDef.defaultValue = mainComp.id;
-          }
-          if (!swapDef.bindings.some((b) => b.node === inst && b.refType === "mainComponent")) {
-            swapDef.bindings.push({ node: inst, refType: "mainComponent" });
-          }
-        }
-        if ((options == null ? void 0 : options.enableBoolean) !== false) {
-          const boolPropName = propBaseName.startsWith("Show") ? propBaseName : `Show${propBaseName.charAt(0).toUpperCase() + propBaseName.slice(1)}`;
-          if (!defsByGroup.group3.has(boolPropName)) {
-            defsByGroup.group3.set(boolPropName, {
-              name: boolPropName,
-              group: 3,
-              type: "BOOLEAN",
-              defaultValue: inst.visible !== false,
-              representativeNode: inst,
-              bindings: []
-            });
-          }
-          const boolDef = defsByGroup.group3.get(boolPropName);
-          if (variant === primaryVariant) {
-            boolDef.representativeNode = inst;
-            boolDef.defaultValue = inst.visible !== false;
-          }
-          if (!boolDef.bindings.some((b) => b.node === inst && b.refType === "visible")) {
-            boolDef.bindings.push({ node: inst, refType: "visible" });
-          }
-        }
-        const explicitNestedDecision = (_h = (_f = (_d = (_b = options == null ? void 0 : options.nestedInstanceDecisions) == null ? void 0 : _b[propBaseName]) != null ? _d : (_c = options == null ? void 0 : options.nestedInstanceDecisions) == null ? void 0 : _c[cleanInfo.propName]) != null ? _f : (_e = options == null ? void 0 : options.nestedInstanceDecisions) == null ? void 0 : _e[inst.name]) != null ? _h : (_g = options == null ? void 0 : options.nestedInstanceDecisions) == null ? void 0 : _g[inst.id];
-        const shouldExposeNested = explicitNestedDecision !== void 0 ? Boolean(explicitNestedDecision) : (options == null ? void 0 : options.enableNestedInstances) === true ? !isIconInstanceNode(inst) : Boolean(inst.isExposedInstance);
+      const oldDefs = safeGetComponentPropertyDefinitions(propertyHost);
+      const sanitizeNodeExposureAndBindings = (n) => {
         try {
-          const wasAlreadyExposed = Boolean(inst.isExposedInstance);
-          if (wasAlreadyExposed !== shouldExposeNested) {
-            inst.isExposedInstance = shouldExposeNested;
-            if (shouldExposeNested && variant === primaryVariant) {
-              nestedInstancesCount++;
+          if (!n || n.removed) return;
+          if (isSystemOrIgnoredNode(n) || n.name && isSystemOrIgnoredPropName(n.name)) {
+            if ("componentPropertyReferences" in n) {
+              try {
+                n.componentPropertyReferences = null;
+              } catch (_) {
+              }
+            }
+            if (n.type === "INSTANCE") {
+              try {
+                n.isExposedInstance = false;
+              } catch (_) {
+              }
+            }
+            if ("children" in n && n.children) {
+              for (const ch of n.children) {
+                sanitizeNodeExposureAndBindings(ch);
+              }
+            }
+            return;
+          }
+          if ("children" in n && n.children) {
+            for (const ch of n.children) {
+              sanitizeNodeExposureAndBindings(ch);
             }
           }
         } catch (_) {
         }
+      };
+      for (const v of variants) {
+        sanitizeNodeExposureAndBindings(v);
       }
-      const slotsInVariant = findDirectSlotContainers(variant);
-      for (const slotContainer of slotsInVariant) {
-        if ("children" in slotContainer && Array.isArray(slotContainer.children)) {
-          for (const ch of slotContainer.children) {
-            if (ch.type === "INSTANCE") {
-              const slotInst = ch;
-              const shouldExposeSlotInst = (options == null ? void 0 : options.enableNestedInstances) === true ? !isIconInstanceNode(slotInst) : Boolean(slotInst.isExposedInstance);
-              try {
-                const wasAlreadyExposed = Boolean(slotInst.isExposedInstance);
-                if (wasAlreadyExposed !== shouldExposeSlotInst) {
-                  slotInst.isExposedInstance = shouldExposeSlotInst;
-                  if (shouldExposeSlotInst && variant === primaryVariant) {
-                    nestedInstancesCount++;
-                  }
-                }
-              } catch (_) {
+      const existingBindingsByPropKey = /* @__PURE__ */ new Map();
+      for (const variant of variants) {
+        const scanBindings = (n) => {
+          var _a2;
+          if (isInsideSlot(n, variant)) return;
+          if (isSystemOrIgnoredNode(n)) return;
+          if (isSlotContainer(n)) {
+            if ("componentPropertyReferences" in n && ((_a2 = n.componentPropertyReferences) == null ? void 0 : _a2.slot)) {
+              const slotRef = n.componentPropertyReferences.slot;
+              if (!existingBindingsByPropKey.has(slotRef)) existingBindingsByPropKey.set(slotRef, []);
+              existingBindingsByPropKey.get(slotRef).push({ node: n, refType: "slot" });
+            }
+            return;
+          }
+          if ("componentPropertyReferences" in n && n.componentPropertyReferences) {
+            const refs = n.componentPropertyReferences;
+            if (refs.visible) {
+              if (!existingBindingsByPropKey.has(refs.visible)) existingBindingsByPropKey.set(refs.visible, []);
+              existingBindingsByPropKey.get(refs.visible).push({ node: n, refType: "visible" });
+            }
+            if (refs.characters) {
+              if (!existingBindingsByPropKey.has(refs.characters)) existingBindingsByPropKey.set(refs.characters, []);
+              existingBindingsByPropKey.get(refs.characters).push({ node: n, refType: "characters" });
+            }
+            if (refs.mainComponent) {
+              if (!existingBindingsByPropKey.has(refs.mainComponent)) existingBindingsByPropKey.set(refs.mainComponent, []);
+              existingBindingsByPropKey.get(refs.mainComponent).push({ node: n, refType: "mainComponent" });
+            }
+            if (refs.slot) {
+              const slotRef = refs.slot;
+              if (!existingBindingsByPropKey.has(slotRef)) existingBindingsByPropKey.set(slotRef, []);
+              existingBindingsByPropKey.get(slotRef).push({ node: n, refType: "slot" });
+            }
+          }
+          if ("children" in n && Array.isArray(n.children)) {
+            for (const ch of n.children) {
+              scanBindings(ch);
+            }
+          }
+        };
+        scanBindings(variant);
+      }
+      const maxTextOccurrences = /* @__PURE__ */ new Map();
+      for (const variant of variants) {
+        const texts = collectDirectTextNodes(variant);
+        const countInVariant = /* @__PURE__ */ new Map();
+        for (const t of texts) {
+          countInVariant.set(t.name, (countInVariant.get(t.name) || 0) + 1);
+        }
+        for (const [name, count] of countInVariant.entries()) {
+          if (count > (maxTextOccurrences.get(name) || 0)) {
+            maxTextOccurrences.set(name, count);
+          }
+        }
+      }
+      const maxInstanceOccurrences = /* @__PURE__ */ new Map();
+      for (const variant of variants) {
+        const instances = collectDirectInstances(variant);
+        const countInVariant = /* @__PURE__ */ new Map();
+        for (const inst of instances) {
+          const cleanInfo = cleanInstancePropertyName(inst.name);
+          countInVariant.set(cleanInfo.propName, (countInVariant.get(cleanInfo.propName) || 0) + 1);
+        }
+        for (const [name, count] of countInVariant.entries()) {
+          if (count > (maxInstanceOccurrences.get(name) || 0)) {
+            maxInstanceOccurrences.set(name, count);
+          }
+        }
+      }
+      const defsByGroup = {
+        group3: /* @__PURE__ */ new Map(),
+        group4: /* @__PURE__ */ new Map(),
+        group5: /* @__PURE__ */ new Map(),
+        group6: /* @__PURE__ */ new Map()
+      };
+      if ((options == null ? void 0 : options.enableText) !== false) {
+        for (const variant of variants) {
+          const texts = collectDirectTextNodes(variant);
+          texts.sort((a, b) => compareVisualSortScore(a, b, variant));
+          const nameIndex = /* @__PURE__ */ new Map();
+          for (const textNode of texts) {
+            if ((options == null ? void 0 : options.disabledTextNames) && (options.disabledTextNames.includes(textNode.name) || options.disabledTextNames.includes(textNode.id))) {
+              continue;
+            }
+            const maxCount = maxTextOccurrences.get(textNode.name) || 1;
+            let propName = textNode.name;
+            if (maxCount > 1) {
+              const idx = (nameIndex.get(textNode.name) || 0) + 1;
+              nameIndex.set(textNode.name, idx);
+              propName = `${textNode.name} ${idx}`;
+            }
+            if (!defsByGroup.group4.has(propName)) {
+              defsByGroup.group4.set(propName, {
+                name: propName,
+                group: 4,
+                type: "TEXT",
+                defaultValue: propName,
+                representativeNode: textNode,
+                bindings: []
+              });
+            }
+            const def = defsByGroup.group4.get(propName);
+            if (variant === primaryVariant) {
+              def.representativeNode = textNode;
+              def.defaultValue = propName;
+            }
+            if (!def.bindings.some((b) => b.node === textNode && b.refType === "characters")) {
+              def.bindings.push({ node: textNode, refType: "characters" });
+            }
+            const hasExistingTextVisibilityBinding = Boolean(
+              textNode.componentPropertyReferences && textNode.componentPropertyReferences.visible
+            );
+            const allowTextVisibility = (options == null ? void 0 : options.enableTextVisibility) === true || hasExistingTextVisibilityBinding || (options == null ? void 0 : options.textVisibilityDecisions) && (options.textVisibilityDecisions[propName] === true || options.textVisibilityDecisions[textNode.name] === true || options.textVisibilityDecisions[textNode.id] === true);
+            if (allowTextVisibility && (options == null ? void 0 : options.enableBoolean) !== false) {
+              const textBoolPropName = propName.startsWith("Show") ? propName : `Show${propName.charAt(0).toUpperCase() + propName.slice(1)}`;
+              if (!defsByGroup.group3.has(textBoolPropName)) {
+                defsByGroup.group3.set(textBoolPropName, {
+                  name: textBoolPropName,
+                  group: 3,
+                  type: "BOOLEAN",
+                  defaultValue: textNode.visible !== false,
+                  representativeNode: textNode,
+                  bindings: []
+                });
+              }
+              const textBoolDef = defsByGroup.group3.get(textBoolPropName);
+              if (variant === primaryVariant) {
+                textBoolDef.representativeNode = textNode;
+                textBoolDef.defaultValue = textNode.visible !== false;
+              }
+              if (!textBoolDef.bindings.some((b) => b.node === textNode && b.refType === "visible")) {
+                textBoolDef.bindings.push({ node: textNode, refType: "visible" });
               }
             }
           }
         }
       }
-    }
-    if ((options == null ? void 0 : options.enableSlotExtract) !== false) {
       for (const variant of variants) {
-        const vSlots = findDirectSlotContainers(variant);
-        for (const sf of vSlots) {
-          sanitizeSlotFrame(sf, sf.parent);
+        const instances = collectDirectInstances(variant);
+        instances.sort((a, b) => compareVisualSortScore(a, b, variant));
+        const instanceNameIndex = /* @__PURE__ */ new Map();
+        for (const inst of instances) {
+          if (isInsideSlot(inst, variant)) continue;
+          const raw = inst.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+          if (raw.includes("statusbar") || raw.includes("homeindicator") || raw.includes("bezel") || raw.includes("wrapper") || raw.includes("iphone") || raw === "bg" || raw.startsWith("bg") || raw.includes("glass") || inst.locked || isSystemOrIgnoredNode(inst) || isIgnoredName(inst.name) || inst.mainComponent && isIgnoredName(inst.mainComponent.name) || ((_a = inst.mainComponent) == null ? void 0 : _a.parent) && isIgnoredName(inst.mainComponent.parent.name)) {
+            try {
+              inst.isExposedInstance = false;
+            } catch (_) {
+            }
+            continue;
+          }
+          const cleanInfo = cleanInstancePropertyName(inst.name);
+          if (cleanInfo.isSlot || /slot/i.test(inst.name) || isSystemOrIgnoredPropName(cleanInfo.propName)) continue;
+          const maxCount = maxInstanceOccurrences.get(cleanInfo.propName) || 1;
+          let propBaseName = cleanInfo.propName;
+          if (maxCount > 1) {
+            const idx = (instanceNameIndex.get(cleanInfo.propName) || 0) + 1;
+            instanceNameIndex.set(cleanInfo.propName, idx);
+            propBaseName = `${cleanInfo.propName} ${idx}`;
+          }
+          if (isSystemOrIgnoredPropName(propBaseName)) continue;
+          const allowSwap = (options == null ? void 0 : options.enableInstanceSwap) !== false;
+          const isSpecificSwapDisabled = ((_b = options == null ? void 0 : options.disabledInstanceSwapNames) == null ? void 0 : _b.some((n) => n.toLowerCase() === propBaseName.toLowerCase() || n.toLowerCase() === cleanInfo.propName.toLowerCase())) || (options == null ? void 0 : options.instanceSwapDecisions) && (options.instanceSwapDecisions[propBaseName] === false || options.instanceSwapDecisions[cleanInfo.propName] === false);
+          const mainComp = inst.mainComponent;
+          if (allowSwap && !isSpecificSwapDisabled && mainComp && mainComp.id) {
+            if (!defsByGroup.group5.has(propBaseName)) {
+              defsByGroup.group5.set(propBaseName, {
+                name: propBaseName,
+                group: 5,
+                type: "INSTANCE_SWAP",
+                defaultValue: mainComp.id,
+                representativeNode: inst,
+                bindings: []
+              });
+            }
+            const swapDef = defsByGroup.group5.get(propBaseName);
+            if (variant === primaryVariant) {
+              swapDef.representativeNode = inst;
+              swapDef.defaultValue = mainComp.id;
+            }
+            if (!swapDef.bindings.some((b) => b.node === inst && b.refType === "mainComponent")) {
+              swapDef.bindings.push({ node: inst, refType: "mainComponent" });
+            }
+          }
+          const allowInstanceShow = (options == null ? void 0 : options.enableInstanceShow) !== false && (options == null ? void 0 : options.enableBoolean) !== false;
+          const isSpecificShowDisabled = (options == null ? void 0 : options.instanceShowDecisions) && (options.instanceShowDecisions[propBaseName] === false || options.instanceShowDecisions[cleanInfo.propName] === false);
+          if (allowInstanceShow && !isSpecificShowDisabled) {
+            const boolPropName = propBaseName.startsWith("Show") ? propBaseName : `Show${propBaseName.charAt(0).toUpperCase() + propBaseName.slice(1)}`;
+            if (!isSystemOrIgnoredPropName(boolPropName)) {
+              if (!defsByGroup.group3.has(boolPropName)) {
+                defsByGroup.group3.set(boolPropName, {
+                  name: boolPropName,
+                  group: 3,
+                  type: "BOOLEAN",
+                  defaultValue: inst.visible !== false,
+                  representativeNode: inst,
+                  bindings: []
+                });
+              }
+              const boolDef = defsByGroup.group3.get(boolPropName);
+              if (variant === primaryVariant) {
+                boolDef.representativeNode = inst;
+                boolDef.defaultValue = inst.visible !== false;
+              }
+              if (!boolDef.bindings.some((b) => b.node === inst && b.refType === "visible")) {
+                boolDef.bindings.push({ node: inst, refType: "visible" });
+              }
+            }
+          }
+          if (isSystemOrIgnoredNode(inst) || isSystemOrIgnoredPropName(propBaseName) || isSystemOrIgnoredPropName(cleanInfo.propName) || isSystemOrIgnoredPropName(inst.name) || inst.mainComponent && isSystemOrIgnoredPropName(inst.mainComponent.name)) {
+            try {
+              inst.isExposedInstance = false;
+            } catch (_) {
+            }
+            continue;
+          }
+          const explicitNestedDecision = (_i = (_g = (_e = (_c = options == null ? void 0 : options.nestedInstanceDecisions) == null ? void 0 : _c[propBaseName]) != null ? _e : (_d = options == null ? void 0 : options.nestedInstanceDecisions) == null ? void 0 : _d[cleanInfo.propName]) != null ? _g : (_f = options == null ? void 0 : options.nestedInstanceDecisions) == null ? void 0 : _f[inst.name]) != null ? _i : (_h = options == null ? void 0 : options.nestedInstanceDecisions) == null ? void 0 : _h[inst.id];
+          const shouldExposeNested = explicitNestedDecision !== void 0 ? Boolean(explicitNestedDecision) : (options == null ? void 0 : options.enableNestedInstances) === true ? !isIconInstanceNode(inst) : Boolean(inst.isExposedInstance);
+          try {
+            const wasAlreadyExposed = Boolean(inst.isExposedInstance);
+            if (wasAlreadyExposed !== shouldExposeNested) {
+              inst.isExposedInstance = shouldExposeNested;
+              if (shouldExposeNested && variant === primaryVariant) {
+                nestedInstancesCount++;
+              }
+            }
+          } catch (_) {
+          }
         }
-        if (vSlots.length === 1) {
-          vSlots[0].name = "Slot";
-        } else if (vSlots.length > 1) {
-          vSlots.sort((a, b) => compareVisualSortScore(a, b, variant));
-          vSlots.forEach((s, idx) => {
-            s.name = idx === 0 ? "Slot" : `Slot ${idx + 1}`;
-          });
+        const slotsInVariant = findDirectSlotContainers(variant);
+        for (const slotContainer of slotsInVariant) {
+          if ("children" in slotContainer && Array.isArray(slotContainer.children)) {
+            for (const ch of slotContainer.children) {
+              if (ch.type === "INSTANCE") {
+                try {
+                  ch.isExposedInstance = false;
+                } catch (_) {
+                }
+              }
+            }
+          }
         }
       }
-      for (const variant of variants) {
-        const slots = findDirectSlotContainers(variant);
-        slots.sort((a, b) => compareVisualSortScore(a, b, variant));
-        const slotNameIndex = /* @__PURE__ */ new Map();
-        for (const slotFrame of slots) {
-          sanitizeSlotFrame(slotFrame, slotFrame.parent);
-          const rawName = slotFrame.name.trim();
-          const baseSlotName = rawName || "Slot";
-          let propName = baseSlotName;
-          const countMatching = slots.filter((s) => s.name.trim().toLowerCase() === baseSlotName.toLowerCase()).length;
-          if (countMatching > 1) {
-            const idx = (slotNameIndex.get(baseSlotName) || 0) + 1;
-            slotNameIndex.set(baseSlotName, idx);
-            propName = `${baseSlotName} ${idx}`;
+      if ((options == null ? void 0 : options.enableSlotExtract) !== false) {
+        for (const variant of variants) {
+          const vSlots = findDirectSlotContainers(variant);
+          for (const sf of vSlots) {
+            sanitizeSlotFrame(sf, sf.parent);
           }
-          if (!defsByGroup.group6.has(propName)) {
-            defsByGroup.group6.set(propName, {
-              name: propName,
-              group: 6,
-              type: "SLOT",
-              representativeNode: slotFrame,
-              bindings: []
+          if (vSlots.length === 1) {
+            vSlots[0].name = "Slot";
+          } else if (vSlots.length > 1) {
+            vSlots.sort((a, b) => compareVisualSortScore(a, b, variant));
+            vSlots.forEach((s, idx) => {
+              s.name = idx === 0 ? "Slot" : `Slot ${idx + 1}`;
             });
           }
-          const slotDef = defsByGroup.group6.get(propName);
-          if (variant === primaryVariant) {
-            slotDef.representativeNode = slotFrame;
-          }
-          if (!slotDef.bindings.some((b) => b.node === slotFrame && b.refType === "slot")) {
-            slotDef.bindings.push({ node: slotFrame, refType: "slot" });
-          }
         }
-      }
-    }
-    const isDisallowedProp = (name, type) => {
-      const lower = name.toLowerCase().replace(/[\s_#\d-]+/g, "");
-      if (lower === "showslot" || lower.startsWith("showslot")) return true;
-      if (lower === "slot" && type !== "SLOT") return true;
-      if (lower === "showitem" || lower.startsWith("showitem")) return true;
-      if (lower === "item" && (type === "INSTANCE_SWAP" || type === "BOOLEAN")) return true;
-      return false;
-    };
-    for (const key of Object.keys(oldDefs)) {
-      const oldDef = oldDefs[key];
-      if (!oldDef || oldDef.type === "VARIANT" || oldDef.type === "SLOT") continue;
-      const cleanName = key.split("#")[0].trim();
-      if (isDisallowedProp(cleanName, oldDef.type)) continue;
-      const bindings = (existingBindingsByPropKey.get(key) || []).filter((b) => !isInsideSlot(b.node, primaryVariant));
-      if (bindings.length === 0) continue;
-      const repNode = ((_i = bindings.find((b) => primaryVariant === propertyHost || !b.node.parent || b.node.id.startsWith(primaryVariant.id.split(";")[0]))) == null ? void 0 : _i.node) || bindings[0].node;
-      if (isInsideSlot(repNode, primaryVariant)) continue;
-      if (oldDef.type === "BOOLEAN") {
-        if (!defsByGroup.group3.has(cleanName)) {
-          defsByGroup.group3.set(cleanName, {
-            name: cleanName,
-            group: 3,
-            type: "BOOLEAN",
-            defaultValue: Boolean(oldDef.defaultValue),
-            representativeNode: repNode,
-            bindings
-          });
-        } else {
-          const existing = defsByGroup.group3.get(cleanName);
-          existing.defaultValue = Boolean(oldDef.defaultValue);
-        }
-      } else if (oldDef.type === "TEXT") {
-        if (!defsByGroup.group4.has(cleanName)) {
-          defsByGroup.group4.set(cleanName, {
-            name: cleanName,
-            group: 4,
-            type: "TEXT",
-            defaultValue: cleanName,
-            representativeNode: repNode,
-            bindings
-          });
-        } else {
-          const existing = defsByGroup.group4.get(cleanName);
-          existing.defaultValue = existing.name;
-        }
-      } else if (oldDef.type === "INSTANCE_SWAP") {
-        if (!defsByGroup.group5.has(cleanName)) {
-          defsByGroup.group5.set(cleanName, {
-            name: cleanName,
-            group: 5,
-            type: "INSTANCE_SWAP",
-            defaultValue: String(oldDef.defaultValue),
-            preferredValues: oldDef.preferredValues,
-            representativeNode: repNode,
-            bindings
-          });
-        } else {
-          const existing = defsByGroup.group5.get(cleanName);
-          if (oldDef.preferredValues && !existing.preferredValues) {
-            existing.preferredValues = oldDef.preferredValues;
+        for (const variant of variants) {
+          const slots = findDirectSlotContainers(variant);
+          slots.sort((a, b) => compareVisualSortScore(a, b, variant));
+          const slotNameIndex = /* @__PURE__ */ new Map();
+          for (const slotFrame of slots) {
+            sanitizeSlotFrame(slotFrame, slotFrame.parent);
+            const rawName = slotFrame.name.trim();
+            const baseSlotName = rawName || "Slot";
+            let propName = baseSlotName;
+            const countMatching = slots.filter((s) => s.name.trim().toLowerCase() === baseSlotName.toLowerCase()).length;
+            if (countMatching > 1) {
+              const idx = (slotNameIndex.get(baseSlotName) || 0) + 1;
+              slotNameIndex.set(baseSlotName, idx);
+              propName = `${baseSlotName} ${idx}`;
+            }
+            if (!defsByGroup.group6.has(propName)) {
+              defsByGroup.group6.set(propName, {
+                name: propName,
+                group: 6,
+                type: "SLOT",
+                representativeNode: slotFrame,
+                bindings: []
+              });
+            }
+            const slotDef = defsByGroup.group6.get(propName);
+            if (variant === primaryVariant) {
+              slotDef.representativeNode = slotFrame;
+            }
+            if (!slotDef.bindings.some((b) => b.node === slotFrame && b.refType === "slot")) {
+              slotDef.bindings.push({ node: slotFrame, refType: "slot" });
+            }
           }
         }
       }
-    }
-    const sortGroup = (map) => {
-      const list = Array.from(map.values());
-      list.sort((a, b) => {
-        if (a.representativeNode && b.representativeNode) {
-          return compareVisualSortScore(a.representativeNode, b.representativeNode, primaryVariant);
+      const isDisallowedProp = (name, type) => {
+        if (isSystemOrIgnoredPropName(name)) return true;
+        const lower = name.toLowerCase().replace(/[\s_#\d-]+/g, "");
+        if (lower === "showslot" || lower.startsWith("showslot")) return true;
+        if (lower === "slot" && type !== "SLOT") return true;
+        if (lower === "showitem" || lower.startsWith("showitem")) return true;
+        if (lower === "item" && (type === "INSTANCE_SWAP" || type === "BOOLEAN")) return true;
+        return false;
+      };
+      for (const key of Object.keys(oldDefs)) {
+        const oldDef = oldDefs[key];
+        if (!oldDef || oldDef.type === "VARIANT" || oldDef.type === "SLOT") continue;
+        const cleanName = key.split("#")[0].trim();
+        if (isDisallowedProp(cleanName, oldDef.type) || isIgnoredName(cleanName) || isIgnoredName(key)) continue;
+        const bindings = (existingBindingsByPropKey.get(key) || []).filter((b) => !isInsideSlot(b.node, primaryVariant));
+        if (bindings.length === 0) continue;
+        const repNode = ((_j = bindings.find((b) => primaryVariant === propertyHost || !b.node.parent || b.node.id.startsWith(primaryVariant.id.split(";")[0]))) == null ? void 0 : _j.node) || bindings[0].node;
+        if (isInsideSlot(repNode, primaryVariant)) continue;
+        if (oldDef.type === "BOOLEAN") {
+          if (!defsByGroup.group3.has(cleanName)) {
+            defsByGroup.group3.set(cleanName, {
+              name: cleanName,
+              group: 3,
+              type: "BOOLEAN",
+              defaultValue: Boolean(oldDef.defaultValue),
+              representativeNode: repNode,
+              bindings
+            });
+          } else {
+            const existing = defsByGroup.group3.get(cleanName);
+            existing.defaultValue = Boolean(oldDef.defaultValue);
+          }
+        } else if (oldDef.type === "TEXT") {
+          if (!defsByGroup.group4.has(cleanName)) {
+            defsByGroup.group4.set(cleanName, {
+              name: cleanName,
+              group: 4,
+              type: "TEXT",
+              defaultValue: cleanName,
+              representativeNode: repNode,
+              bindings
+            });
+          } else {
+            const existing = defsByGroup.group4.get(cleanName);
+            existing.defaultValue = existing.name;
+          }
+        } else if (oldDef.type === "INSTANCE_SWAP") {
+          if (!defsByGroup.group5.has(cleanName)) {
+            defsByGroup.group5.set(cleanName, {
+              name: cleanName,
+              group: 5,
+              type: "INSTANCE_SWAP",
+              defaultValue: String(oldDef.defaultValue),
+              preferredValues: oldDef.preferredValues,
+              representativeNode: repNode,
+              bindings
+            });
+          } else {
+            const existing = defsByGroup.group5.get(cleanName);
+            if (oldDef.preferredValues && !existing.preferredValues) {
+              existing.preferredValues = oldDef.preferredValues;
+            }
+          }
         }
-        if (a.representativeNode) return -1;
-        if (b.representativeNode) return 1;
-        return a.name.localeCompare(b.name);
-      });
-      return list;
-    };
-    const sortedGroup3 = sortGroup(defsByGroup.group3);
-    const sortedGroup4 = sortGroup(defsByGroup.group4);
-    const sortedGroup5 = sortGroup(defsByGroup.group5);
-    const sortedGroup6 = sortGroup(defsByGroup.group6);
-    const fullSortedList = [...sortedGroup3, ...sortedGroup4, ...sortedGroup5, ...sortedGroup6];
-    const existingPropKeysByNameAndType = /* @__PURE__ */ new Map();
-    const currentNonVariantOrder = [];
-    for (const key of Object.keys(oldDefs)) {
-      const d = oldDefs[key];
-      if (!d || d.type === "VARIANT") continue;
-      const clean = key.split("#")[0].trim().toLowerCase();
-      existingPropKeysByNameAndType.set(`${d.type}:${clean}`, key);
-      currentNonVariantOrder.push({ type: d.type, name: clean });
-    }
-    const usedPropNamesCheck = /* @__PURE__ */ new Set();
-    const targetNonVariantOrder = [];
-    for (const def of fullSortedList) {
-      let fname = def.name;
-      let cnt = 1;
-      while (usedPropNamesCheck.has(fname.toLowerCase())) {
-        cnt++;
-        fname = `${def.name} ${cnt}`;
       }
-      usedPropNamesCheck.add(fname.toLowerCase());
-      targetNonVariantOrder.push({ type: def.type, name: fname.toLowerCase() });
-    }
-    const isOrderAlreadyExact = currentNonVariantOrder.length === targetNonVariantOrder.length && currentNonVariantOrder.every(
-      (item, idx) => item.type === targetNonVariantOrder[idx].type && item.name === targetNonVariantOrder[idx].name
-    );
-    if (!isOrderAlreadyExact) {
+      const sortGroup = (map) => {
+        const list = Array.from(map.values());
+        list.sort((a, b) => {
+          if (a.representativeNode && b.representativeNode) {
+            return compareVisualSortScore(a.representativeNode, b.representativeNode, primaryVariant);
+          }
+          if (a.representativeNode) return -1;
+          if (b.representativeNode) return 1;
+          return a.name.localeCompare(b.name);
+        });
+        return list;
+      };
+      const sortedGroup3 = sortGroup(defsByGroup.group3);
+      const sortedGroup4 = sortGroup(defsByGroup.group4);
+      const sortedGroup5 = sortGroup(defsByGroup.group5);
+      const sortedGroup6 = sortGroup(defsByGroup.group6);
+      const fullSortedList = [...sortedGroup3, ...sortedGroup4, ...sortedGroup5, ...sortedGroup6];
+      const existingPropKeysByNameAndType = /* @__PURE__ */ new Map();
+      const currentNonVariantOrder = [];
       for (const key of Object.keys(oldDefs)) {
         const d = oldDefs[key];
-        if (d && d.type !== "VARIANT" && d.type !== "SLOT") {
-          try {
-            propertyHost.deleteComponentProperty(key);
-          } catch (delErr) {
-            console.warn(`[AutoProps] Could not delete property ${key} on ${propertyHost.name}:`, delErr);
-          }
+        if (!d || d.type === "VARIANT") continue;
+        const clean = key.split("#")[0].trim().toLowerCase();
+        existingPropKeysByNameAndType.set(`${d.type}:${clean}`, key);
+        currentNonVariantOrder.push({ type: d.type, name: clean });
+      }
+      const usedPropNamesCheck = /* @__PURE__ */ new Set();
+      const targetNonVariantOrder = [];
+      for (const def of fullSortedList) {
+        let fname = def.name;
+        let cnt = 1;
+        while (usedPropNamesCheck.has(fname.toLowerCase())) {
+          cnt++;
+          fname = `${def.name} ${cnt}`;
         }
+        usedPropNamesCheck.add(fname.toLowerCase());
+        targetNonVariantOrder.push({ type: def.type, name: fname.toLowerCase() });
       }
-      existingPropKeysByNameAndType.clear();
-    }
-    const usedPropNames = /* @__PURE__ */ new Set();
-    const usedSlotKeys = /* @__PURE__ */ new Set();
-    const usedExistingKeys = /* @__PURE__ */ new Set();
-    for (const def of fullSortedList) {
-      let finalPropName = def.name;
-      let counter = 1;
-      while (usedPropNames.has(finalPropName.toLowerCase())) {
-        counter++;
-        finalPropName = `${def.name} ${counter}`;
-      }
-      usedPropNames.add(finalPropName.toLowerCase());
-      let newKey = null;
-      const existingMatchedKey = existingPropKeysByNameAndType.get(`${def.type}:${finalPropName.toLowerCase()}`);
-      try {
-        if (existingMatchedKey && !usedExistingKeys.has(existingMatchedKey) && def.type !== "SLOT") {
-          newKey = existingMatchedKey;
-          usedExistingKeys.add(existingMatchedKey);
-          if (def.type === "TEXT" && propertyHost.editComponentProperty) {
-            const curDef = (propertyHost.componentPropertyDefinitions || {})[newKey];
-            if (curDef && String(curDef.defaultValue) !== finalPropName) {
-              try {
-                propertyHost.editComponentProperty(newKey, { defaultValue: finalPropName });
-              } catch (_) {
-              }
+      const isOrderAlreadyExact = currentNonVariantOrder.length === targetNonVariantOrder.length && currentNonVariantOrder.every(
+        (item, idx) => item.type === targetNonVariantOrder[idx].type && item.name === targetNonVariantOrder[idx].name
+      );
+      if (!isOrderAlreadyExact) {
+        for (const key of Object.keys(oldDefs)) {
+          const d = oldDefs[key];
+          if (d && d.type !== "VARIANT" && d.type !== "SLOT") {
+            try {
+              propertyHost.deleteComponentProperty(key);
+            } catch (delErr) {
+              console.warn(`[AutoProps] Could not delete property ${key} on ${propertyHost.name}:`, delErr);
             }
           }
-        } else if (def.type === "BOOLEAN") {
-          newKey = propertyHost.addComponentProperty(finalPropName, "BOOLEAN", Boolean(def.defaultValue));
-          booleanPropsCount++;
-        } else if (def.type === "TEXT") {
-          newKey = propertyHost.addComponentProperty(finalPropName, "TEXT", finalPropName);
-          textPropsCount++;
-        } else if (def.type === "INSTANCE_SWAP") {
-          newKey = propertyHost.addComponentProperty(
-            finalPropName,
-            "INSTANCE_SWAP",
-            String(def.defaultValue),
-            def.preferredValues ? { preferredValues: def.preferredValues } : void 0
-          );
-          instanceSwapPropsCount++;
-        } else if (def.type === "SLOT") {
-          const currentDefs = propertyHost.componentPropertyDefinitions || {};
-          let matchedKey = Object.keys(currentDefs).find((k) => {
-            if (usedSlotKeys.has(k)) return false;
-            const d = currentDefs[k];
-            if (!d || d.type !== "SLOT") return false;
-            const clean = k.split("#")[0].trim().toLowerCase();
-            return clean === finalPropName.toLowerCase();
-          });
-          if (!matchedKey) {
-            matchedKey = Object.keys(currentDefs).find((k) => {
+        }
+        existingPropKeysByNameAndType.clear();
+      }
+      const usedPropNames = /* @__PURE__ */ new Set();
+      const usedSlotKeys = /* @__PURE__ */ new Set();
+      const usedExistingKeys = /* @__PURE__ */ new Set();
+      for (const def of fullSortedList) {
+        if (isIgnoredName(def.name)) continue;
+        let finalPropName = def.name;
+        let counter = 1;
+        while (usedPropNames.has(finalPropName.toLowerCase())) {
+          counter++;
+          finalPropName = `${def.name} ${counter}`;
+        }
+        if (isIgnoredName(finalPropName)) continue;
+        usedPropNames.add(finalPropName.toLowerCase());
+        let newKey = null;
+        const existingMatchedKey = existingPropKeysByNameAndType.get(`${def.type}:${finalPropName.toLowerCase()}`);
+        try {
+          if (existingMatchedKey && !usedExistingKeys.has(existingMatchedKey) && def.type !== "SLOT") {
+            newKey = existingMatchedKey;
+            usedExistingKeys.add(existingMatchedKey);
+            if (def.type === "TEXT" && propertyHost.editComponentProperty) {
+              const curDef = safeGetComponentPropertyDefinitions(propertyHost)[newKey];
+              if (curDef && String(curDef.defaultValue) !== finalPropName) {
+                try {
+                  propertyHost.editComponentProperty(newKey, { defaultValue: finalPropName });
+                } catch (_) {
+                }
+              }
+            }
+          } else if (def.type === "BOOLEAN") {
+            newKey = propertyHost.addComponentProperty(finalPropName, "BOOLEAN", Boolean(def.defaultValue));
+            booleanPropsCount++;
+          } else if (def.type === "TEXT") {
+            newKey = propertyHost.addComponentProperty(finalPropName, "TEXT", finalPropName);
+            textPropsCount++;
+          } else if (def.type === "INSTANCE_SWAP") {
+            newKey = propertyHost.addComponentProperty(
+              finalPropName,
+              "INSTANCE_SWAP",
+              String(def.defaultValue),
+              def.preferredValues ? { preferredValues: def.preferredValues } : void 0
+            );
+            instanceSwapPropsCount++;
+          } else if (def.type === "SLOT") {
+            const currentDefs = safeGetComponentPropertyDefinitions(propertyHost);
+            let matchedKey = Object.keys(currentDefs).find((k) => {
               if (usedSlotKeys.has(k)) return false;
               const d = currentDefs[k];
-              return d && d.type === "SLOT";
+              if (!d || d.type !== "SLOT") return false;
+              const clean = k.split("#")[0].trim().toLowerCase();
+              return clean === finalPropName.toLowerCase();
             });
-            if (matchedKey && propertyHost.editComponentProperty) {
-              try {
-                propertyHost.editComponentProperty(matchedKey, { name: finalPropName });
-              } catch (_) {
-              }
-            }
-          }
-          if (matchedKey) {
-            newKey = matchedKey;
-          } else {
-            try {
-              newKey = propertyHost.addComponentProperty(finalPropName, "SLOT", "");
-            } catch (e1) {
-              try {
-                newKey = propertyHost.addComponentProperty(finalPropName, "SLOT");
-              } catch (e2) {
-                console.warn(`[AutoProps] Failed to addComponentProperty SLOT "${finalPropName}":`, e2);
-              }
-            }
-          }
-          if (newKey) {
-            usedSlotKeys.add(newKey);
-            usedExistingKeys.add(newKey);
-          }
-        }
-      } catch (addErr) {
-        console.warn(`[AutoProps] Failed to addComponentProperty "${finalPropName}" on ${propertyHost.name}:`, addErr);
-      }
-      if (newKey) {
-        for (const binding of def.bindings) {
-          try {
-            if (binding.refType === "characters" && binding.node.type === "TEXT") {
-              const textNode = binding.node;
-              if (textNode.characters !== finalPropName) {
-                syncSetCharacters(textNode, finalPropName);
-              }
-            }
-            if (binding.refType === "slot") {
-              sanitizeSlotFrame(binding.node, binding.node.parent);
-              const currentSlotRef = ((_j = binding.node.componentPropertyReferences) == null ? void 0 : _j.slot) || ((_k = binding.node.componentPropertyReferences) == null ? void 0 : _k.mainComponent);
-              if (currentSlotRef !== newKey) {
+            if (!matchedKey) {
+              matchedKey = Object.keys(currentDefs).find((k) => {
+                if (usedSlotKeys.has(k)) return false;
+                const d = currentDefs[k];
+                return d && d.type === "SLOT";
+              });
+              if (matchedKey && propertyHost.editComponentProperty) {
                 try {
-                  binding.node.componentPropertyReferences = {
-                    ...binding.node.componentPropertyReferences || {},
-                    slot: newKey
-                  };
-                } catch (err1) {
+                  propertyHost.editComponentProperty(matchedKey, { name: finalPropName });
+                } catch (_) {
+                }
+              }
+            }
+            if (matchedKey) {
+              newKey = matchedKey;
+            } else {
+              try {
+                newKey = propertyHost.addComponentProperty(finalPropName, "SLOT", "");
+              } catch (e1) {
+                try {
+                  newKey = propertyHost.addComponentProperty(finalPropName, "SLOT");
+                } catch (e2) {
+                  console.warn(`[AutoProps] Failed to addComponentProperty SLOT "${finalPropName}":`, e2);
+                }
+              }
+            }
+            if (newKey) {
+              usedSlotKeys.add(newKey);
+              usedExistingKeys.add(newKey);
+            }
+          }
+        } catch (addErr) {
+          console.warn(`[AutoProps] Failed to addComponentProperty "${finalPropName}" on ${propertyHost.name}:`, addErr);
+        }
+        if (newKey) {
+          for (const binding of def.bindings) {
+            try {
+              if (binding.refType === "characters" && binding.node.type === "TEXT") {
+                const textNode = binding.node;
+                if (textNode.characters !== finalPropName) {
+                  syncSetCharacters(textNode, finalPropName);
+                }
+              }
+              if (binding.refType === "slot") {
+                sanitizeSlotFrame(binding.node, binding.node.parent);
+                const currentSlotRef = ((_k = binding.node.componentPropertyReferences) == null ? void 0 : _k.slot) || ((_l = binding.node.componentPropertyReferences) == null ? void 0 : _l.mainComponent);
+                if (currentSlotRef !== newKey) {
                   try {
                     binding.node.componentPropertyReferences = {
                       ...binding.node.componentPropertyReferences || {},
-                      mainComponent: newKey
+                      slot: newKey
                     };
-                  } catch (err2) {
-                    console.warn(`[AutoProps] Could not set slot reference on ${binding.node.name}:`, err2);
+                  } catch (err1) {
+                    try {
+                      binding.node.componentPropertyReferences = {
+                        ...binding.node.componentPropertyReferences || {},
+                        mainComponent: newKey
+                      };
+                    } catch (err2) {
+                      console.warn(`[AutoProps] Could not set slot reference on ${binding.node.name}:`, err2);
+                    }
+                  }
+                }
+              } else {
+                const currentRef = (_m = binding.node.componentPropertyReferences) == null ? void 0 : _m[binding.refType];
+                if (currentRef !== newKey) {
+                  try {
+                    binding.node.componentPropertyReferences = {
+                      ...binding.node.componentPropertyReferences || {},
+                      [binding.refType]: newKey
+                    };
+                  } catch (_) {
                   }
                 }
               }
-            } else {
-              const currentRef = (_l = binding.node.componentPropertyReferences) == null ? void 0 : _l[binding.refType];
-              if (currentRef !== newKey) {
-                binding.node.componentPropertyReferences = {
-                  ...binding.node.componentPropertyReferences || {},
-                  [binding.refType]: newKey
-                };
-              }
+            } catch (bindErr) {
+              console.warn(`[AutoProps] Could not set ${binding.refType} reference on ${binding.node.name}:`, bindErr);
             }
-          } catch (bindErr) {
-            console.warn(`[AutoProps] Could not set ${binding.refType} reference on ${binding.node.name}:`, bindErr);
           }
         }
       }
-    }
-    const postDefs = propertyHost.componentPropertyDefinitions || {};
-    for (const k of Object.keys(postDefs)) {
-      const d = postDefs[k];
-      if (!d || d.type === "VARIANT") continue;
-      if (d.type === "SLOT") {
-        if (!usedSlotKeys.has(k)) {
-          try {
-            propertyHost.deleteComponentProperty(k);
-          } catch (delSlotErr) {
-            console.warn(`[AutoProps] Could not delete redundant slot property ${k} on ${propertyHost.name}:`, delSlotErr);
+      const postDefs = safeGetComponentPropertyDefinitions(propertyHost);
+      for (const k of Object.keys(postDefs)) {
+        const d = postDefs[k];
+        if (!d || d.type === "VARIANT") continue;
+        if (d.type === "SLOT") {
+          if (!usedSlotKeys.has(k)) {
+            try {
+              propertyHost.deleteComponentProperty(k);
+            } catch (delSlotErr) {
+              console.warn(`[AutoProps] Could not delete redundant slot property ${k} on ${propertyHost.name}:`, delSlotErr);
+            }
           }
-        }
-      } else if (!usedExistingKeys.has(k)) {
-        const clean = k.split("#")[0].trim().toLowerCase();
-        if (!usedPropNames.has(clean)) {
-          try {
-            propertyHost.deleteComponentProperty(k);
-          } catch (delErr) {
-            console.warn(`[AutoProps] Could not delete obsolete property ${k} on ${propertyHost.name}:`, delErr);
+        } else if (!usedExistingKeys.has(k)) {
+          const clean = k.split("#")[0].trim().toLowerCase();
+          if (!usedPropNames.has(clean)) {
+            try {
+              propertyHost.deleteComponentProperty(k);
+            } catch (delErr) {
+              console.warn(`[AutoProps] Could not delete obsolete property ${k} on ${propertyHost.name}:`, delErr);
+            }
           }
         }
       }
+      try {
+        purgeIgnoredPropertiesAndReferencesSync(propertyHost);
+      } catch (_) {
+      }
+      return { textPropsCount, instanceSwapPropsCount, booleanPropsCount, nestedInstancesCount };
+    } catch (err) {
+      console.warn("[cleanRebuildComponentProperties] Error caught:", err);
+      return { textPropsCount, instanceSwapPropsCount, booleanPropsCount, nestedInstancesCount };
     }
-    return { textPropsCount, instanceSwapPropsCount, booleanPropsCount, nestedInstancesCount };
   }
 
-  // ../../../../plugins/components-setup/src/components/canvas.ts
+  // src/components/canvas.ts
   function reorderComponentSetVariants(compSet) {
     const variants = compSet.children.filter((c) => c.type === "COMPONENT");
     if (variants.length === 0) return;
@@ -8111,7 +8784,7 @@ ${usageJsx}
     figma.notify(`Moved ${totalMoved} element${totalMoved > 1 ? "s" : ""} to "    \u{1F537} Components" & arranged grid! \u{1F680}\u{1F4D0}`);
   }
 
-  // ../../../../plugins/components-setup/src/properties/sanitizer.ts
+  // src/properties/sanitizer.ts
   function collectComponentTargets(nodes) {
     const targets = /* @__PURE__ */ new Set();
     function addComponentWithRelations(comp) {
@@ -8177,7 +8850,20 @@ ${usageJsx}
     var _a;
     if (!compSet || compSet.type !== "COMPONENT_SET") return 0;
     const variants = compSet.children.filter((c) => c.type === "COMPONENT");
-    if (variants.length <= 1) return 0;
+    if (variants.length <= 1) {
+      if (variants.length === 1) {
+        const v = variants[0];
+        const raw = (v.name || "").trim();
+        if (!raw.includes("=")) {
+          try {
+            v.name = `Type=${toPascalCase(raw) || "Default"}`;
+            return 1;
+          } catch (_) {
+          }
+        }
+      }
+      return 0;
+    }
     let resolvedCount = 0;
     function parseVariantProps(name) {
       const rawParts = (name || "").split(",").map((p) => p.trim()).filter((p) => p.length > 0);
@@ -8206,7 +8892,7 @@ ${usageJsx}
     const allPropertyKeys = [];
     const allPropertyKeysLower = /* @__PURE__ */ new Set();
     try {
-      const defs = compSet.componentPropertyDefinitions;
+      const defs = safeGetComponentPropertyDefinitions(compSet);
       if (defs) {
         for (const propKey of Object.keys(defs)) {
           if (((_a = defs[propKey]) == null ? void 0 : _a.type) === "VARIANT") {
@@ -8359,8 +9045,13 @@ ${usageJsx}
           while (changed && iterations < 30) {
             changed = false;
             iterations++;
-            const defs = target.componentPropertyDefinitions;
-            if (!defs) break;
+            let defs = {};
+            try {
+              defs = safeGetComponentPropertyDefinitions(target);
+            } catch (_) {
+              break;
+            }
+            if (!defs || Object.keys(defs).length === 0) break;
             for (const propKey of Object.keys(defs)) {
               const def = defs[propKey];
               const rawName = propKey.split("#")[0].trim();
@@ -8430,7 +9121,8 @@ ${usageJsx}
             }
           }
           try {
-            const finalDefs = target.componentPropertyDefinitions || {};
+            await purgeIgnoredPropertiesAndReferences(target);
+            const finalDefs = safeGetComponentPropertyDefinitions(target);
             const nonVariantKeys = Object.keys(finalDefs).filter((k) => finalDefs[k] && finalDefs[k].type !== "VARIANT");
             if (nonVariantKeys.length > 1) {
               const variants = target.type === "COMPONENT_SET" ? target.children.filter((c) => c.type === "COMPONENT") : [target];
@@ -8483,7 +9175,1034 @@ ${usageJsx}
     }
   }
 
-  // ../../../../plugins/components-setup/src/renamer/textClassifier.ts
+  // src/variables/autoBinder.ts
+  var sessionVariablesLoaded = false;
+  var sessionAllColsMap = /* @__PURE__ */ new Map();
+  var sessionAllVarsMap = /* @__PURE__ */ new Map();
+  var CACHED_VARIABLES_MAP = sessionAllVarsMap;
+  var CACHED_TEXT_STYLES = [];
+  var CACHED_STYLE_ID_TO_LABEL_MAP = /* @__PURE__ */ new Map();
+  var sessionTextStylesLoaded = false;
+  var sessionPrecomputedMetrics = null;
+  var sessionPrecomputedColors = null;
+  var sessionImportedStylesCache = /* @__PURE__ */ new Map();
+  function normalizeFontWeight(styleName) {
+    if (!styleName) return "regular";
+    let s = styleName.toLowerCase().replace(/[\s\-_]+/g, "");
+    s = s.replace(/italic|oblique|slanted/g, "");
+    if (!s || s === "normal" || s === "book" || s === "roman" || s === "text" || s === "400" || s === "base") {
+      return "regular";
+    }
+    if (s === "500" || s === "medium") {
+      return "medium";
+    }
+    if (s === "600" || s === "demibold" || s === "semibold") {
+      return "semibold";
+    }
+    if (s === "700" || s === "heavy" || s === "bold") {
+      return "bold";
+    }
+    if (s === "800" || s === "extrabold" || s === "ultrabold") {
+      return "extrabold";
+    }
+    if (s === "900" || s === "black" || s === "extrablack" || s === "ultrablack") {
+      return "black";
+    }
+    if (s === "300" || s === "light") {
+      return "light";
+    }
+    if (s === "100" || s === "thin" || s === "hairline") {
+      return "thin";
+    }
+    if (s === "200" || s === "extralight" || s === "ultralight") {
+      return "extralight";
+    }
+    if (s.includes("semibold") || s.includes("demibold")) return "semibold";
+    if (s.includes("extrabold") || s.includes("ultrabold") || s.includes("heavy")) return "extrabold";
+    if (s.includes("bold")) return "bold";
+    if (s.includes("medium")) return "medium";
+    if (s.includes("light")) return "light";
+    if (s.includes("black")) return "black";
+    if (s.includes("thin")) return "thin";
+    return s;
+  }
+  function calculateLineHeightPx(fontSize, lineHeight) {
+    if (!lineHeight) return null;
+    if (lineHeight.unit === "PIXELS") {
+      return Math.round(lineHeight.value);
+    }
+    if (lineHeight.unit === "PERCENT") {
+      return Math.round(fontSize * (lineHeight.value / 100));
+    }
+    return null;
+  }
+  async function extractStyleTypographyParams(style, consumerNode) {
+    var _a, _b, _c, _d, _e, _f;
+    let family = ((_a = style.fontName) == null ? void 0 : _a.family) || "";
+    let styleName = ((_b = style.fontName) == null ? void 0 : _b.style) || "";
+    let fontSize = style.fontSize;
+    let lineHeightPx = calculateLineHeightPx(fontSize, style.lineHeight);
+    const boundVars = style.boundVariables;
+    if (boundVars) {
+      async function resolveRawVarValue(varId) {
+        let v = sessionAllVarsMap.get(varId);
+        if (!v) {
+          try {
+            v = await figma.variables.getVariableByIdAsync(varId) || void 0;
+            if (v) sessionAllVarsMap.set(v.id, v);
+          } catch (e) {
+          }
+        }
+        if (!v) return null;
+        if (consumerNode && typeof v.resolveForConsumer === "function") {
+          try {
+            const res = v.resolveForConsumer(consumerNode);
+            if (res && res.value !== void 0 && res.value !== null) {
+              return res.value;
+            }
+          } catch (e) {
+          }
+        }
+        let val = Object.values(v.valuesByMode)[0];
+        if (val && typeof val === "object" && val.type === "VARIABLE_ALIAS") {
+          return resolveRawVarValue(val.id);
+        }
+        return val;
+      }
+      const fontFamVarId = ((_c = boundVars.fontFamily) == null ? void 0 : _c.id) || boundVars.fontFamily;
+      if (fontFamVarId && typeof fontFamVarId === "string") {
+        try {
+          const val = await resolveRawVarValue(fontFamVarId);
+          if (typeof val === "string" && val.trim().length > 0) {
+            family = val.trim();
+          }
+        } catch (e) {
+        }
+      }
+      const fontStyleVarId = ((_d = boundVars.fontStyle) == null ? void 0 : _d.id) || boundVars.fontStyle;
+      if (fontStyleVarId && typeof fontStyleVarId === "string") {
+        try {
+          const val = await resolveRawVarValue(fontStyleVarId);
+          if (typeof val === "string" && val.trim().length > 0) {
+            styleName = val.trim();
+          } else {
+            let v = sessionAllVarsMap.get(fontStyleVarId);
+            if (v) {
+              const vName = v.name.toLowerCase();
+              if (vName.includes("base") || vName.includes("regular")) styleName = "Regular";
+              else if (vName.includes("semibold")) styleName = "SemiBold";
+              else if (vName.includes("bold")) styleName = "Bold";
+              else if (vName.includes("medium")) styleName = "Medium";
+              else if (vName.includes("light")) styleName = "Light";
+            }
+          }
+        } catch (e) {
+        }
+      }
+      const fontSizeVarId = ((_e = boundVars.fontSize) == null ? void 0 : _e.id) || boundVars.fontSize;
+      if (fontSizeVarId && typeof fontSizeVarId === "string") {
+        try {
+          const val = await resolveRawVarValue(fontSizeVarId);
+          if (typeof val === "number" && val > 0) {
+            fontSize = val;
+          }
+        } catch (e) {
+        }
+      }
+      const lineHeightVarId = ((_f = boundVars.lineHeight) == null ? void 0 : _f.id) || boundVars.lineHeight;
+      if (lineHeightVarId && typeof lineHeightVarId === "string") {
+        try {
+          const val = await resolveRawVarValue(lineHeightVarId);
+          if (typeof val === "number" && val > 0) {
+            lineHeightPx = Math.round(val);
+          }
+        } catch (e) {
+        }
+      }
+    }
+    if (!family || family.toLowerCase().includes("default") || family.toLowerCase().includes("fontfamily")) {
+      try {
+        const localVars = await figma.variables.getLocalVariablesAsync();
+        const defaultFamVar = localVars.find(
+          (v) => v.name.toLowerCase() === "fontfamily/default" || v.name.toLowerCase() === "fontfamily"
+        );
+        if (defaultFamVar) {
+          if (consumerNode && typeof defaultFamVar.resolveForConsumer === "function") {
+            try {
+              const res = defaultFamVar.resolveForConsumer(consumerNode);
+              if (res && typeof res.value === "string" && res.value.trim().length > 0) {
+                family = res.value.trim();
+              }
+            } catch (e) {
+            }
+          }
+          if (!family || family.toLowerCase().includes("default")) {
+            let vVal = Object.values(defaultFamVar.valuesByMode)[0];
+            if (vVal && typeof vVal === "object" && vVal.type === "VARIABLE_ALIAS") {
+              const aliased = await figma.variables.getVariableByIdAsync(vVal.id);
+              if (aliased) vVal = Object.values(aliased.valuesByMode)[0];
+            }
+            if (typeof vVal === "string") family = vVal;
+          }
+        }
+      } catch (e) {
+      }
+    }
+    return {
+      family: family.trim().toLowerCase(),
+      weight: normalizeFontWeight(styleName),
+      fontSize,
+      lineHeightPx
+    };
+  }
+  async function syncLibraryTextStylesToCache() {
+    const localStyles = await figma.getLocalTextStylesAsync();
+    const catalog = [];
+    for (const style of localStyles) {
+      if (!style.key) continue;
+      const params = await extractStyleTypographyParams(style);
+      catalog.push({
+        key: style.key,
+        name: style.name,
+        description: style.description || "",
+        family: params.family,
+        weight: params.weight,
+        fontSize: params.fontSize,
+        lineHeightPx: params.lineHeightPx
+      });
+    }
+    await figma.clientStorage.setAsync("ds_library_text_styles", catalog);
+    sessionTextStylesLoaded = false;
+    CACHED_TEXT_STYLES = [];
+    return catalog.length;
+  }
+  async function getLibraryStylesCacheCount() {
+    try {
+      const cachedCatalog = await figma.clientStorage.getAsync("ds_library_text_styles");
+      return Array.isArray(cachedCatalog) ? cachedCatalog.length : 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+  async function getAllAvailableTextStyles(forceRefresh = false, consumerNode) {
+    if (!forceRefresh && sessionTextStylesLoaded && CACHED_TEXT_STYLES.length > 0) {
+      return CACHED_TEXT_STYLES;
+    }
+    const result = [];
+    const seenKeys = /* @__PURE__ */ new Set();
+    try {
+      const localStyles = await figma.getLocalTextStylesAsync();
+      for (const style of localStyles) {
+        const params = await extractStyleTypographyParams(style, consumerNode);
+        if (style.key) seenKeys.add(style.key);
+        const label = style.description ? `${style.name} ${style.description}` : style.name;
+        CACHED_STYLE_ID_TO_LABEL_MAP.set(style.id, label);
+        result.push({
+          id: style.id,
+          key: style.key,
+          name: style.name,
+          description: style.description,
+          family: params.family,
+          weightStyle: params.weight,
+          fontSize: params.fontSize,
+          lineHeightPx: params.lineHeightPx,
+          style
+        });
+      }
+    } catch (e) {
+      console.warn("Error fetching local text styles:", e);
+    }
+    try {
+      const cachedCatalog = await figma.clientStorage.getAsync("ds_library_text_styles");
+      if (Array.isArray(cachedCatalog)) {
+        for (const item of cachedCatalog) {
+          if (!item.key || seenKeys.has(item.key)) continue;
+          seenKeys.add(item.key);
+          result.push({
+            key: item.key,
+            name: item.name,
+            description: item.description,
+            family: (item.family || "").trim().toLowerCase(),
+            weightStyle: normalizeFontWeight(item.weight),
+            fontSize: item.fontSize,
+            lineHeightPx: item.lineHeightPx,
+            isRemoteCached: true
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("Error reading ds_library_text_styles:", e);
+    }
+    CACHED_TEXT_STYLES = result;
+    sessionTextStylesLoaded = true;
+    return result;
+  }
+  function matchTextStyleForSpec(family, styleName, fontSize, lineHeight, nodeName, indexedStyles, options) {
+    if (!indexedStyles || indexedStyles.length === 0) return null;
+    const targetFamily = (family || "").trim().toLowerCase();
+    const targetWeight = normalizeFontWeight(styleName);
+    let targetLineHeightPx = null;
+    if (typeof lineHeight === "number") {
+      targetLineHeightPx = Math.round(lineHeight);
+    } else if (lineHeight && typeof lineHeight === "object" && "unit" in lineHeight) {
+      targetLineHeightPx = calculateLineHeightPx(fontSize, lineHeight);
+    }
+    const candidates = indexedStyles.filter((cand) => {
+      if (!options.ignoreFontFamily && cand.family && cand.family !== targetFamily) {
+        return false;
+      }
+      if (cand.weightStyle !== targetWeight) {
+        return false;
+      }
+      if (Math.abs(cand.fontSize - fontSize) >= 0.5) {
+        return false;
+      }
+      return true;
+    });
+    if (candidates.length === 0) return null;
+    let matchedCandidates = candidates.filter((cand) => {
+      if (targetLineHeightPx === null) {
+        return cand.lineHeightPx === null;
+      }
+      if (cand.lineHeightPx === null) {
+        return false;
+      }
+      return Math.abs(cand.lineHeightPx - targetLineHeightPx) <= 1;
+    });
+    if (matchedCandidates.length === 0 && targetLineHeightPx === null) {
+      matchedCandidates = [...candidates];
+    }
+    if (matchedCandidates.length === 0 && options.mode === "snap" && targetLineHeightPx !== null) {
+      matchedCandidates = candidates.filter((cand) => {
+        if (cand.lineHeightPx === null) return false;
+        return Math.abs(cand.lineHeightPx - targetLineHeightPx) <= 2;
+      });
+    }
+    if (matchedCandidates.length === 0) return null;
+    const nName = (nodeName || "").toLowerCase();
+    function getSemanticScore(cand) {
+      const sName = (cand.name || "").toLowerCase();
+      const sDesc = (cand.description || "").toLowerCase();
+      const fullText = `${sName} ${sDesc}`;
+      let score = 0;
+      if (nName.includes("heading") || nName.includes("headline") || nName.includes("hero")) {
+        if (fullText.includes("headline") || fullText.includes("display") || fullText.includes("heading")) score += 100;
+      } else if (nName.includes("title") || nName.includes("subtitle")) {
+        if (fullText.includes("title")) score += 100;
+      } else if (nName.includes("description") || nName.includes("body") || nName.includes("copy") || nName.includes("paragraph") || nName.includes("text")) {
+        if (fullText.includes("body") || fullText.includes("paragraph")) score += 100;
+      } else if (nName.includes("label") || nName.includes("caption") || nName.includes("meta") || nName.includes("timestamp") || nName.includes("button") || nName.includes("badge") || nName.includes("value") || nName.includes("eyebrow")) {
+        if (fullText.includes("label") || fullText.includes("caption")) score += 100;
+      }
+      if (sDesc.includes("body") || sDesc.includes("title") || sDesc.includes("label") || sDesc.includes("headline")) {
+        score += 15;
+      }
+      return score;
+    }
+    matchedCandidates.sort((a, b) => {
+      const diffA = targetLineHeightPx !== null && a.lineHeightPx !== null ? Math.abs(a.lineHeightPx - targetLineHeightPx) : 0;
+      const diffB = targetLineHeightPx !== null && b.lineHeightPx !== null ? Math.abs(b.lineHeightPx - targetLineHeightPx) : 0;
+      if (diffA !== diffB) return diffA - diffB;
+      const scoreA = getSemanticScore(a);
+      const scoreB = getSemanticScore(b);
+      return scoreB - scoreA;
+    });
+    return matchedCandidates[0];
+  }
+  function checkScopeMatch(scopes, allowedScopes) {
+    if (!scopes || scopes.length === 0) return false;
+    if (scopes.includes("ALL_SCOPES")) return true;
+    return allowedScopes.some((sc) => scopes.includes(sc));
+  }
+  async function preloadAutoBinderCaches(forceRefresh = false, consumerNode) {
+    if (forceRefresh || !sessionVariablesLoaded || sessionAllVarsMap.size === 0) {
+      sessionVariablesLoaded = false;
+      sessionPrecomputedMetrics = null;
+      sessionPrecomputedColors = null;
+      sessionAllColsMap.clear();
+      sessionAllVarsMap.clear();
+      try {
+        await ensureTemporaryMetricsCollection();
+      } catch (e) {
+      }
+      try {
+        const localCols = await figma.variables.getLocalVariableCollectionsAsync();
+        for (const c of localCols) sessionAllColsMap.set(c.id, c);
+      } catch (e) {
+      }
+      try {
+        const localVars = await figma.variables.getLocalVariablesAsync();
+        for (const v of localVars) sessionAllVarsMap.set(v.id, v);
+      } catch (e) {
+      }
+      try {
+        const relevantVars = await getAllRelevantVariablesForComponentSet();
+        for (const item of relevantVars) {
+          if (item == null ? void 0 : item.variable) sessionAllVarsMap.set(item.variable.id, item.variable);
+        }
+      } catch (e) {
+      }
+      try {
+        const libraryCollections = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
+        for (const libCol of libraryCollections) {
+          if (libCol.name.trim().startsWith("_")) continue;
+          sessionAllColsMap.set(libCol.key, libCol);
+          try {
+            const descriptors = await figma.teamLibrary.getVariablesInLibraryCollectionAsync(libCol.key);
+            const validDescriptors = descriptors.filter((d) => !d.name.trim().startsWith("_"));
+            const imported = await Promise.all(
+              validDescriptors.map((d) => figma.variables.importVariableByKeyAsync(d.key).catch(() => null))
+            );
+            for (const v of imported) {
+              if (v && !v.name.trim().startsWith("_")) {
+                sessionAllVarsMap.set(v.id, v);
+                if (v.variableCollectionId && !sessionAllColsMap.has(v.variableCollectionId)) {
+                  sessionAllColsMap.set(v.variableCollectionId, libCol);
+                }
+              }
+            }
+          } catch (e) {
+          }
+        }
+      } catch (e) {
+      }
+      sessionVariablesLoaded = true;
+    }
+    if (!sessionPrecomputedMetrics || !sessionPrecomputedColors) {
+      const resolvedValueCache = /* @__PURE__ */ new Map();
+      async function resolveVarValue(variable, visited = /* @__PURE__ */ new Set()) {
+        if (resolvedValueCache.has(variable.id)) {
+          return resolvedValueCache.get(variable.id);
+        }
+        if (consumerNode && typeof variable.resolveForConsumer === "function") {
+          try {
+            const res = variable.resolveForConsumer(consumerNode);
+            if (res && res.value !== void 0 && res.value !== null) {
+              if (res.resolvedType === "FLOAT" && typeof res.value === "number") {
+                resolvedValueCache.set(variable.id, res.value);
+                return res.value;
+              }
+              if (res.resolvedType === "COLOR" && res.value && typeof res.value === "object" && "r" in res.value) {
+                const colorVal = {
+                  r: res.value.r,
+                  g: res.value.g,
+                  b: res.value.b,
+                  a: typeof res.value.a === "number" ? res.value.a : 1
+                };
+                resolvedValueCache.set(variable.id, colorVal);
+                return colorVal;
+              }
+            }
+          } catch (e) {
+          }
+        }
+        let val = Object.values(variable.valuesByMode)[0];
+        if (val && typeof val === "object" && "type" in val && val.type === "VARIABLE_ALIAS") {
+          const aliasId = val.id;
+          if (visited.has(aliasId)) return null;
+          visited.add(aliasId);
+          let aliasedVar = sessionAllVarsMap.get(aliasId);
+          if (!aliasedVar) {
+            try {
+              aliasedVar = await figma.variables.getVariableByIdAsync(aliasId) || void 0;
+              if (aliasedVar) sessionAllVarsMap.set(aliasedVar.id, aliasedVar);
+            } catch (e) {
+            }
+          }
+          if (!aliasedVar) return null;
+          const res = await resolveVarValue(aliasedVar, visited);
+          resolvedValueCache.set(variable.id, res);
+          return res;
+        }
+        if (typeof val === "number") {
+          resolvedValueCache.set(variable.id, val);
+          return val;
+        }
+        if (val && typeof val === "object" && "r" in val && "g" in val && "b" in val) {
+          const colorVal = {
+            r: val.r,
+            g: val.g,
+            b: val.b,
+            a: typeof val.a === "number" ? val.a : 1
+          };
+          resolvedValueCache.set(variable.id, colorVal);
+          return colorVal;
+        }
+        resolvedValueCache.set(variable.id, null);
+        return null;
+      }
+      const metricsList = [];
+      const colorsList = [];
+      const allVars = Array.from(sessionAllVarsMap.values());
+      await Promise.all(
+        allVars.map(async (v) => {
+          if (v.name.trim().startsWith("_")) return;
+          if (!v.scopes || v.scopes.length === 0) return;
+          const col = sessionAllColsMap.get(v.variableCollectionId);
+          const colName = col ? col.name.trim() : "";
+          if (colName.startsWith("_")) return;
+          if (v.resolvedType === "FLOAT") {
+            const val = await resolveVarValue(v);
+            if (typeof val === "number") {
+              metricsList.push({
+                variable: v,
+                name: v.name,
+                lowerName: v.name.toLowerCase(),
+                scopes: v.scopes,
+                value: val
+              });
+            }
+          } else if (v.resolvedType === "COLOR") {
+            const colVal = await resolveVarValue(v);
+            if (colVal && typeof colVal === "object" && "r" in colVal) {
+              colorsList.push({
+                variable: v,
+                name: v.name,
+                lowerName: v.name.toLowerCase(),
+                scopes: v.scopes,
+                color: colVal
+              });
+            }
+          }
+        })
+      );
+      sessionPrecomputedMetrics = metricsList;
+      sessionPrecomputedColors = colorsList;
+    }
+    const availableTextStyles = await getAllAvailableTextStyles(forceRefresh, consumerNode);
+    return {
+      precomputedMetrics: sessionPrecomputedMetrics,
+      precomputedColors: sessionPrecomputedColors,
+      availableTextStyles
+    };
+  }
+  async function runSmartTokenAutoBinder(nodes, options = { mode: "exact", notify: true }) {
+    var _a, _b;
+    if (!nodes || nodes.length === 0) {
+      if (options.notify !== false) {
+        figma.notify("Zaznacz obiekt lub komponent na canvasie, aby podpi\u0105\u0107 zmienne.", { error: true });
+      }
+      return { metricsBound: 0, colorsBound: 0, textStylesBound: 0 };
+    }
+    const consumerNode = nodes[0];
+    const forceRefresh = Boolean(options.forceRebind) || !sessionPrecomputedMetrics || sessionPrecomputedMetrics.length === 0;
+    const { precomputedMetrics, precomputedColors, availableTextStyles } = await preloadAutoBinderCaches(
+      forceRefresh,
+      consumerNode
+    );
+    const importedStylesCache = sessionImportedStylesCache;
+    const allNodesToProcess = [];
+    const visitedNodeIds = /* @__PURE__ */ new Set();
+    function collectNodes(node, depth = 0) {
+      if (!node || visitedNodeIds.has(node.id) || depth > 30) return;
+      visitedNodeIds.add(node.id);
+      allNodesToProcess.push(node);
+      if (node.type === "VECTOR" || node.type === "LINE" || node.type === "STAR" || node.type === "POLYGON" || node.type === "BOOLEAN_OPERATION") {
+        return;
+      }
+      if ("children" in node && node.children) {
+        for (const child of node.children) {
+          collectNodes(child, depth + 1);
+        }
+      }
+    }
+    for (const root of nodes) {
+      collectNodes(root);
+    }
+    let metricsBoundCount = 0;
+    let colorsBoundCount = 0;
+    let textStylesBoundCount = 0;
+    function isInteractiveControl(node) {
+      const nameLower = node.name.toLowerCase();
+      if (nameLower.includes("button") || nameLower.includes("input") || nameLower.includes("control") || nameLower.includes("tag") || nameLower.includes("badge") || nameLower.includes("chip") || nameLower.includes("tab") || nameLower.includes("toggle") || nameLower.includes("switch") || nameLower.includes("checkbox") || nameLower.includes("radio")) {
+        return true;
+      }
+      if (node.height > 0 && node.height <= 56 && node.width > 0 && node.width <= 320) {
+        return true;
+      }
+      return false;
+    }
+    function getAncestorContainerRole(node) {
+      var _a2, _b2;
+      let curr = node.parent;
+      while (curr && curr.type !== "PAGE") {
+        const boundFillVar = (_b2 = (_a2 = curr.boundVariables) == null ? void 0 : _a2.fills) == null ? void 0 : _b2[0];
+        if (boundFillVar) {
+          const varObj = sessionAllVarsMap.get(boundFillVar.id);
+          if (varObj) {
+            const vName = varObj.name.toLowerCase();
+            if (vName.includes("primarycontainer")) return "primaryContainer";
+            if (vName.includes("primary")) return "primary";
+            if (vName.includes("surface")) return "surface";
+            if (vName.includes("background")) return "background";
+          }
+        }
+        curr = curr.parent;
+      }
+      return null;
+    }
+    let processedCount = 0;
+    for (const node of allNodesToProcess) {
+      processedCount++;
+      if (allNodesToProcess.length > 30 && processedCount % 25 === 0) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      if (options.setupContainers) {
+        if ("fills" in node && Array.isArray(node.fills)) {
+          try {
+            const fills = node.fills;
+            const filtered = fills.filter((p) => {
+              if (p.visible === false && p.type === "SOLID" && p.color.r > 0.98 && p.color.g > 0.98 && p.color.b > 0.98) {
+                return false;
+              }
+              return true;
+            });
+            if (filtered.length !== fills.length) {
+              node.fills = filtered;
+            }
+          } catch (e) {
+          }
+        }
+        if (node.type === "COMPONENT" && node.layoutMode === "NONE") {
+          try {
+            node.layoutMode = "HORIZONTAL";
+            node.primaryAxisSizingMode = "AUTO";
+            node.counterAxisSizingMode = "AUTO";
+          } catch (e) {
+          }
+        }
+        if ("cornerSmoothing" in node && (node.type === "COMPONENT" || node.type === "FRAME" || node.type === "COMPONENT_SET")) {
+          try {
+            if (node.cornerSmoothing !== 0.6) {
+              node.cornerSmoothing = 0.6;
+            }
+          } catch (e) {
+          }
+        }
+      }
+      if (options.bindTokens === false) {
+        continue;
+      }
+      const boundVars = node.boundVariables || {};
+      const isControl = isInteractiveControl(node);
+      const bindNumericProperty = (prop, rawValue, allowedScopes, semanticField) => {
+        if (!options.forceRebind && boundVars[prop]) return;
+        if (prop === "cornerRadius" && !options.forceRebind && (boundVars.cornerRadius || boundVars.topLeftRadius)) return;
+        const candidates = precomputedMetrics.filter((m) => checkScopeMatch(m.scopes, allowedScopes));
+        let bestToken = null;
+        let bestScore = -Infinity;
+        let minDiff = Infinity;
+        for (const item of candidates) {
+          const vName = item.lowerName;
+          if (rawValue > 0) {
+            if (semanticField === "paddingX" || semanticField === "paddingY") {
+              if (vName.includes("/gap/") || vName.startsWith("gap/") || vName.includes("gap")) continue;
+            } else if (semanticField === "gap") {
+              if (vName.includes("inset") || vName.includes("inline") || vName.includes("block") || vName.includes("padding")) {
+                continue;
+              }
+            }
+          }
+          const diff = Math.abs(item.value - rawValue);
+          if (options.mode === "exact") {
+            if (diff > 0.5) continue;
+          } else {
+            if (diff > 6.5) continue;
+          }
+          let score = 100 - diff * 15;
+          if (rawValue === 0) {
+            if (vName === "constant/none" || vName.endsWith("/constant/none") || vName === "none" || vName.endsWith("/none") || vName.includes("none") || vName.includes("zero")) {
+              score += 500;
+            }
+          }
+          if (semanticField === "paddingX") {
+            if (isControl) {
+              if (vName.startsWith("space/interactive/inline/")) score += 50;
+              else if (vName.includes("padding/buttonx") || vName.includes("padding/inputx")) score += 40;
+              else if (vName.startsWith("layout/")) score += 35;
+              else if (vName.startsWith("space/inset/")) score += 10;
+            } else {
+              if (vName.startsWith("space/inset/")) score += 50;
+              else if (vName.includes("padding/card")) score += 40;
+              else if (vName.startsWith("layout/")) score += 35;
+              else if (vName.startsWith("space/interactive/inline/")) score += 10;
+            }
+          } else if (semanticField === "paddingY") {
+            if (isControl) {
+              if (vName.startsWith("space/interactive/block/")) score += 50;
+              else if (vName.includes("padding/buttony") || vName.includes("padding/inputy")) score += 40;
+              else if (vName.startsWith("layout/")) score += 35;
+              else if (vName.startsWith("space/inset/")) score += 10;
+            } else {
+              if (vName.startsWith("space/inset/")) score += 50;
+              else if (vName.includes("padding/card")) score += 40;
+              else if (vName.startsWith("layout/")) score += 35;
+              else if (vName.startsWith("space/interactive/block/")) score += 10;
+            }
+          } else if (semanticField === "gap") {
+            if (vName.startsWith("space/gap/component/") || vName.startsWith("space/gap/layout/") || vName.startsWith("gap/") || vName.startsWith("layout/") || vName.includes("/gap/") || vName.includes("extrasmall")) {
+              score += 60;
+            }
+          } else if (semanticField === "radius") {
+            if (isControl) {
+              if (vName.startsWith("radius/interactive/") || vName.startsWith("radius/special/")) score += 50;
+              else if (vName.startsWith("radius/container/")) score += 10;
+            } else {
+              if (vName.startsWith("radius/container/")) score += 50;
+              else if (vName.startsWith("radius/interactive/")) score += 10;
+            }
+          } else if (semanticField === "stroke") {
+            if (vName.startsWith("border/") || vName.startsWith("constant/1")) score += 50;
+          }
+          if (score > bestScore || score === bestScore && diff < minDiff) {
+            bestScore = score;
+            minDiff = diff;
+            bestToken = item;
+          }
+        }
+        if (bestToken) {
+          if (prop === "cornerRadius") {
+            try {
+              node.setBoundVariable("cornerRadius", bestToken.variable);
+              metricsBoundCount++;
+            } catch (e) {
+              try {
+                node.setBoundVariable("topLeftRadius", bestToken.variable);
+                node.setBoundVariable("topRightRadius", bestToken.variable);
+                node.setBoundVariable("bottomLeftRadius", bestToken.variable);
+                node.setBoundVariable("bottomRightRadius", bestToken.variable);
+                metricsBoundCount++;
+              } catch (err) {
+              }
+            }
+          } else {
+            try {
+              node.setBoundVariable(prop, bestToken.variable);
+              metricsBoundCount++;
+            } catch (e) {
+            }
+          }
+        }
+      };
+      if ("layoutMode" in node && node.layoutMode !== "NONE") {
+        const autoNode = node;
+        if (typeof autoNode.paddingLeft === "number" && autoNode.paddingLeft >= 0) {
+          bindNumericProperty("paddingLeft", autoNode.paddingLeft, ["GAP", "WIDTH_HEIGHT"], "paddingX");
+        }
+        if (typeof autoNode.paddingRight === "number" && autoNode.paddingRight >= 0) {
+          bindNumericProperty("paddingRight", autoNode.paddingRight, ["GAP", "WIDTH_HEIGHT"], "paddingX");
+        }
+        if (typeof autoNode.paddingTop === "number" && autoNode.paddingTop >= 0) {
+          bindNumericProperty("paddingTop", autoNode.paddingTop, ["GAP", "WIDTH_HEIGHT"], "paddingY");
+        }
+        if (typeof autoNode.paddingBottom === "number" && autoNode.paddingBottom >= 0) {
+          bindNumericProperty("paddingBottom", autoNode.paddingBottom, ["GAP", "WIDTH_HEIGHT"], "paddingY");
+        }
+        if (typeof autoNode.itemSpacing === "number" && autoNode.itemSpacing >= 0) {
+          bindNumericProperty("itemSpacing", autoNode.itemSpacing, ["GAP", "WIDTH_HEIGHT"], "gap");
+        }
+        if (typeof autoNode.counterAxisSpacing === "number" && autoNode.counterAxisSpacing >= 0) {
+          bindNumericProperty("counterAxisSpacing", autoNode.counterAxisSpacing, ["GAP", "WIDTH_HEIGHT"], "gap");
+        }
+      }
+      if ("cornerRadius" in node) {
+        const rNode = node;
+        if (typeof rNode.cornerRadius === "number" && rNode.cornerRadius >= 0) {
+          bindNumericProperty("cornerRadius", rNode.cornerRadius, ["CORNER_RADIUS"], "radius");
+        } else {
+          const tl = typeof rNode.topLeftRadius === "number" ? rNode.topLeftRadius : null;
+          const tr = typeof rNode.topRightRadius === "number" ? rNode.topRightRadius : null;
+          const bl = typeof rNode.bottomLeftRadius === "number" ? rNode.bottomLeftRadius : null;
+          const br = typeof rNode.bottomRightRadius === "number" ? rNode.bottomRightRadius : null;
+          if (tl !== null && tl === tr && tl === bl && tl === br && tl >= 0) {
+            bindNumericProperty("cornerRadius", tl, ["CORNER_RADIUS"], "radius");
+          } else {
+            if (tl !== null && tl >= 0) bindNumericProperty("topLeftRadius", tl, ["CORNER_RADIUS"], "radius");
+            if (tr !== null && tr >= 0) bindNumericProperty("topRightRadius", tr, ["CORNER_RADIUS"], "radius");
+            if (bl !== null && bl >= 0) bindNumericProperty("bottomLeftRadius", bl, ["CORNER_RADIUS"], "radius");
+            if (br !== null && br >= 0) bindNumericProperty("bottomRightRadius", br, ["CORNER_RADIUS"], "radius");
+          }
+        }
+      }
+      if ("strokes" in node && Array.isArray(node.strokes) && node.strokes.length > 0) {
+        const sNode = node;
+        if (typeof sNode.strokeWeight === "number" && sNode.strokeWeight > 0) {
+          bindNumericProperty("strokeWeight", sNode.strokeWeight, ["STROKE_FLOAT"], "stroke");
+        }
+      }
+      const ancestorRole = getAncestorContainerRole(node);
+      if ("fills" in node && Array.isArray(node.fills) && node.fills.length > 0) {
+        try {
+          const fills = node.fills;
+          let requiredScope;
+          if (node.type === "FRAME" || node.type === "COMPONENT" || node.type === "COMPONENT_SET" || node.type === "INSTANCE") {
+            requiredScope = "FRAME_FILL";
+          } else if (node.type === "TEXT") {
+            requiredScope = "TEXT_FILL";
+          } else {
+            requiredScope = "SHAPE_FILL";
+          }
+          const candidateColorTokens = precomputedColors.filter((c) => {
+            if (!c.scopes || c.scopes.length === 0) return false;
+            return c.scopes.includes("ALL_SCOPES") || c.scopes.includes("ALL_FILLS") || c.scopes.includes(requiredScope);
+          });
+          let modifiedFills = false;
+          const newFills = JSON.parse(JSON.stringify(fills));
+          for (let i = 0; i < fills.length; i++) {
+            const paint = fills[i];
+            if (paint.type !== "SOLID" || paint.visible === false) continue;
+            if (!options.forceRebind && ((_a = paint.boundVariables) == null ? void 0 : _a.color)) continue;
+            const pr = paint.color.r;
+            const pg = paint.color.g;
+            const pb = paint.color.b;
+            const pa = paint.opacity !== void 0 ? paint.opacity : 1;
+            let bestToken = null;
+            let bestDist = Infinity;
+            let bestTieScore = -Infinity;
+            for (const item of candidateColorTokens) {
+              const resolved = item.color;
+              const dist = Math.sqrt(
+                Math.pow(pr - resolved.r, 2) + Math.pow(pg - resolved.g, 2) + Math.pow(pb - resolved.b, 2) + Math.pow(pa - resolved.a, 2)
+              );
+              const maxDist = options.mode === "exact" ? 0.015 : 0.08;
+              if (dist > maxDist) continue;
+              let tieScore = 0;
+              const vName = item.lowerName;
+              if (node.type === "TEXT") {
+                if (vName.includes("onprimary") && !vName.includes("container") && ancestorRole === "primary") {
+                  tieScore += 50;
+                } else if (vName.includes("onprimarycontainer") && ancestorRole === "primaryContainer") {
+                  tieScore += 50;
+                } else if ((vName.includes("onsurface") || vName.includes("onbackground")) && (ancestorRole === "surface" || ancestorRole === "background" || !ancestorRole)) {
+                  tieScore += 40;
+                }
+                if (vName.startsWith("on") || vName.includes("/on")) {
+                  tieScore += 20;
+                }
+              } else if (node.type === "FRAME" || node.type === "COMPONENT" || node.type === "COMPONENT_SET" || node.type === "INSTANCE") {
+                if (vName.startsWith("on") || vName.includes("/on")) {
+                  tieScore -= 50;
+                }
+                if (vName.includes("surface")) tieScore += 15;
+                if (vName.includes("primary")) tieScore += 10;
+              }
+              if (dist < bestDist - 5e-3 || Math.abs(dist - bestDist) <= 5e-3 && tieScore > bestTieScore) {
+                bestDist = dist;
+                bestTieScore = tieScore;
+                bestToken = item;
+              }
+            }
+            if (bestToken) {
+              newFills[i] = figma.variables.setBoundVariableForPaint(
+                newFills[i],
+                "color",
+                bestToken.variable
+              );
+              modifiedFills = true;
+              colorsBoundCount++;
+            }
+          }
+          if (modifiedFills) {
+            node.fills = newFills;
+          }
+        } catch (err) {
+        }
+      }
+      if ("strokes" in node && Array.isArray(node.strokes) && node.strokes.length > 0) {
+        try {
+          const strokes = node.strokes;
+          const candidateStrokeTokens = precomputedColors.filter((c) => {
+            if (!c.scopes || c.scopes.length === 0) return false;
+            return c.scopes.includes("ALL_SCOPES") || c.scopes.includes("STROKE_COLOR");
+          });
+          let modifiedStrokes = false;
+          const newStrokes = JSON.parse(JSON.stringify(strokes));
+          for (let i = 0; i < strokes.length; i++) {
+            const paint = strokes[i];
+            if (paint.type !== "SOLID" || paint.visible === false) continue;
+            if (!options.forceRebind && ((_b = paint.boundVariables) == null ? void 0 : _b.color)) continue;
+            const pr = paint.color.r;
+            const pg = paint.color.g;
+            const pb = paint.color.b;
+            const pa = paint.opacity !== void 0 ? paint.opacity : 1;
+            let bestToken = null;
+            let bestDist = Infinity;
+            let bestScore = -Infinity;
+            for (const item of candidateStrokeTokens) {
+              const resolved = item.color;
+              const dist = Math.sqrt(
+                Math.pow(pr - resolved.r, 2) + Math.pow(pg - resolved.g, 2) + Math.pow(pb - resolved.b, 2) + Math.pow(pa - resolved.a, 2)
+              );
+              const maxDist = options.mode === "exact" ? 0.015 : 0.08;
+              if (dist > maxDist) continue;
+              let score = 0;
+              const vName = item.lowerName;
+              if (vName.includes("outline")) score += 30;
+              if (vName.includes("border")) score += 20;
+              if (dist < bestDist - 5e-3 || Math.abs(dist - bestDist) <= 5e-3 && score > bestScore) {
+                bestDist = dist;
+                bestScore = score;
+                bestToken = item;
+              }
+            }
+            if (bestToken) {
+              newStrokes[i] = figma.variables.setBoundVariableForPaint(
+                newStrokes[i],
+                "color",
+                bestToken.variable
+              );
+              modifiedStrokes = true;
+              colorsBoundCount++;
+            }
+          }
+          if (modifiedStrokes) {
+            node.strokes = newStrokes;
+          }
+        } catch (err) {
+        }
+      }
+      if (node.type === "TEXT") {
+        const textNode = node;
+        const applyMatchedStyle = async (matched, range) => {
+          let styleObj = matched.style || null;
+          if (!styleObj && matched.id) {
+            try {
+              styleObj = await figma.getStyleByIdAsync(matched.id);
+            } catch (e) {
+            }
+          }
+          if (!styleObj && matched.key) {
+            if (importedStylesCache.has(matched.key)) {
+              styleObj = importedStylesCache.get(matched.key);
+            } else {
+              try {
+                styleObj = await figma.importStyleByKeyAsync(matched.key);
+                if (styleObj) importedStylesCache.set(matched.key, styleObj);
+              } catch (e) {
+                console.warn(`Could not import remote style by key ${matched.key}:`, e);
+              }
+            }
+          }
+          if (styleObj) {
+            const fullLabel = matched.description ? `${matched.name} ${matched.description}` : matched.name;
+            CACHED_STYLE_ID_TO_LABEL_MAP.set(styleObj.id, fullLabel);
+            try {
+              await loadFontsForTextNode(textNode);
+            } catch (e) {
+            }
+            try {
+              if (styleObj.fontName) {
+                await figma.loadFontAsync(styleObj.fontName);
+              }
+            } catch (e) {
+            }
+            try {
+              if (range) {
+                await textNode.setRangeTextStyleIdAsync(range.start, range.end, styleObj.id);
+              } else {
+                await textNode.setTextStyleIdAsync(styleObj.id);
+              }
+              return true;
+            } catch (e) {
+              console.warn(`[AutoBinder] Failed to set textStyleId on ${textNode.name}:`, e);
+            }
+          }
+          return false;
+        };
+        if (textNode.fontName !== figma.mixed && textNode.fontSize !== figma.mixed && textNode.lineHeight !== figma.mixed) {
+          const currentStyleId = textNode.textStyleId;
+          const fontName = textNode.fontName;
+          const nodeSize = textNode.fontSize;
+          const nodeLh = textNode.lineHeight;
+          if (!currentStyleId || options.forceRebind) {
+            const matched = matchTextStyleForSpec(
+              fontName.family,
+              fontName.style,
+              nodeSize,
+              nodeLh,
+              textNode.name,
+              availableTextStyles,
+              options
+            );
+            if (matched) {
+              const ok = await applyMatchedStyle(matched);
+              if (ok) textStylesBoundCount++;
+            }
+          }
+        } else {
+          try {
+            if (typeof textNode.getStyledTextSegments === "function") {
+              const segments = textNode.getStyledTextSegments([
+                "fontName",
+                "fontSize",
+                "lineHeight",
+                "textStyleId"
+              ]);
+              let hasSegmentChange = false;
+              for (const seg of segments) {
+                if (seg.textStyleId && !options.forceRebind) continue;
+                if (!seg.fontName || typeof seg.fontSize !== "number") continue;
+                const matched = matchTextStyleForSpec(
+                  seg.fontName.family,
+                  seg.fontName.style,
+                  seg.fontSize,
+                  seg.lineHeight,
+                  textNode.name,
+                  availableTextStyles,
+                  options
+                );
+                if (matched) {
+                  const ok = await applyMatchedStyle(matched, { start: seg.start, end: seg.end });
+                  if (ok) hasSegmentChange = true;
+                }
+              }
+              if (hasSegmentChange) textStylesBoundCount++;
+            }
+          } catch (mixedErr) {
+          }
+        }
+      }
+    }
+    const textNodes = allNodesToProcess.filter((n) => n.type === "TEXT");
+    if (options.notify !== false) {
+      if (textNodes.length > 0 && textStylesBoundCount === 0) {
+        if (availableTextStyles.length === 0) {
+          figma.notify(
+            "Brak styl\xF3w tekstowych w pami\u0119ci. Otw\xF3rz plik biblioteki DS i kliknij '\u{1F4E5} Zapisz style z tego pliku DS'!",
+            { timeout: 4500 }
+          );
+        } else {
+          const first = textNodes[0];
+          let specStr = "";
+          if (first.fontName !== figma.mixed && first.fontSize !== figma.mixed && first.lineHeight !== figma.mixed) {
+            const fn = first.fontName;
+            const sz = first.fontSize;
+            const lh = calculateLineHeightPx(sz, first.lineHeight);
+            specStr = `${fn.family} ${fn.style} ${sz}px/${lh ? `${lh}px` : "Auto"}`;
+          }
+          figma.notify(
+            `Nie znaleziono stylu dla: ${specStr || "warstwy tekstowej"} (W pami\u0119ci: ${availableTextStyles.length} styl\xF3w). Podpi\u0119to: ${metricsBoundCount} metryk, ${colorsBoundCount} kolor\xF3w.`,
+            { timeout: 4500 }
+          );
+        }
+      } else if (textStylesBoundCount > 0) {
+        figma.notify(
+          `Podpi\u0119to: ${metricsBoundCount} metryk, ${colorsBoundCount} kolor\xF3w oraz ${textStylesBoundCount} styl\xF3w tekstowych!`
+        );
+      } else {
+        figma.notify(
+          `Podpi\u0119to ${metricsBoundCount} zmiennych metrycznych (metrics) i ${colorsBoundCount} zmiennych kolor\xF3w (schemes) zgodnie ze Scopes!`
+        );
+      }
+    }
+    return {
+      metricsBound: metricsBoundCount,
+      colorsBound: colorsBoundCount,
+      textStylesBound: textStylesBoundCount
+    };
+  }
+
+  // src/renamer/textClassifier.ts
   var VALID_TEXT_ROLES = [
     "Title",
     "Subtitle",
@@ -8639,6 +10358,18 @@ ${usageJsx}
     }
   }
   function classifyTextLayerSemantic(item) {
+    const styleName = (item.textStyleName || "").toLowerCase();
+    const fontFamily = (item.fontFamily || item.fontFamily || "").toLowerCase();
+    const siblingIndex = typeof item.siblingIndex === "number" ? item.siblingIndex : 0;
+    const totalSiblings = typeof item.totalSiblingTexts === "number" ? item.totalSiblingTexts : 1;
+    const isIcon = styleName.startsWith("icon/") || styleName.includes("/icon/") || fontFamily.includes("material symbols") || /material symbols/i.test(styleName);
+    if (isIcon) {
+      if (totalSiblings > 1) {
+        if (siblingIndex === 0) return "LeadingIcon";
+        if (siblingIndex === totalSiblings - 1) return "TrailingIcon";
+      }
+      return "Icon";
+    }
     if (item.currentName) {
       const existingRole = getExistingSemanticRole(item.currentName, item.characters || "");
       if (existingRole) {
@@ -8658,12 +10389,9 @@ ${usageJsx}
     const parentLower = parentName.toLowerCase();
     const rootCompName = (item.rootComponentName || "").trim();
     const rootLower = rootCompName.toLowerCase();
-    const styleName = (item.textStyleName || "").toLowerCase();
     const fillName = (item.fillTokenName || "").toLowerCase();
     const weight = (item.fontStyle || "").toLowerCase();
     const fontSize = typeof item.fontSize === "number" ? item.fontSize : 14;
-    const siblingIndex = typeof item.siblingIndex === "number" ? item.siblingIndex : 0;
-    const totalSiblings = typeof item.totalSiblingTexts === "number" ? item.totalSiblingTexts : 1;
     const isLoose = Boolean(item.isLooseText || item.hasInstanceSibling);
     const prevType = item.prevSiblingType || "";
     const nextType = item.nextSiblingType || "";
@@ -8833,13 +10561,18 @@ ${usageJsx}
   }
   async function getNodeFillTokenName(node) {
     var _a, _b;
+    const syncVal = getNodeFillTokenNameSync(node);
+    if (syncVal) return syncVal;
     try {
       if (node.boundVariables && node.boundVariables.fills) {
         const boundFills = node.boundVariables.fills;
         if (Array.isArray(boundFills) && boundFills.length > 0 && ((_a = boundFills[0]) == null ? void 0 : _a.id)) {
           const varId = boundFills[0].id;
           const variable = await figma.variables.getVariableByIdAsync(varId).catch(() => null);
-          if (variable) return variable.name;
+          if (variable) {
+            CACHED_VARIABLES_MAP.set(variable.id, variable);
+            return variable.name;
+          }
         }
       }
       if (node.fills && Array.isArray(node.fills) && node.fills.length > 0) {
@@ -8849,7 +10582,10 @@ ${usageJsx}
           const varId = colorVar.id;
           if (varId) {
             const variable = await figma.variables.getVariableByIdAsync(varId).catch(() => null);
-            if (variable) return variable.name;
+            if (variable) {
+              CACHED_VARIABLES_MAP.set(variable.id, variable);
+              return variable.name;
+            }
           }
         }
       }
@@ -8867,7 +10603,10 @@ ${usageJsx}
       if (node.boundVariables && node.boundVariables.fills) {
         const boundFills = node.boundVariables.fills;
         if (Array.isArray(boundFills) && boundFills.length > 0 && ((_a = boundFills[0]) == null ? void 0 : _a.id)) {
-          const v = figma.variables.getVariableById(boundFills[0].id);
+          const varId = boundFills[0].id;
+          const cached = CACHED_VARIABLES_MAP.get(varId);
+          if (cached) return cached.name;
+          const v = figma.variables.getVariableById(varId);
           if (v) return v.name;
         }
       }
@@ -8876,6 +10615,8 @@ ${usageJsx}
         if (firstPaint && typeof firstPaint === "object" && ((_b = firstPaint.boundVariables) == null ? void 0 : _b.color)) {
           const colorVar = firstPaint.boundVariables.color;
           if (colorVar.id) {
+            const cached = CACHED_VARIABLES_MAP.get(colorVar.id);
+            if (cached) return cached.name;
             const v = figma.variables.getVariableById(colorVar.id);
             if (v) return v.name;
           }
@@ -8892,10 +10633,13 @@ ${usageJsx}
   function classifyTextNodeDirectly(txt) {
     let textStyleName = "";
     if (typeof txt.textStyleId === "string" && txt.textStyleId) {
-      try {
-        const style = figma.getStyleById(txt.textStyleId);
-        if (style) textStyleName = style.name;
-      } catch (_) {
+      textStyleName = CACHED_STYLE_ID_TO_LABEL_MAP.get(txt.textStyleId) || "";
+      if (!textStyleName) {
+        try {
+          const style = figma.getStyleById(txt.textStyleId);
+          if (style) textStyleName = style.description ? `${style.name} ${style.description}` : style.name;
+        } catch (_) {
+        }
       }
     }
     const fillTokenName = getNodeFillTokenNameSync(txt);
@@ -8917,10 +10661,13 @@ ${usageJsx}
     const siblingTexts = textSiblings.map((s) => {
       let sStyle = "";
       if (typeof s.textStyleId === "string" && s.textStyleId) {
-        try {
-          const st = figma.getStyleById(s.textStyleId);
-          if (st) sStyle = st.name;
-        } catch (_) {
+        sStyle = CACHED_STYLE_ID_TO_LABEL_MAP.get(s.textStyleId) || "";
+        if (!sStyle) {
+          try {
+            const st = figma.getStyleById(s.textStyleId);
+            if (st) sStyle = st.description ? `${st.name} ${st.description}` : st.name;
+          } catch (_) {
+          }
         }
       }
       const sFill = getNodeFillTokenNameSync(s);
@@ -8966,7 +10713,7 @@ ${usageJsx}
     });
   }
 
-  // ../../../../plugins/components-setup/src/renamer/frameClassifier.ts
+  // src/renamer/frameClassifier.ts
   function nodeContainsText(node) {
     if (node.type === "TEXT") return true;
     if (node.type === "INSTANCE") return false;
@@ -9194,6 +10941,9 @@ ${usageJsx}
   }
   async function sanitizeLayerNames(node, isPascalCaseOnly = false) {
     if (!node) return;
+    if (isSystemOrIgnoredNode(node)) {
+      return;
+    }
     if (node.type === "INSTANCE") {
       return;
     }
@@ -9258,7 +11008,348 @@ ${usageJsx}
     }
   }
 
-  // ../../../../plugins/components-setup/src/components/setup.ts
+  // src/components/atomic.ts
+  function convertFrameToComponentAtomic(sourceFrame, mode, preloadedVars, targetPosition) {
+    const comp = figma.createComponent();
+    comp.name = sourceFrame.name;
+    try {
+      comp.resizeWithoutConstraints(Math.max(1, sourceFrame.width), Math.max(1, sourceFrame.height));
+    } catch (e) {
+      try {
+        comp.resize(Math.max(1, sourceFrame.width), Math.max(1, sourceFrame.height));
+      } catch (e2) {
+      }
+    }
+    try {
+      comp.visible = sourceFrame.visible;
+    } catch (e) {
+    }
+    try {
+      comp.locked = sourceFrame.locked;
+    } catch (e) {
+    }
+    try {
+      comp.opacity = sourceFrame.opacity;
+    } catch (e) {
+    }
+    try {
+      comp.blendMode = sourceFrame.blendMode;
+    } catch (e) {
+    }
+    try {
+      comp.isMask = sourceFrame.isMask;
+    } catch (e) {
+    }
+    try {
+      comp.clipsContent = sourceFrame.clipsContent;
+    } catch (e) {
+    }
+    try {
+      comp.rotation = sourceFrame.rotation;
+    } catch (e) {
+    }
+    try {
+      if (sourceFrame.fillStyleId && typeof sourceFrame.fillStyleId === "string") {
+        comp.fillStyleId = sourceFrame.fillStyleId;
+      } else if (sourceFrame.fills !== figma.mixed) {
+        comp.fills = JSON.parse(JSON.stringify(sourceFrame.fills));
+      }
+    } catch (e) {
+    }
+    try {
+      if (sourceFrame.strokeStyleId && typeof sourceFrame.strokeStyleId === "string") {
+        comp.strokeStyleId = sourceFrame.strokeStyleId;
+      } else if (sourceFrame.strokes) {
+        comp.strokes = JSON.parse(JSON.stringify(sourceFrame.strokes));
+      }
+    } catch (e) {
+    }
+    try {
+      comp.strokeAlign = sourceFrame.strokeAlign;
+    } catch (e) {
+    }
+    try {
+      comp.strokeCap = sourceFrame.strokeCap;
+    } catch (e) {
+    }
+    try {
+      comp.strokeJoin = sourceFrame.strokeJoin;
+    } catch (e) {
+    }
+    try {
+      comp.strokeMiterLimit = sourceFrame.strokeMiterLimit;
+    } catch (e) {
+    }
+    try {
+      comp.dashPattern = [...sourceFrame.dashPattern];
+    } catch (e) {
+    }
+    try {
+      if (sourceFrame.strokeWeight !== figma.mixed) {
+        comp.strokeWeight = sourceFrame.strokeWeight;
+      } else {
+        comp.strokeTopWeight = sourceFrame.strokeTopWeight;
+        comp.strokeBottomWeight = sourceFrame.strokeBottomWeight;
+        comp.strokeLeftWeight = sourceFrame.strokeLeftWeight;
+        comp.strokeRightWeight = sourceFrame.strokeRightWeight;
+      }
+    } catch (e) {
+    }
+    try {
+      if (sourceFrame.effectStyleId && typeof sourceFrame.effectStyleId === "string") {
+        comp.effectStyleId = sourceFrame.effectStyleId;
+      } else if (sourceFrame.effects) {
+        comp.effects = JSON.parse(JSON.stringify(sourceFrame.effects));
+      }
+    } catch (e) {
+    }
+    try {
+      if (sourceFrame.gridStyleId && typeof sourceFrame.gridStyleId === "string") {
+        comp.gridStyleId = sourceFrame.gridStyleId;
+      } else if (sourceFrame.layoutGrids) {
+        comp.layoutGrids = JSON.parse(JSON.stringify(sourceFrame.layoutGrids));
+      }
+    } catch (e) {
+    }
+    try {
+      comp.cornerSmoothing = sourceFrame.cornerSmoothing;
+    } catch (e) {
+    }
+    try {
+      if (sourceFrame.cornerRadius !== figma.mixed) {
+        comp.cornerRadius = sourceFrame.cornerRadius;
+      } else {
+        comp.topLeftRadius = sourceFrame.topLeftRadius;
+        comp.topRightRadius = sourceFrame.topRightRadius;
+        comp.bottomLeftRadius = sourceFrame.bottomLeftRadius;
+        comp.bottomRightRadius = sourceFrame.bottomRightRadius;
+      }
+    } catch (e) {
+    }
+    const layoutMode = sourceFrame.layoutMode;
+    if (layoutMode && layoutMode !== "NONE") {
+      try {
+        comp.layoutMode = layoutMode;
+      } catch (e) {
+      }
+      try {
+        comp.layoutWrap = sourceFrame.layoutWrap;
+      } catch (e) {
+      }
+      try {
+        comp.primaryAxisSizingMode = sourceFrame.primaryAxisSizingMode;
+      } catch (e) {
+      }
+      try {
+        comp.counterAxisSizingMode = sourceFrame.counterAxisSizingMode;
+      } catch (e) {
+      }
+      try {
+        comp.primaryAxisAlignItems = sourceFrame.primaryAxisAlignItems;
+      } catch (e) {
+      }
+      try {
+        comp.counterAxisAlignItems = sourceFrame.counterAxisAlignItems;
+      } catch (e) {
+      }
+      if (sourceFrame.layoutWrap === "WRAP") {
+        try {
+          comp.counterAxisAlignContent = sourceFrame.counterAxisAlignContent;
+        } catch (e) {
+        }
+        if (sourceFrame.counterAxisSpacing !== null) {
+          try {
+            comp.counterAxisSpacing = sourceFrame.counterAxisSpacing;
+          } catch (e) {
+          }
+        }
+      }
+      try {
+        comp.paddingTop = sourceFrame.paddingTop;
+      } catch (e) {
+      }
+      try {
+        comp.paddingBottom = sourceFrame.paddingBottom;
+      } catch (e) {
+      }
+      try {
+        comp.paddingLeft = sourceFrame.paddingLeft;
+      } catch (e) {
+      }
+      try {
+        comp.paddingRight = sourceFrame.paddingRight;
+      } catch (e) {
+      }
+      try {
+        comp.itemSpacing = sourceFrame.itemSpacing;
+      } catch (e) {
+      }
+      try {
+        comp.itemReverseZIndex = sourceFrame.itemReverseZIndex;
+      } catch (e) {
+      }
+      try {
+        comp.strokesIncludedInLayout = sourceFrame.strokesIncludedInLayout;
+      } catch (e) {
+      }
+    }
+    try {
+      if (sourceFrame.minWidth !== null) comp.minWidth = sourceFrame.minWidth;
+    } catch (e) {
+    }
+    try {
+      if (sourceFrame.maxWidth !== null) comp.maxWidth = sourceFrame.maxWidth;
+    } catch (e) {
+    }
+    try {
+      if (sourceFrame.minHeight !== null) comp.minHeight = sourceFrame.minHeight;
+    } catch (e) {
+    }
+    try {
+      if (sourceFrame.maxHeight !== null) comp.maxHeight = sourceFrame.maxHeight;
+    } catch (e) {
+    }
+    try {
+      const bv = sourceFrame.boundVariables;
+      if (bv && typeof bv === "object") {
+        const scalarFields = [
+          "paddingTop",
+          "paddingBottom",
+          "paddingLeft",
+          "paddingRight",
+          "itemSpacing",
+          "counterAxisSpacing",
+          "topLeftRadius",
+          "topRightRadius",
+          "bottomLeftRadius",
+          "bottomRightRadius",
+          "strokeTopWeight",
+          "strokeBottomWeight",
+          "strokeLeftWeight",
+          "strokeRightWeight",
+          "strokeWeight",
+          "width",
+          "height",
+          "minWidth",
+          "maxWidth",
+          "minHeight",
+          "maxHeight",
+          "opacity",
+          "visible"
+        ];
+        for (const field of scalarFields) {
+          const alias = bv[field];
+          if (alias && typeof alias.id === "string") {
+            const v = preloadedVars && preloadedVars.get(alias.id) || (figma.variables.getVariableById ? figma.variables.getVariableById(alias.id) : null);
+            if (v) {
+              try {
+                comp.setBoundVariable(field, v);
+              } catch (e) {
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+    }
+    const childrenSnapshot = [...sourceFrame.children];
+    for (const child of childrenSnapshot) {
+      const cSizingH = "layoutSizingHorizontal" in child ? child.layoutSizingHorizontal : void 0;
+      const cSizingV = "layoutSizingVertical" in child ? child.layoutSizingVertical : void 0;
+      const cPositioning = "layoutPositioning" in child ? child.layoutPositioning : void 0;
+      const cAlign = "layoutAlign" in child ? child.layoutAlign : void 0;
+      const cGrow = "layoutGrow" in child ? child.layoutGrow : void 0;
+      const cX = child.x;
+      const cY = child.y;
+      const targetChild = mode === "clone-to-page" ? child.clone() : child;
+      comp.appendChild(targetChild);
+      if (layoutMode && layoutMode !== "NONE") {
+        try {
+          if (cPositioning === "ABSOLUTE" && "layoutPositioning" in targetChild) {
+            targetChild.layoutPositioning = "ABSOLUTE";
+            targetChild.x = cX;
+            targetChild.y = cY;
+          } else {
+            if (cAlign !== void 0 && "layoutAlign" in targetChild) targetChild.layoutAlign = cAlign;
+            if (cGrow !== void 0 && "layoutGrow" in targetChild) targetChild.layoutGrow = cGrow;
+            if (cSizingH && "layoutSizingHorizontal" in targetChild) targetChild.layoutSizingHorizontal = cSizingH;
+            if (cSizingV && "layoutSizingVertical" in targetChild) targetChild.layoutSizingVertical = cSizingV;
+          }
+        } catch (e) {
+        }
+      } else {
+        try {
+          targetChild.x = cX;
+          targetChild.y = cY;
+        } catch (e) {
+        }
+      }
+    }
+    if (mode === "clone-to-page") {
+      figma.currentPage.appendChild(comp);
+      if (targetPosition) {
+        comp.x = targetPosition.x;
+        comp.y = targetPosition.y;
+      }
+      if (layoutMode && layoutMode !== "NONE") {
+        try {
+          if (sourceFrame.layoutSizingHorizontal === "HUG") comp.layoutSizingHorizontal = "HUG";
+          if (sourceFrame.layoutSizingVertical === "HUG") comp.layoutSizingVertical = "HUG";
+        } catch (e) {
+        }
+      }
+    } else {
+      const parent = sourceFrame.parent;
+      const frameX = sourceFrame.x;
+      const frameY = sourceFrame.y;
+      const frameSizingH = sourceFrame.layoutSizingHorizontal;
+      const frameSizingV = sourceFrame.layoutSizingVertical;
+      const frameAlign = sourceFrame.layoutAlign;
+      const frameGrow = sourceFrame.layoutGrow;
+      const framePositioning = sourceFrame.layoutPositioning;
+      if (parent && "insertChild" in parent) {
+        const idx = parent.children.indexOf(sourceFrame);
+        if (idx >= 0) {
+          parent.insertChild(idx, comp);
+        } else {
+          parent.appendChild(comp);
+        }
+        const parentHasAutoLayout = "layoutMode" in parent && parent.layoutMode && parent.layoutMode !== "NONE";
+        if (parentHasAutoLayout) {
+          try {
+            if (framePositioning === "ABSOLUTE") {
+              comp.layoutPositioning = "ABSOLUTE";
+              comp.x = frameX;
+              comp.y = frameY;
+            } else {
+              comp.layoutAlign = frameAlign;
+              comp.layoutGrow = frameGrow;
+              comp.layoutSizingHorizontal = frameSizingH;
+              comp.layoutSizingVertical = frameSizingV;
+            }
+          } catch (e) {
+          }
+        } else {
+          comp.x = frameX;
+          comp.y = frameY;
+          if (layoutMode && layoutMode !== "NONE") {
+            try {
+              if (frameSizingH === "HUG") comp.layoutSizingHorizontal = "HUG";
+              if (frameSizingV === "HUG") comp.layoutSizingVertical = "HUG";
+            } catch (e) {
+            }
+          }
+        }
+      }
+      try {
+        sourceFrame.remove();
+      } catch (e) {
+      }
+    }
+    return comp;
+  }
+
+  // src/components/setup.ts
   async function setupComponentSets(nodes) {
     await ensureTemporaryMetricsCollection();
     let allVars = await getAllRelevantVariablesForComponentSet();
@@ -9768,7 +11859,7 @@ ${usageJsx}
       if (cs.layoutMode === "NONE") return true;
       if (!cs.dashPattern || cs.dashPattern.length === 0) return true;
       if (!hasSpacingBound(cs) || !hasRadiusBound(cs)) return true;
-      const defs = cs.componentPropertyDefinitions || {};
+      const defs = safeGetComponentPropertyDefinitions(cs);
       for (const key of Object.keys(defs)) {
         const rawName = key.split("#")[0].trim();
         if (/^property\s*\d+$/i.test(rawName)) return true;
@@ -9835,7 +11926,7 @@ ${usageJsx}
           compSet.name = originalName;
           try {
             if (typeof compSet.editComponentProperty === "function") {
-              const defs = compSet.componentPropertyDefinitions;
+              const defs = safeGetComponentPropertyDefinitions(compSet);
               if (defs) {
                 for (const propKey of Object.keys(defs)) {
                   const def = defs[propKey];
@@ -9915,6 +12006,11 @@ ${usageJsx}
           await sanitizeLayerNames(n);
         } catch (e) {
         }
+      }
+      try {
+        await runSmartTokenAutoBinder(selection, { mode: "snap", notify: false });
+      } catch (e) {
+        console.warn("Smart Token Auto-Binder warning in setupComponentSet:", e);
       }
       if (newlyCreatedComponentSets.length > 0) {
         figma.currentPage.selection = allComponentSets;
@@ -10008,10 +12104,16 @@ ${usageJsx}
       collectSubtree(n);
     }
     for (const cs of componentSets) {
-      await sanitizeComponentProperties(cs);
+      try {
+        await sanitizeComponentProperties(cs);
+      } catch (_) {
+      }
     }
     for (const target of componentTargets) {
-      await sanitizeComponentProperties(target);
+      try {
+        await sanitizeComponentProperties(target);
+      } catch (_) {
+      }
     }
     for (const node of nodesToSanitize) {
       await sanitizeLayerNames(node, true);
@@ -10145,8 +12247,173 @@ ${usageJsx}
     }
     await setupComponentSetOnlyHorizontal(allSets);
   }
+  async function prepareContainersForMasterPipeline(selection) {
+    if (!selection || selection.length === 0) return [];
+    await ensureTemporaryMetricsCollection();
+    const allVars = await getAllRelevantVariablesForComponentSet();
+    const varGap = findVariableWithPriority(allVars, "Layout/Base", "Metrics") || findVariableWithPriority(allVars, "layout/base", "Metrics");
+    const varPadding = findVariableWithPriority(allVars, "Layout/Base", "Metrics") || findVariableWithPriority(allVars, "layout/base", "Metrics");
+    const varRadius = findVariableWithPriority(allVars, "Radius/Container/Base", "Metrics") || findVariableWithPriority(allVars, "radius/container/base", "Metrics") || findVariableWithPriority(allVars, "Radius/Base", "Metrics") || findVariableWithPriority(allVars, "radius/base", "Metrics");
+    const varBorder = findVariableWithPriority(allVars, "Constant/1", "Metrics") || findVariableWithPriority(allVars, "constant/1", "Metrics") || findVariableWithPriority(allVars, "Constant/One", "Metrics") || findVariableWithPriority(allVars, "constant/one", "Metrics");
+    const varBorderColor = findColorVariableWithPriority(allVars, ["OutlineBase", "outlineBase", "outlineHighest", "outline"]);
+    const standaloneComponents = selection.filter(
+      (node) => node.type === "COMPONENT" && (!node.parent || node.parent.type !== "COMPONENT_SET")
+    );
+    const standaloneFrames = selection.filter(
+      (node) => node.type === "FRAME" && (!node.parent || node.parent.type !== "COMPONENT_SET")
+    );
+    for (const frame of standaloneFrames) {
+      try {
+        const comp = convertFrameToComponentAtomic(frame, "replace-in-parent");
+        standaloneComponents.push(comp);
+      } catch (e) {
+        console.warn("Could not convert standalone frame to component in setup:", e);
+      }
+    }
+    const newlyCreatedComponentSets = [];
+    for (const comp of standaloneComponents) {
+      cleanHiddenWhiteFills(comp);
+      try {
+        let originalName = comp.name.trim();
+        if (/^frame(\s*\d+)?$/i.test(originalName)) {
+          originalName = "Container";
+        } else {
+          originalName = toPascalCase(originalName);
+        }
+        const parent = comp.parent && "children" in comp.parent ? comp.parent : figma.currentPage;
+        comp.name = "State=Default";
+        const compSet = figma.combineAsVariants([comp], parent);
+        compSet.name = originalName;
+        try {
+          if (typeof compSet.editComponentProperty === "function") {
+            const defs = safeGetComponentPropertyDefinitions(compSet);
+            if (defs) {
+              for (const propKey of Object.keys(defs)) {
+                const def = defs[propKey];
+                const rawName = propKey.split("#")[0].trim();
+                if (def.type === "VARIANT" || /^property\s*\d+$/i.test(rawName)) {
+                  try {
+                    compSet.editComponentProperty(propKey, { name: "State", defaultValue: "Default" });
+                  } catch (e1) {
+                    try {
+                      compSet.editComponentProperty(rawName, { name: "State", defaultValue: "Default" });
+                    } catch (e2) {
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+        }
+        if (comp.layoutMode === "NONE") {
+          comp.layoutMode = "HORIZONTAL";
+          comp.primaryAxisSizingMode = "AUTO";
+          comp.counterAxisSizingMode = "AUTO";
+        }
+        newlyCreatedComponentSets.push(compSet);
+      } catch (err) {
+        console.warn("Could not convert component to Component Set:", err);
+      }
+    }
+    const existingComponentSets = /* @__PURE__ */ new Set();
+    for (const node of selection) {
+      if (node.removed) continue;
+      if (node.type === "COMPONENT_SET") {
+        existingComponentSets.add(node);
+      } else {
+        let curr = node;
+        while (curr && curr.type !== "PAGE" && curr.type !== "DOCUMENT") {
+          if (curr.type === "COMPONENT_SET") {
+            existingComponentSets.add(curr);
+            break;
+          }
+          curr = curr.parent;
+        }
+      }
+    }
+    const allComponentSets = [...Array.from(existingComponentSets), ...newlyCreatedComponentSets];
+    for (const cs of allComponentSets) {
+      try {
+        await resolveComponentSetConflicts(cs);
+      } catch (e) {
+      }
+      try {
+        await sanitizeComponentProperties(cs);
+      } catch (e) {
+      }
+      try {
+        cs.layoutMode = "VERTICAL";
+        cs.layoutWrap = "NO_WRAP";
+        cs.primaryAxisSizingMode = "AUTO";
+        cs.counterAxisSizingMode = "AUTO";
+        cs.fills = [];
+        const safeBind = (prop, variable) => {
+          if (!variable) return;
+          try {
+            cs.setBoundVariable(prop, variable);
+          } catch (e) {
+          }
+        };
+        safeBind("itemSpacing", varGap);
+        safeBind("counterAxisSpacing", varGap);
+        safeBind("paddingTop", varPadding);
+        safeBind("paddingBottom", varPadding);
+        safeBind("paddingLeft", varPadding);
+        safeBind("paddingRight", varPadding);
+        if (varRadius) {
+          try {
+            cs.setBoundVariable("cornerRadius", varRadius);
+          } catch (err) {
+            safeBind("topLeftRadius", varRadius);
+            safeBind("topRightRadius", varRadius);
+            safeBind("bottomLeftRadius", varRadius);
+            safeBind("bottomRightRadius", varRadius);
+          }
+        }
+        if ("cornerSmoothing" in cs) {
+          try {
+            cs.cornerSmoothing = 0.6;
+          } catch (e) {
+          }
+        }
+        cs.dashPattern = [4, 4];
+        cs.strokes = [{ type: "SOLID", color: { r: 0.85, g: 0.85, b: 0.85 } }];
+        if (varBorderColor) {
+          cs.strokes = [...cs.strokes].map(
+            (paint) => paint.type === "SOLID" ? figma.variables.setBoundVariableForPaint(paint, "color", varBorderColor) : paint
+          );
+        }
+        if (varBorder) safeBind("strokeWeight", varBorder);
+        for (const child of cs.children) {
+          if (child.type === "COMPONENT") {
+            cleanHiddenWhiteFills(child);
+            if (child.layoutMode === "NONE") {
+              try {
+                child.layoutMode = "HORIZONTAL";
+                child.primaryAxisSizingMode = "AUTO";
+                child.counterAxisSizingMode = "AUTO";
+              } catch (e) {
+              }
+            }
+            if ("cornerSmoothing" in child) {
+              try {
+                child.cornerSmoothing = 0.6;
+              } catch (e) {
+              }
+            }
+          }
+        }
+      } catch (e) {
+      }
+    }
+    if (newlyCreatedComponentSets.length > 0) {
+      figma.currentPage.selection = allComponentSets;
+    }
+    return [...figma.currentPage.selection];
+  }
 
-  // ../../../../plugins/components-setup/src/generator/presets.ts
+  // src/generator/presets.ts
   var MAMF_LOGO_LIGHT_SVG = `<svg width="287" height="112" viewBox="0 0 287 112" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M84.8816 100.903C84.8681 100.767 84.8004 100.631 84.7192 100.508L72.8756 86.3528C75.7722 83.195 77.8973 81.0853 80.1442 75.8314C85.0576 64.3164 73.7689 59.9336 70.0872 58.8447C69.7895 58.7631 69.4646 58.7903 69.1939 58.9264C68.9232 59.0761 68.7066 59.3075 68.5983 59.6069C67.1365 63.6494 65.9859 66.5214 65.1061 68.25C64.294 69.9378 63.2788 71.4894 62.0606 72.905L48.781 57.0505L46.9549 54.8703C46.7654 54.6525 46.6301 54.3939 46.5489 54.1081C46.4541 53.8358 46.4406 53.5364 46.4676 53.2506C46.5083 52.9647 46.603 52.6789 46.7384 52.4339C46.8873 52.1889 47.0903 51.9711 47.3204 51.7942C47.4815 51.6768 47.6412 51.5594 47.7993 51.4418C52.0249 48.3014 55.182 45.0982 57.2826 41.8444C59.7596 38.0061 60.9913 33.7322 60.9913 29.0092C60.9913 22.68 58.5955 17.4397 53.7904 13.2611C48.9988 9.09611 42.8266 7 35.2737 7C27.7209 7 22.1713 9.16417 17.4744 13.4925C12.7776 17.8072 10.4359 23.2381 10.4359 29.7714C10.4359 33.2422 11.1398 36.6722 12.4527 39.8844C13.7928 43.26 15.8231 46.5947 18.5437 49.875C12.1279 53.7542 7.44457 57.9328 4.46674 62.3972C1.48892 66.8617 0 71.925 0 77.56C0 85.4 3.07258 91.9333 9.2042 97.16C15.3493 102.387 23.2135 105 32.8103 105C37.0198 105 41.2023 104.415 45.2359 103.258C49.3237 102.101 53.5468 100.318 57.9052 97.9222C59.0557 99.1336 60.4499 100.114 61.9794 100.767C63.5225 101.434 65.1738 101.774 66.8522 101.774H84.1236C84.2725 101.774 84.4214 101.733 84.5432 101.652C84.6651 101.57 84.7598 101.461 84.814 101.325C84.8816 101.203 84.9087 101.053 84.8816 100.903ZM30.5227 23.0339C32.1064 21.5775 34.1503 20.8561 36.6544 20.8561C38.9148 20.8561 40.7962 21.5775 42.2851 23.0339C43.7876 24.4767 44.5321 26.3006 44.5185 28.5056C44.5185 30.6561 43.6793 32.7522 42.0009 34.8211C40.3225 36.8764 37.9132 38.7683 34.7729 40.5106C32.6343 38.36 30.9965 36.2775 29.873 34.2494C28.736 32.235 28.1675 30.3567 28.1675 28.6281C28.1675 26.355 28.9526 24.4903 30.5227 23.0339ZM39.9164 86.9925C37.9267 87.5097 35.8828 87.7819 33.8254 87.7956C29.7241 87.7956 26.3808 86.7067 23.7956 84.5153C21.2103 82.3239 19.9244 79.4792 19.9244 75.9811C19.8973 73.2997 20.7365 70.6728 22.3472 68.5222C23.958 66.3308 26.3808 64.4797 29.6023 62.9553L47.0903 84.4608C44.7757 85.4817 42.3664 86.3256 39.9164 86.9925Z" fill="white"/><path fill-rule="evenodd" clip-rule="evenodd" d="M47.3204 51.7942L29.6023 62.9553L33.3914 67.5697L48.9709 57.2933C48.9257 57.2381 48.8607 57.155 48.781 57.0505L46.9549 54.8703C46.7654 54.6525 46.6301 54.3939 46.5489 54.1081C46.4541 53.8358 46.4406 53.5364 46.4676 53.2506C46.5083 52.9647 46.603 52.6789 46.7384 52.4339C46.8873 52.1889 47.0903 51.9711 47.3204 51.7942ZM47.3204 51.7942L47.7993 51.4418C47.6412 51.5594 47.4815 51.6768 47.3204 51.7942Z" fill="black" fill-opacity="0.22"/><path d="M57.9052 97.9222C57.9052 97.9222 66.3379 92.9269 72.8756 86.3528L77.6661 92.0695C77.6661 92.0695 69.6125 98.7526 60.0834 99.7326C59.1224 99.1609 57.9052 97.9222 57.9052 97.9222Z" fill="black" fill-opacity="0.22"/><path fill-rule="evenodd" clip-rule="evenodd" d="M106.663 0V112H105.287V0H106.663Z" fill="white"/><path d="M144.916 45.701H142.736V36.351C142.736 34.0715 141.723 32.9318 139.698 32.9318C139.137 32.8867 138.574 32.9694 138.05 33.1735C137.526 33.3777 137.055 33.6979 136.673 34.1102C136.028 34.8829 135.706 36.0742 135.706 37.684V45.701H133.493V36.351C133.565 35.4303 133.299 34.5148 132.745 33.7753C132.447 33.477 132.087 33.2471 131.69 33.1014C131.294 32.9558 130.87 32.8979 130.449 32.9318C129.883 32.8825 129.314 32.9683 128.788 33.1822C128.262 33.3961 127.794 33.7318 127.424 34.1617C126.779 34.9795 126.476 36.3189 126.476 38.1669V45.701H124.283V31.3477H126.07L126.418 33.3117H126.521C126.955 32.6038 127.584 32.0359 128.333 31.6761C129.11 31.2752 129.974 31.0717 130.849 31.0837C133.106 31.0837 134.581 31.8929 135.274 33.5113H135.39C135.836 32.7527 136.489 32.1363 137.273 31.734C138.13 31.2928 139.083 31.0715 140.046 31.0901C141.71 31.0901 142.942 31.5194 143.742 32.378C144.542 33.2365 144.942 34.5652 144.942 36.3639L144.916 45.701Z" fill="white"/><path d="M155.52 45.9457C154.586 45.9948 153.653 45.8483 152.78 45.5156C151.907 45.1829 151.113 44.6714 150.45 44.0139C149.216 42.7261 148.601 40.9273 148.605 38.6178C148.605 36.3125 149.179 34.4773 150.321 33.125C150.874 32.4628 151.571 31.9348 152.359 31.5812C153.147 31.2276 154.005 31.0574 154.868 31.0837C155.685 31.04 156.502 31.1765 157.26 31.4837C158.018 31.7909 158.699 32.2611 159.254 32.861C160.349 34.1639 160.913 35.8305 160.834 37.5295V38.9075H150.908C150.848 40.3099 151.307 41.6853 152.198 42.7711C152.657 43.2235 153.207 43.5725 153.813 43.7947C154.418 44.0168 155.064 44.1069 155.707 44.059C157.263 44.05 158.8 43.7189 160.222 43.0867V45.0185C159.508 45.324 158.765 45.5528 158.003 45.701C157.186 45.8667 156.354 45.9487 155.52 45.9457ZM158.493 37.1367C158.568 36.0132 158.241 34.8996 157.571 33.9943C157.241 33.6247 156.832 33.3347 156.374 33.1462C155.916 32.9577 155.421 32.8756 154.926 32.9061C154.412 32.8842 153.898 32.973 153.421 33.1663C152.943 33.3596 152.513 33.6529 152.159 34.0265C151.396 34.8888 150.954 35.9872 150.908 37.1367H158.493Z" fill="white"/><path d="M163.737 40.7234C163.722 39.6514 164.04 38.601 164.646 37.7163C165.54 36.6091 166.662 35.7065 167.936 35.0697C167.377 34.4817 166.859 33.8556 166.388 33.1958C165.85 32.3675 165.551 31.4073 165.523 30.4205C165.493 29.8455 165.593 29.2712 165.817 28.7404C166.04 28.2096 166.381 27.7361 166.813 27.3553C167.817 26.5788 169.067 26.1901 170.335 26.2607C171.581 26.1791 172.812 26.5675 173.786 27.3489C174.198 27.7361 174.52 28.209 174.73 28.7341C174.939 29.2593 175.031 29.8239 174.998 30.3883C174.995 31.3225 174.679 32.2289 174.102 32.964C173.275 33.9448 172.268 34.758 171.135 35.3595L176.507 40.5109C177.494 39.2609 178.158 37.7883 178.442 36.2223H180.655C180.245 38.3087 179.318 40.2592 177.959 41.8954L181.899 45.701H178.881L176.436 43.3764C175.518 44.2227 174.451 44.8928 173.289 45.3533C172.135 45.7754 170.913 45.9827 169.683 45.9651C168.096 46.0606 166.53 45.5676 165.285 44.5806C164.759 44.0902 164.348 43.4905 164.081 42.8239C163.813 42.1574 163.696 41.4403 163.737 40.7234ZM169.742 43.9946C170.71 44.0278 171.676 43.8665 172.581 43.5203C173.486 43.174 174.312 42.65 175.011 41.9791L169.258 36.4348C168.517 36.8555 167.82 37.3472 167.174 37.903C166.797 38.2501 166.496 38.6724 166.291 39.1426C166.087 39.6129 165.984 40.1207 165.988 40.6333C165.963 41.1004 166.043 41.5672 166.224 41.9987C166.405 42.4303 166.682 42.8154 167.033 43.1253C167.8 43.7331 168.763 44.042 169.742 43.9946ZM172.147 28.6818C171.642 28.2356 170.983 28.0045 170.309 28.0379C169.625 28.0091 168.954 28.239 168.432 28.6818C168.194 28.874 168.002 29.1175 167.872 29.394C167.741 29.6706 167.675 29.973 167.678 30.2788C167.673 30.9058 167.833 31.523 168.142 32.0689C168.595 32.7999 169.143 33.467 169.774 34.0523C170.678 33.5917 171.496 32.9797 172.192 32.2428C172.619 31.7122 172.847 31.0495 172.837 30.369C172.851 30.0547 172.797 29.7411 172.678 29.4498C172.559 29.1586 172.378 28.8966 172.147 28.6818Z" fill="white"/><path d="M204.861 45.701H202.681V36.3511C202.681 34.0716 201.67 32.9318 199.65 32.9318C199.089 32.8858 198.525 32.9681 198.001 33.1722C197.477 33.3764 197.006 33.6972 196.625 34.1102C195.975 34.8829 195.651 36.0742 195.651 37.6841V45.701H193.477V36.3511C193.551 35.4311 193.287 34.5157 192.735 33.7754C192.435 33.4769 192.074 33.2469 191.677 33.1013C191.279 32.9557 190.855 32.8978 190.433 32.9318C189.867 32.8825 189.297 32.9684 188.771 33.1822C188.245 33.3961 187.778 33.7318 187.408 34.1617C186.763 34.9795 186.466 36.3189 186.466 38.167V45.701H184.254V31.3477H186.04L186.395 33.3117H186.498C186.916 32.6114 187.524 32.0441 188.253 31.6761C189.032 31.276 189.898 31.0726 190.775 31.0837C193.026 31.0837 194.503 31.8951 195.193 33.5114H195.315C195.759 32.753 196.41 32.1365 197.192 31.7341C198.051 31.2939 199.006 31.0727 199.972 31.0902C201.627 31.0902 202.857 31.5194 203.661 32.378C204.465 33.2366 204.865 34.5653 204.861 36.364V45.701Z" fill="white"/><path d="M209.228 52.1404C208.562 52.1394 207.898 52.0682 207.248 51.9279V50.1635C207.783 50.2712 208.327 50.3252 208.873 50.3245C210.376 50.3245 211.453 49.4809 212.098 47.8067L212.904 45.759L207.099 31.3478H209.44L212.607 39.5193C213.126 40.8376 213.556 42.1885 213.897 43.5632H214.001C214.123 43.0674 214.355 42.3268 214.691 41.3352C215.026 40.3435 216.232 37.0208 218.303 31.3478H220.65L214.439 47.6779C214.023 48.9786 213.287 50.1543 212.298 51.0972C211.436 51.8067 210.344 52.1776 209.228 52.1404Z" fill="white"/><path d="M132.7 73.3901V85.2964H124.315V53.5826H142.975V60.4727H132.7V66.5257H142.149V73.3901H132.7Z" fill="white"/><path d="M162.414 60.2862C163.28 60.3141 164.142 60.4023 164.994 60.5502L164.253 68.5543C163.305 68.3586 162.338 68.27 161.37 68.2903C157.852 68.2903 156.094 69.9366 156.094 73.2293V85.3095H147.644V60.7177H153.926L155.216 64.6457H155.629C156.332 63.3383 157.375 62.244 158.648 61.4775C159.765 60.7323 161.071 60.3192 162.414 60.2862Z" fill="white"/><path d="M177.21 54.6194C177.21 57.0921 175.706 58.3285 172.696 58.3285C169.686 58.3285 168.181 57.0921 168.181 54.6194C168.135 54.092 168.207 53.5611 168.391 53.0646C168.575 52.5681 168.867 52.1183 169.245 51.7474C169.954 51.1035 171.096 50.8331 172.65 50.8331C174.205 50.8331 175.353 51.1422 176.082 51.7732C176.471 52.1331 176.775 52.5757 176.97 53.0683C177.165 53.5608 177.248 54.0909 177.21 54.6194ZM176.875 60.7175V85.3093H168.432V60.7175H176.875Z" fill="white"/><path d="M194.574 85.7474C190.497 85.7474 187.332 84.6613 185.079 82.4891C182.826 80.3169 181.697 77.1744 181.693 73.0618C181.693 68.9793 182.734 65.8283 184.815 63.6089C186.896 61.3895 189.829 60.2819 193.612 60.2862C197.405 60.2862 200.303 61.2585 202.307 63.2032C204.311 65.1479 205.315 67.9275 205.319 71.5422V75.3221H190.252C190.249 75.935 190.381 76.5411 190.638 77.0975C190.895 77.6539 191.272 78.147 191.742 78.5417C192.806 79.3622 194.127 79.7777 195.47 79.7137C198.337 79.7707 201.174 79.125 203.732 77.8334V83.9315C202.464 84.6031 201.1 85.0786 199.688 85.3417C197.999 85.6321 196.287 85.7679 194.574 85.7474ZM196.663 67.1312C196.338 66.7761 195.938 66.4969 195.492 66.3133C195.046 66.1297 194.565 66.0462 194.083 66.0687C193.609 66.0462 193.135 66.1215 192.691 66.2899C192.247 66.4583 191.843 66.7162 191.503 67.0475C190.786 67.8578 190.382 68.8964 190.362 69.9774H197.605C197.656 68.9449 197.32 67.9304 196.663 67.1312Z" fill="white"/><path d="M233.95 85.3095H225.513V71.9028C225.513 68.6144 224.529 66.9681 222.559 66.9638C221.937 66.9271 221.317 67.0673 220.771 67.3682C220.226 67.6691 219.777 68.1184 219.476 68.6638C218.831 69.7971 218.509 71.7611 218.509 74.5558V85.3095H210.066V60.7177H216.445L217.503 63.757H217.987C219.427 61.4389 221.889 60.2819 225.372 60.2862C228.072 60.2862 230.175 61.0761 231.679 62.6559C233.184 64.2357 233.935 66.4594 233.931 69.3271L233.95 85.3095Z" fill="white"/><path d="M247.656 60.2863C248.91 60.2557 250.151 60.5461 251.261 61.1298C252.411 61.8053 253.373 62.7571 254.061 63.8987H254.228C253.957 61.9788 253.819 60.0423 253.815 58.1033V51.5545H262.329V85.3096H255.95L254.106 82.1994H253.77C253.092 83.2719 252.156 84.1584 251.047 84.7784C249.939 85.3983 248.693 85.732 247.423 85.7493C246.152 85.7666 244.897 85.4668 243.772 84.8772C242.647 84.2877 241.688 83.427 240.98 82.3732C239.385 80.0551 238.594 76.9191 238.607 72.9653C238.62 69.0116 239.426 65.91 241.025 63.6605C241.751 62.581 242.742 61.7046 243.902 61.1141C245.062 60.5236 246.354 60.2387 247.656 60.2863ZM248.107 68.696C247.427 70.0813 247.114 71.6178 247.198 73.1585C247.106 74.6784 247.424 76.1952 248.12 77.5502C248.422 77.9885 248.822 78.351 249.288 78.6093C249.754 78.8676 250.273 79.0147 250.805 79.039C251.338 79.0634 251.868 78.9643 252.356 78.7495C252.844 78.5348 253.275 78.2102 253.615 77.8013C254.183 76.9706 254.486 75.6441 254.538 73.8089V73.1328C254.538 70.9863 254.23 69.4516 253.615 68.5286C253.296 68.0601 252.858 67.6841 252.346 67.4388C251.834 67.1934 251.266 67.0873 250.7 67.1313C250.159 67.1171 249.625 67.2566 249.16 67.5336C248.696 67.8107 248.351 68.2138 248.107 68.696Z" fill="white"/><path d="M284.53 72.0252C286.172 73.313 286.996 75.2448 287 77.8206C287.004 80.3963 286.121 82.3539 284.349 83.6933C282.582 85.0455 280.013 85.7216 276.641 85.7216C275.061 85.7362 273.481 85.6393 271.914 85.4319C270.51 85.2234 269.134 84.8583 267.812 84.3436V77.5952C269.221 78.2182 270.688 78.7034 272.191 79.044C273.539 79.3729 274.919 79.55 276.306 79.5721C278.125 79.5721 279.041 79.1535 279.041 78.3164C279.025 78.0783 278.947 77.8484 278.816 77.6488C278.685 77.4492 278.505 77.2866 278.293 77.1766C276.848 76.4069 275.35 75.742 273.81 75.1869C271.54 74.221 269.964 73.1478 269.082 71.9672C268.173 70.6688 267.72 69.1066 267.792 67.5241C267.753 66.4864 267.974 65.4553 268.434 64.5242C268.895 63.5932 269.581 62.7917 270.43 62.1923C272.193 60.9044 274.588 60.2605 277.615 60.2605C280.802 60.2948 283.944 61.0083 286.832 62.3533L284.53 67.8267C283.384 67.3136 282.203 66.8832 280.995 66.5388C279.997 66.2227 278.959 66.0451 277.912 66.0108C276.538 66.0108 275.848 66.3457 275.848 67.0218C275.863 67.2488 275.937 67.4678 276.064 67.6567C276.191 67.8456 276.366 67.9976 276.571 68.0972C277.924 68.7841 279.318 69.3905 280.744 69.913C282.1 70.4344 283.374 71.1456 284.53 72.0252Z" fill="white"/></svg>`;
   function getMarqueePreset(rootName = "Marquee") {
     const itemSubComponent = {
@@ -10813,7 +13080,7 @@ ${usageJsx}
     }
   }
 
-  // ../../../../plugins/components-setup/src/casing/casing.ts
+  // src/casing/casing.ts
   async function handleConvertCase(caseType, skipInstances) {
     const selection = figma.currentPage.selection;
     if (!selection || selection.length === 0) {
@@ -10953,348 +13220,7 @@ ${usageJsx}
     figma.notify(`Przekonwertowano ${convertedCount} warstw tekstowych na ${modeName}`);
   }
 
-  // ../../../../plugins/components-setup/src/components/atomic.ts
-  function convertFrameToComponentAtomic(sourceFrame, mode, preloadedVars, targetPosition) {
-    const comp = figma.createComponent();
-    comp.name = sourceFrame.name;
-    try {
-      comp.resizeWithoutConstraints(Math.max(1, sourceFrame.width), Math.max(1, sourceFrame.height));
-    } catch (e) {
-      try {
-        comp.resize(Math.max(1, sourceFrame.width), Math.max(1, sourceFrame.height));
-      } catch (e2) {
-      }
-    }
-    try {
-      comp.visible = sourceFrame.visible;
-    } catch (e) {
-    }
-    try {
-      comp.locked = sourceFrame.locked;
-    } catch (e) {
-    }
-    try {
-      comp.opacity = sourceFrame.opacity;
-    } catch (e) {
-    }
-    try {
-      comp.blendMode = sourceFrame.blendMode;
-    } catch (e) {
-    }
-    try {
-      comp.isMask = sourceFrame.isMask;
-    } catch (e) {
-    }
-    try {
-      comp.clipsContent = sourceFrame.clipsContent;
-    } catch (e) {
-    }
-    try {
-      comp.rotation = sourceFrame.rotation;
-    } catch (e) {
-    }
-    try {
-      if (sourceFrame.fillStyleId && typeof sourceFrame.fillStyleId === "string") {
-        comp.fillStyleId = sourceFrame.fillStyleId;
-      } else if (sourceFrame.fills !== figma.mixed) {
-        comp.fills = JSON.parse(JSON.stringify(sourceFrame.fills));
-      }
-    } catch (e) {
-    }
-    try {
-      if (sourceFrame.strokeStyleId && typeof sourceFrame.strokeStyleId === "string") {
-        comp.strokeStyleId = sourceFrame.strokeStyleId;
-      } else if (sourceFrame.strokes) {
-        comp.strokes = JSON.parse(JSON.stringify(sourceFrame.strokes));
-      }
-    } catch (e) {
-    }
-    try {
-      comp.strokeAlign = sourceFrame.strokeAlign;
-    } catch (e) {
-    }
-    try {
-      comp.strokeCap = sourceFrame.strokeCap;
-    } catch (e) {
-    }
-    try {
-      comp.strokeJoin = sourceFrame.strokeJoin;
-    } catch (e) {
-    }
-    try {
-      comp.strokeMiterLimit = sourceFrame.strokeMiterLimit;
-    } catch (e) {
-    }
-    try {
-      comp.dashPattern = [...sourceFrame.dashPattern];
-    } catch (e) {
-    }
-    try {
-      if (sourceFrame.strokeWeight !== figma.mixed) {
-        comp.strokeWeight = sourceFrame.strokeWeight;
-      } else {
-        comp.strokeTopWeight = sourceFrame.strokeTopWeight;
-        comp.strokeBottomWeight = sourceFrame.strokeBottomWeight;
-        comp.strokeLeftWeight = sourceFrame.strokeLeftWeight;
-        comp.strokeRightWeight = sourceFrame.strokeRightWeight;
-      }
-    } catch (e) {
-    }
-    try {
-      if (sourceFrame.effectStyleId && typeof sourceFrame.effectStyleId === "string") {
-        comp.effectStyleId = sourceFrame.effectStyleId;
-      } else if (sourceFrame.effects) {
-        comp.effects = JSON.parse(JSON.stringify(sourceFrame.effects));
-      }
-    } catch (e) {
-    }
-    try {
-      if (sourceFrame.gridStyleId && typeof sourceFrame.gridStyleId === "string") {
-        comp.gridStyleId = sourceFrame.gridStyleId;
-      } else if (sourceFrame.layoutGrids) {
-        comp.layoutGrids = JSON.parse(JSON.stringify(sourceFrame.layoutGrids));
-      }
-    } catch (e) {
-    }
-    try {
-      comp.cornerSmoothing = sourceFrame.cornerSmoothing;
-    } catch (e) {
-    }
-    try {
-      if (sourceFrame.cornerRadius !== figma.mixed) {
-        comp.cornerRadius = sourceFrame.cornerRadius;
-      } else {
-        comp.topLeftRadius = sourceFrame.topLeftRadius;
-        comp.topRightRadius = sourceFrame.topRightRadius;
-        comp.bottomLeftRadius = sourceFrame.bottomLeftRadius;
-        comp.bottomRightRadius = sourceFrame.bottomRightRadius;
-      }
-    } catch (e) {
-    }
-    const layoutMode = sourceFrame.layoutMode;
-    if (layoutMode && layoutMode !== "NONE") {
-      try {
-        comp.layoutMode = layoutMode;
-      } catch (e) {
-      }
-      try {
-        comp.layoutWrap = sourceFrame.layoutWrap;
-      } catch (e) {
-      }
-      try {
-        comp.primaryAxisSizingMode = sourceFrame.primaryAxisSizingMode;
-      } catch (e) {
-      }
-      try {
-        comp.counterAxisSizingMode = sourceFrame.counterAxisSizingMode;
-      } catch (e) {
-      }
-      try {
-        comp.primaryAxisAlignItems = sourceFrame.primaryAxisAlignItems;
-      } catch (e) {
-      }
-      try {
-        comp.counterAxisAlignItems = sourceFrame.counterAxisAlignItems;
-      } catch (e) {
-      }
-      if (sourceFrame.layoutWrap === "WRAP") {
-        try {
-          comp.counterAxisAlignContent = sourceFrame.counterAxisAlignContent;
-        } catch (e) {
-        }
-        if (sourceFrame.counterAxisSpacing !== null) {
-          try {
-            comp.counterAxisSpacing = sourceFrame.counterAxisSpacing;
-          } catch (e) {
-          }
-        }
-      }
-      try {
-        comp.paddingTop = sourceFrame.paddingTop;
-      } catch (e) {
-      }
-      try {
-        comp.paddingBottom = sourceFrame.paddingBottom;
-      } catch (e) {
-      }
-      try {
-        comp.paddingLeft = sourceFrame.paddingLeft;
-      } catch (e) {
-      }
-      try {
-        comp.paddingRight = sourceFrame.paddingRight;
-      } catch (e) {
-      }
-      try {
-        comp.itemSpacing = sourceFrame.itemSpacing;
-      } catch (e) {
-      }
-      try {
-        comp.itemReverseZIndex = sourceFrame.itemReverseZIndex;
-      } catch (e) {
-      }
-      try {
-        comp.strokesIncludedInLayout = sourceFrame.strokesIncludedInLayout;
-      } catch (e) {
-      }
-    }
-    try {
-      if (sourceFrame.minWidth !== null) comp.minWidth = sourceFrame.minWidth;
-    } catch (e) {
-    }
-    try {
-      if (sourceFrame.maxWidth !== null) comp.maxWidth = sourceFrame.maxWidth;
-    } catch (e) {
-    }
-    try {
-      if (sourceFrame.minHeight !== null) comp.minHeight = sourceFrame.minHeight;
-    } catch (e) {
-    }
-    try {
-      if (sourceFrame.maxHeight !== null) comp.maxHeight = sourceFrame.maxHeight;
-    } catch (e) {
-    }
-    try {
-      const bv = sourceFrame.boundVariables;
-      if (bv && typeof bv === "object") {
-        const scalarFields = [
-          "paddingTop",
-          "paddingBottom",
-          "paddingLeft",
-          "paddingRight",
-          "itemSpacing",
-          "counterAxisSpacing",
-          "topLeftRadius",
-          "topRightRadius",
-          "bottomLeftRadius",
-          "bottomRightRadius",
-          "strokeTopWeight",
-          "strokeBottomWeight",
-          "strokeLeftWeight",
-          "strokeRightWeight",
-          "strokeWeight",
-          "width",
-          "height",
-          "minWidth",
-          "maxWidth",
-          "minHeight",
-          "maxHeight",
-          "opacity",
-          "visible"
-        ];
-        for (const field of scalarFields) {
-          const alias = bv[field];
-          if (alias && typeof alias.id === "string") {
-            const v = preloadedVars && preloadedVars.get(alias.id) || (figma.variables.getVariableById ? figma.variables.getVariableById(alias.id) : null);
-            if (v) {
-              try {
-                comp.setBoundVariable(field, v);
-              } catch (e) {
-              }
-            }
-          }
-        }
-      }
-    } catch (e) {
-    }
-    const childrenSnapshot = [...sourceFrame.children];
-    for (const child of childrenSnapshot) {
-      const cSizingH = "layoutSizingHorizontal" in child ? child.layoutSizingHorizontal : void 0;
-      const cSizingV = "layoutSizingVertical" in child ? child.layoutSizingVertical : void 0;
-      const cPositioning = "layoutPositioning" in child ? child.layoutPositioning : void 0;
-      const cAlign = "layoutAlign" in child ? child.layoutAlign : void 0;
-      const cGrow = "layoutGrow" in child ? child.layoutGrow : void 0;
-      const cX = child.x;
-      const cY = child.y;
-      const targetChild = mode === "clone-to-page" ? child.clone() : child;
-      comp.appendChild(targetChild);
-      if (layoutMode && layoutMode !== "NONE") {
-        try {
-          if (cPositioning === "ABSOLUTE" && "layoutPositioning" in targetChild) {
-            targetChild.layoutPositioning = "ABSOLUTE";
-            targetChild.x = cX;
-            targetChild.y = cY;
-          } else {
-            if (cAlign !== void 0 && "layoutAlign" in targetChild) targetChild.layoutAlign = cAlign;
-            if (cGrow !== void 0 && "layoutGrow" in targetChild) targetChild.layoutGrow = cGrow;
-            if (cSizingH && "layoutSizingHorizontal" in targetChild) targetChild.layoutSizingHorizontal = cSizingH;
-            if (cSizingV && "layoutSizingVertical" in targetChild) targetChild.layoutSizingVertical = cSizingV;
-          }
-        } catch (e) {
-        }
-      } else {
-        try {
-          targetChild.x = cX;
-          targetChild.y = cY;
-        } catch (e) {
-        }
-      }
-    }
-    if (mode === "clone-to-page") {
-      figma.currentPage.appendChild(comp);
-      if (targetPosition) {
-        comp.x = targetPosition.x;
-        comp.y = targetPosition.y;
-      }
-      if (layoutMode && layoutMode !== "NONE") {
-        try {
-          if (sourceFrame.layoutSizingHorizontal === "HUG") comp.layoutSizingHorizontal = "HUG";
-          if (sourceFrame.layoutSizingVertical === "HUG") comp.layoutSizingVertical = "HUG";
-        } catch (e) {
-        }
-      }
-    } else {
-      const parent = sourceFrame.parent;
-      const frameX = sourceFrame.x;
-      const frameY = sourceFrame.y;
-      const frameSizingH = sourceFrame.layoutSizingHorizontal;
-      const frameSizingV = sourceFrame.layoutSizingVertical;
-      const frameAlign = sourceFrame.layoutAlign;
-      const frameGrow = sourceFrame.layoutGrow;
-      const framePositioning = sourceFrame.layoutPositioning;
-      if (parent && "insertChild" in parent) {
-        const idx = parent.children.indexOf(sourceFrame);
-        if (idx >= 0) {
-          parent.insertChild(idx, comp);
-        } else {
-          parent.appendChild(comp);
-        }
-        const parentHasAutoLayout = "layoutMode" in parent && parent.layoutMode && parent.layoutMode !== "NONE";
-        if (parentHasAutoLayout) {
-          try {
-            if (framePositioning === "ABSOLUTE") {
-              comp.layoutPositioning = "ABSOLUTE";
-              comp.x = frameX;
-              comp.y = frameY;
-            } else {
-              comp.layoutAlign = frameAlign;
-              comp.layoutGrow = frameGrow;
-              comp.layoutSizingHorizontal = frameSizingH;
-              comp.layoutSizingVertical = frameSizingV;
-            }
-          } catch (e) {
-          }
-        } else {
-          comp.x = frameX;
-          comp.y = frameY;
-          if (layoutMode && layoutMode !== "NONE") {
-            try {
-              if (frameSizingH === "HUG") comp.layoutSizingHorizontal = "HUG";
-              if (frameSizingV === "HUG") comp.layoutSizingVertical = "HUG";
-            } catch (e) {
-            }
-          }
-        }
-      }
-      try {
-        sourceFrame.remove();
-      } catch (e) {
-      }
-    }
-    return comp;
-  }
-
-  // ../../../../plugins/components-setup/src/renamer/scanner.ts
+  // src/renamer/scanner.ts
   var lastAiRenamerPeerMap = /* @__PURE__ */ new Map();
   var lastAiRenamerRootIds = [];
   async function scanLayersForAiRenaming() {
@@ -11336,6 +13262,31 @@ ${usageJsx}
     lastAiRenamerRootIds = targetRoots.map((r) => r.id);
     const collectedItems = [];
     let totalVariants = 0;
+    const resolvedFrameNames = /* @__PURE__ */ new Map();
+    async function resolveTextStyleLabel(styleId) {
+      if (!styleId) return "";
+      const cached = CACHED_STYLE_ID_TO_LABEL_MAP.get(styleId);
+      if (cached) return cached;
+      try {
+        const style = await figma.getStyleByIdAsync(styleId);
+        if (style) {
+          const label = style.description ? `${style.name} ${style.description}` : style.name;
+          CACHED_STYLE_ID_TO_LABEL_MAP.set(styleId, label);
+          return label;
+        }
+      } catch (_) {
+        try {
+          const style = figma.getStyleById(styleId);
+          if (style) {
+            const label = style.description ? `${style.name} ${style.description}` : style.name;
+            CACHED_STYLE_ID_TO_LABEL_MAP.set(styleId, label);
+            return label;
+          }
+        } catch (_2) {
+        }
+      }
+      return "";
+    }
     for (const root of targetRoots) {
       if (root.type === "COMPONENT_SET") {
         for (const child of root.children) {
@@ -11388,7 +13339,7 @@ ${usageJsx}
               continue;
             }
             const parent = txt.parent;
-            const parentName = parent ? parent.name || "" : "";
+            const parentName = parent ? resolvedFrameNames.get(parent.id) || parent.name || "" : "";
             const parentLayoutMode = parent && "layoutMode" in parent ? parent.layoutMode : "NONE";
             const parentChildren = parent && "children" in parent && Array.isArray(parent.children) ? parent.children : [];
             const indexInParent = parentChildren.indexOf(txt);
@@ -11407,10 +13358,13 @@ ${usageJsx}
             const siblingTexts = textSiblings.map((s) => {
               let sStyleName = "";
               if (typeof s.textStyleId === "string" && s.textStyleId) {
-                try {
-                  const st = figma.getStyleById(s.textStyleId);
-                  if (st) sStyleName = st.name;
-                } catch (_) {
+                sStyleName = CACHED_STYLE_ID_TO_LABEL_MAP.get(s.textStyleId) || "";
+                if (!sStyleName) {
+                  try {
+                    const st = figma.getStyleById(s.textStyleId);
+                    if (st) sStyleName = st.description ? `${st.name} ${st.description}` : st.name;
+                  } catch (_) {
+                  }
                 }
               }
               const sFontStyle = s.fontName && typeof s.fontName === "object" && "style" in s.fontName ? s.fontName.style : "";
@@ -11423,19 +13377,7 @@ ${usageJsx}
                 isMuted: /muted|subtle|secondary|tertiary/i.test(sStyleName)
               };
             });
-            let textStyleName = "";
-            if (typeof txt.textStyleId === "string" && txt.textStyleId) {
-              try {
-                const style = await figma.getStyleByIdAsync(txt.textStyleId);
-                if (style) textStyleName = style.name;
-              } catch (_) {
-                try {
-                  const style = figma.getStyleById(txt.textStyleId);
-                  if (style) textStyleName = style.name;
-                } catch (_2) {
-                }
-              }
-            }
+            const textStyleName = typeof txt.textStyleId === "string" && txt.textStyleId ? await resolveTextStyleLabel(txt.textStyleId) : "";
             const fillTokenName = await getNodeFillTokenName(txt);
             let componentPropertyName = "";
             if (txt.componentPropertyReferences && typeof txt.componentPropertyReferences === "object") {
@@ -11448,11 +13390,13 @@ ${usageJsx}
               }
             }
             const fontStyle = txt.fontName && typeof txt.fontName === "object" && "style" in txt.fontName ? txt.fontName.style : "";
+            const fontFamily = txt.fontName && typeof txt.fontName === "object" && "family" in txt.fontName ? txt.fontName.family : "";
             const suggestedName = classifyTextLayerSemantic({
               currentName: txt.name || "",
               characters: (txt.characters || "").slice(0, 100),
               fontSize: typeof txt.fontSize === "number" ? txt.fontSize : 14,
               fontStyle,
+              fontFamily,
               textStyleName,
               fillTokenName,
               parentName,
@@ -11503,6 +13447,7 @@ ${usageJsx}
             const existingFrameRole = getExistingSemanticFrameName(frame, isDirectRootChild, hasContentAncestor);
             const allPeersAlreadyNamed = existingFrameRole && peerNodes.every((p) => p.name === existingFrameRole);
             if (allPeersAlreadyNamed) {
+              for (const pid of peerIds) resolvedFrameNames.set(pid, existingFrameRole);
               continue;
             }
             const containsText = nodeContainsText(frame);
@@ -11516,6 +13461,7 @@ ${usageJsx}
             const clipsContent = "clipsContent" in frame ? frame.clipsContent : false;
             const isSlot = isSlotLayer(frame);
             const suggestedName = classifyAutoLayoutFrame(frame, isDirectRootChild, hasContentAncestor);
+            for (const pid of peerIds) resolvedFrameNames.set(pid, suggestedName);
             const childrenSummary = [];
             if ("children" in frame && Array.isArray(frame.children)) {
               for (const ch of frame.children) {
@@ -11569,7 +13515,7 @@ ${usageJsx}
         const isStandaloneComp = root.type === "COMPONENT";
         const rootCompName = root.name || "";
         const scanSubtree = async (node, pathLabel, depth, isRootNode) => {
-          if (node.type === "INSTANCE" || isSlotContainer(node)) {
+          if (node.type === "INSTANCE" || isSlotContainer(node) || isSystemOrIgnoredNode(node) || node.name && isSystemOrIgnoredPropName(node.name)) {
             return;
           }
           const isQualifyingFrame = (node.type === "FRAME" || node.type === "GROUP") && !(isRootNode && isStandaloneComp);
@@ -11579,7 +13525,9 @@ ${usageJsx}
             const isDirectRootChild = depth === 1 && !isRootNode || isRootNode && !isStandaloneComp;
             const hasContentAncestor = hasContentAncestorNode(frame);
             const existingFrameRole = getExistingSemanticFrameName(frame, isDirectRootChild, hasContentAncestor);
-            if (!existingFrameRole || frame.name !== existingFrameRole) {
+            if (existingFrameRole && frame.name === existingFrameRole) {
+              resolvedFrameNames.set(frame.id, existingFrameRole);
+            } else {
               const containsText = nodeContainsText(frame);
               const peerIds = [frame.id];
               lastAiRenamerPeerMap.set(frame.id, peerIds);
@@ -11593,6 +13541,7 @@ ${usageJsx}
               const clipsContent = "clipsContent" in frame ? frame.clipsContent : false;
               const isSlot = isSlotLayer(frame);
               const suggestedName = classifyAutoLayoutFrame(frame, isDirectRootChild, hasContentAncestor);
+              resolvedFrameNames.set(frame.id, suggestedName);
               const childrenSummary = [];
               if ("children" in frame && Array.isArray(frame.children)) {
                 for (const ch of frame.children) {
@@ -11648,7 +13597,7 @@ ${usageJsx}
               const peerIds = [txt.id];
               lastAiRenamerPeerMap.set(txt.id, peerIds);
               const parent = txt.parent;
-              const parentName = parent ? parent.name || "" : "";
+              const parentName = parent ? resolvedFrameNames.get(parent.id) || parent.name || "" : "";
               const parentLayoutMode = parent && "layoutMode" in parent ? parent.layoutMode : "NONE";
               const parentChildren = parent && "children" in parent && Array.isArray(parent.children) ? parent.children : [];
               const indexInParent = parentChildren.indexOf(txt);
@@ -11667,10 +13616,13 @@ ${usageJsx}
               const siblingTexts = textSiblings.map((s) => {
                 let sStyleName = "";
                 if (typeof s.textStyleId === "string" && s.textStyleId) {
-                  try {
-                    const st = figma.getStyleById(s.textStyleId);
-                    if (st) sStyleName = st.name;
-                  } catch (_) {
+                  sStyleName = CACHED_STYLE_ID_TO_LABEL_MAP.get(s.textStyleId) || "";
+                  if (!sStyleName) {
+                    try {
+                      const st = figma.getStyleById(s.textStyleId);
+                      if (st) sStyleName = st.description ? `${st.name} ${st.description}` : st.name;
+                    } catch (_) {
+                    }
                   }
                 }
                 const sFontStyle = s.fontName && typeof s.fontName === "object" && "style" in s.fontName ? s.fontName.style : "";
@@ -11683,19 +13635,7 @@ ${usageJsx}
                   isMuted: /muted|subtle|secondary|tertiary/i.test(sStyleName)
                 };
               });
-              let textStyleName = "";
-              if (typeof txt.textStyleId === "string" && txt.textStyleId) {
-                try {
-                  const style = await figma.getStyleByIdAsync(txt.textStyleId);
-                  if (style) textStyleName = style.name;
-                } catch (_) {
-                  try {
-                    const style = figma.getStyleById(txt.textStyleId);
-                    if (style) textStyleName = style.name;
-                  } catch (_2) {
-                  }
-                }
-              }
+              const textStyleName = typeof txt.textStyleId === "string" && txt.textStyleId ? await resolveTextStyleLabel(txt.textStyleId) : "";
               const fillTokenName = await getNodeFillTokenName(txt);
               let componentPropertyName = "";
               if (txt.componentPropertyReferences && typeof txt.componentPropertyReferences === "object") {
@@ -11708,11 +13648,13 @@ ${usageJsx}
                 }
               }
               const fontStyle = txt.fontName && typeof txt.fontName === "object" && "style" in txt.fontName ? txt.fontName.style : "";
+              const fontFamily = txt.fontName && typeof txt.fontName === "object" && "family" in txt.fontName ? txt.fontName.family : "";
               const suggestedName = classifyTextLayerSemantic({
                 currentName: txt.name || "",
                 characters: (txt.characters || "").slice(0, 100),
                 fontSize: typeof txt.fontSize === "number" ? txt.fontSize : 14,
                 fontStyle,
+                fontFamily,
                 textStyleName,
                 fillTokenName,
                 parentName,
@@ -11798,7 +13740,7 @@ ${usageJsx}
     return { items: collectedItems, totalVariantsCount: totalVariants, targetRoots };
   }
 
-  // ../../../../plugins/components-setup/src/auto-props/autoProps.ts
+  // src/auto-props/autoProps.ts
   function findRepeatingFrameRuns(parent) {
     const runs = [];
     if (!("children" in parent) || !Array.isArray(parent.children) || parent.children.length < 2) {
@@ -11806,37 +13748,214 @@ ${usageJsx}
     }
     const children = parent.children;
     let currentRun = [];
-    let currentSig = null;
     for (const child of children) {
-      if (child.type === "FRAME" && child.type !== "INSTANCE") {
+      if (child.type === "FRAME" && child.type !== "INSTANCE" && !isSlotContainer(child) && !isSystemOrIgnoredNode(child)) {
         const frame = child;
-        const sig = getStructuralSignature(frame);
-        if (sig) {
-          if (sig === currentSig) {
+        if (currentRun.length === 0) {
+          currentRun = [frame];
+        } else {
+          const lastFrame = currentRun[currentRun.length - 1];
+          if (areFramesMatchingItems(lastFrame, frame)) {
             currentRun.push(frame);
-            continue;
           } else {
             if (currentRun.length >= 2) {
               runs.push([...currentRun]);
             }
             currentRun = [frame];
-            currentSig = sig;
-            continue;
           }
         }
+      } else {
+        if (currentRun.length >= 2) {
+          runs.push([...currentRun]);
+        }
+        currentRun = [];
       }
-      if (currentRun.length >= 2) {
-        runs.push([...currentRun]);
-      }
-      currentRun = [];
-      currentSig = null;
     }
     if (currentRun.length >= 2) {
       runs.push([...currentRun]);
     }
     return runs;
   }
-  function autoCreateTextPropsAndExtractItemsSync(roots, preloadedVars, options) {
+  async function applyNestedInstancesExposure(propertyHost, variants, options) {
+    let exposedCount = 0;
+    if (!propertyHost || variants.length === 0) return 0;
+    try {
+      for (const variant of variants) {
+        let inspect = function(n, insideSlot) {
+          var _a, _b, _c, _d;
+          try {
+            if (!n || n.removed) return;
+            if (isSystemOrIgnoredNode(n) || n.name && isSystemOrIgnoredPropName(n.name)) {
+              const resetSubtree = (curr) => {
+                try {
+                  if (curr.type === "INSTANCE") {
+                    try {
+                      curr.isExposedInstance = false;
+                    } catch (_) {
+                    }
+                  }
+                  if ("children" in curr && curr.children) {
+                    for (const ch of curr.children) {
+                      resetSubtree(ch);
+                    }
+                  }
+                } catch (_) {
+                }
+              };
+              resetSubtree(n);
+              return;
+            }
+            const isSlot = insideSlot || isSlotContainer(n) || n.name && /slot/i.test(n.name);
+            if (n.type === "INSTANCE") {
+              const inst = n;
+              if (isSlot || isSystemOrIgnoredNode(inst) || isSystemOrIgnoredPropName(inst.name) || inst.mainComponent && isSystemOrIgnoredPropName(inst.mainComponent.name) || ((_a = inst.mainComponent) == null ? void 0 : _a.parent) && isSystemOrIgnoredPropName(inst.mainComponent.parent.name)) {
+                try {
+                  inst.isExposedInstance = false;
+                } catch (_) {
+                }
+                return;
+              } else {
+                if ((options == null ? void 0 : options.enableNestedInstances) === true) {
+                  const explicitDecision = (_d = (_b = options == null ? void 0 : options.nestedInstanceDecisions) == null ? void 0 : _b[inst.name]) != null ? _d : (_c = options == null ? void 0 : options.nestedInstanceDecisions) == null ? void 0 : _c[inst.id];
+                  if (explicitDecision === false) {
+                    try {
+                      inst.isExposedInstance = false;
+                    } catch (_) {
+                    }
+                  } else {
+                    let mainComp = null;
+                    try {
+                      mainComp = inst.mainComponent;
+                    } catch (_) {
+                    }
+                    if (mainComp) {
+                      const defHost = mainComp.parent && mainComp.parent.type === "COMPONENT_SET" ? mainComp.parent : mainComp;
+                      let defs = safeGetComponentPropertyDefinitions(defHost);
+                      if (Object.keys(defs).length === 0 && !defHost.remote) {
+                        try {
+                          const hostVariants = defHost.type === "COMPONENT_SET" ? defHost.children.filter((c) => c.type === "COMPONENT") : [defHost];
+                          cleanRebuildComponentProperties(defHost, hostVariants, {
+                            enableText: true,
+                            enableInstanceSwap: true,
+                            enableInstanceShow: true,
+                            enableBoolean: true,
+                            enableSlotExtract: false
+                          });
+                          defs = safeGetComponentPropertyDefinitions(defHost);
+                        } catch (e) {
+                        }
+                      }
+                      if (Object.keys(defs).length > 0) {
+                        try {
+                          inst.isExposedInstance = true;
+                          if (variant === variants[0]) {
+                            exposedCount++;
+                          }
+                        } catch (err) {
+                          console.warn("[AutoExpose] Failed to set isExposedInstance:", err);
+                        }
+                      }
+                    }
+                  }
+                } else {
+                  try {
+                    inst.isExposedInstance = false;
+                  } catch (_) {
+                  }
+                }
+              }
+            }
+            if ("children" in n && n.children) {
+              for (const ch of n.children) {
+                inspect(ch, isSlot);
+              }
+            }
+          } catch (_) {
+          }
+        };
+        if (!variant || variant.removed || !("children" in variant)) continue;
+        for (const child of variant.children) {
+          inspect(child, false);
+        }
+      }
+    } catch (err) {
+      console.warn("[AutoExpose] Error caught in applyNestedInstancesExposure:", err);
+    }
+    return exposedCount;
+  }
+  function resolveClusterVariantNames(clusterEntries) {
+    const STATE_KEYWORDS = [
+      "active",
+      "selected",
+      "completed",
+      "current",
+      "disabled",
+      "inactive",
+      "hover",
+      "focus",
+      "pressed",
+      "default",
+      "error",
+      "warning",
+      "success",
+      "done",
+      "pending"
+    ];
+    const usedNames = /* @__PURE__ */ new Set();
+    const variantNames = new Array(clusterEntries.length).fill("");
+    for (let i = 0; i < clusterEntries.length; i++) {
+      const entry = clusterEntries[i];
+      for (const node of entry.nodes) {
+        const lower = (node.name || "").toLowerCase();
+        let foundKw = null;
+        for (const kw of STATE_KEYWORDS) {
+          if (lower.includes(kw)) {
+            foundKw = kw;
+            break;
+          }
+        }
+        if (foundKw) {
+          const cap = foundKw.charAt(0).toUpperCase() + foundKw.slice(1);
+          const candidate = `State=${cap}`;
+          if (!usedNames.has(candidate)) {
+            variantNames[i] = candidate;
+            usedNames.add(candidate);
+            break;
+          }
+        }
+      }
+    }
+    for (let i = 0; i < clusterEntries.length; i++) {
+      if (variantNames[i]) continue;
+      if (i === 0 && !usedNames.has("State=Default")) {
+        variantNames[i] = "State=Default";
+        usedNames.add("State=Default");
+        continue;
+      }
+      if (clusterEntries[i].count < clusterEntries[0].count && !usedNames.has("State=Active")) {
+        variantNames[i] = "State=Active";
+        usedNames.add("State=Active");
+        continue;
+      }
+      if (!usedNames.has("State=Default")) {
+        variantNames[i] = "State=Default";
+        usedNames.add("State=Default");
+      } else if (!usedNames.has("State=Active")) {
+        variantNames[i] = "State=Active";
+        usedNames.add("State=Active");
+      } else {
+        let vNum = i + 1;
+        while (usedNames.has(`State=Variant${vNum}`)) {
+          vNum++;
+        }
+        const vName = `State=Variant${vNum}`;
+        variantNames[i] = vName;
+        usedNames.add(vName);
+      }
+    }
+    return variantNames;
+  }
+  async function autoCreateTextPropsAndExtractItemsSync(roots, preloadedVars, options) {
     let extractedItemsCount = 0;
     let textPropsCount = 0;
     let instanceSwapPropsCount = 0;
@@ -11844,12 +13963,23 @@ ${usageJsx}
     let slotsCreatedCount = 0;
     let nestedInstancesCount = 0;
     if (roots.length === 0) {
-      return { extractedItemsCount: 0, textPropsCount: 0, instanceSwapPropsCount: 0, booleanPropsCount: 0, slotsCreatedCount: 0, nestedInstancesCount: 0 };
+      return {
+        extractedItemsCount: 0,
+        textPropsCount: 0,
+        instanceSwapPropsCount: 0,
+        booleanPropsCount: 0,
+        slotsCreatedCount: 0,
+        nestedInstancesCount: 0,
+        createdItemSets: [],
+        masterNodes: []
+      };
     }
     const processedHostIds = /* @__PURE__ */ new Set();
     const createdItemsByTargetName = /* @__PURE__ */ new Map();
+    const allCreatedItemSets = [];
+    const allMasterNodes = /* @__PURE__ */ new Set();
     for (const root of roots) {
-      const rootComponent = root;
+      let rootComponent = root;
       let rootName = rootComponent.name.trim();
       let propertyHost = null;
       let compSetParent = null;
@@ -11885,6 +14015,49 @@ ${usageJsx}
           p = p.parent;
         }
       }
+      if (!propertyHost && rootComponent.type === "FRAME") {
+        try {
+          const parentComp = convertFrameToComponentAtomic(
+            rootComponent,
+            "replace-in-parent",
+            preloadedVars
+          );
+          propertyHost = parentComp;
+          rootComponent = parentComp;
+          rootName = parentComp.name.trim();
+        } catch (e) {
+          console.warn("[AutoProps] Could not convert parent frame to component:", e);
+        }
+      }
+      if (propertyHost && propertyHost.type === "COMPONENT" && (!propertyHost.parent || propertyHost.parent.type !== "COMPONENT_SET")) {
+        try {
+          const comp = propertyHost;
+          let originalName = comp.name.trim();
+          if (/^frame(\s*\d+)?$/i.test(originalName)) {
+            originalName = "Container";
+          } else {
+            originalName = toPascalCase(originalName);
+          }
+          const parent = comp.parent && "children" in comp.parent ? comp.parent : figma.currentPage;
+          comp.name = "State=Default";
+          const compSet = figma.combineAsVariants([comp], parent);
+          compSet.name = originalName;
+          await setupComponentSetOnlyHorizontal([compSet]);
+          propertyHost = compSet;
+          compSetParent = compSet;
+          rootComponent = compSet;
+          rootName = originalName;
+        } catch (err) {
+          console.warn("[AutoProps] Could not wrap component into COMPONENT_SET:", err);
+        }
+      }
+      if (propertyHost) {
+        allMasterNodes.add(propertyHost);
+        try {
+          await purgeIgnoredPropertiesAndReferences(propertyHost);
+        } catch (_) {
+        }
+      }
       const hostKey = (compSetParent || propertyHost || rootComponent).id;
       if (processedHostIds.has(hostKey)) continue;
       processedHostIds.add(hostKey);
@@ -11893,6 +14066,7 @@ ${usageJsx}
         for (const variant of variants) {
           const containersWithRuns = [];
           const inspectNode = (n) => {
+            if (isSystemOrIgnoredNode(n)) return;
             if (n.type === "INSTANCE") return;
             if (n.type === "FRAME" || n.type === "COMPONENT") {
               const frame = n;
@@ -11915,14 +14089,18 @@ ${usageJsx}
               if (!templateNode || !templateNode.parent) continue;
               const baseHostName = (propertyHost ? propertyHost.name : rootName).split(",")[0].trim();
               const targetItemName = `${baseHostName}/Item`;
+              const clusters = /* @__PURE__ */ new Map();
+              for (const fn of repeatingNodes) {
+                const sig = getVisualSignature(fn);
+                const list = clusters.get(sig) || [];
+                list.push(fn);
+                clusters.set(sig, list);
+              }
               let cachedItem = createdItemsByTargetName.get(targetItemName);
-              let itemComponent;
-              let propMap;
-              if (cachedItem) {
-                itemComponent = cachedItem.itemComponent;
-                propMap = cachedItem.propMap;
-              } else {
-                const existingOld = figma.currentPage.findOne((n) => n.type === "COMPONENT" && n.name === targetItemName);
+              if (!cachedItem) {
+                const existingOld = figma.currentPage.findOne(
+                  (n) => (n.type === "COMPONENT_SET" || n.type === "COMPONENT") && n.name === targetItemName
+                );
                 if (existingOld) {
                   try {
                     existingOld.remove();
@@ -11935,30 +14113,123 @@ ${usageJsx}
                   placeX = compSetParent.x + compSetParent.width + 100;
                   placeY = compSetParent.y;
                 }
-                itemComponent = convertFrameToComponentAtomic(
-                  templateNode,
-                  "clone-to-page",
-                  preloadedVars,
-                  { x: placeX, y: placeY }
-                );
-                itemComponent.name = targetItemName;
-                extractedItemsCount++;
-                const itemRebuild = cleanRebuildComponentProperties(itemComponent, [itemComponent], options);
-                textPropsCount += itemRebuild.textPropsCount;
-                instanceSwapPropsCount += itemRebuild.instanceSwapPropsCount;
-                booleanPropsCount += itemRebuild.booleanPropsCount;
-                propMap = /* @__PURE__ */ new Map();
-                const itemDefs = itemComponent.componentPropertyDefinitions || {};
-                for (const k of Object.keys(itemDefs)) {
-                  const def = itemDefs[k];
-                  if (def && def.type === "TEXT") {
-                    const clean = k.split("#")[0].trim();
-                    propMap.set(clean, k);
+                if (clusters.size <= 1) {
+                  const cloned = templateNode.clone();
+                  figma.currentPage.appendChild(cloned);
+                  cloned.x = placeX;
+                  cloned.y = placeY;
+                  const singleComp = figma.createComponentFromNode(cloned);
+                  singleComp.name = "State=Default";
+                  const itemSet = figma.combineAsVariants([singleComp], figma.currentPage);
+                  itemSet.name = targetItemName;
+                  itemSet.x = placeX;
+                  itemSet.y = placeY;
+                  await setupComponentSetOnlyHorizontal([itemSet]);
+                  const itemRebuild = cleanRebuildComponentProperties(itemSet, [singleComp], options);
+                  textPropsCount += itemRebuild.textPropsCount;
+                  instanceSwapPropsCount += itemRebuild.instanceSwapPropsCount;
+                  booleanPropsCount += itemRebuild.booleanPropsCount;
+                  const exposedNested = await applyNestedInstancesExposure(itemSet, [singleComp], options);
+                  nestedInstancesCount += exposedNested;
+                  extractedItemsCount++;
+                  allCreatedItemSets.push(itemSet);
+                  const clusterToVariantComp = /* @__PURE__ */ new Map();
+                  for (const sig of clusters.keys()) {
+                    clusterToVariantComp.set(sig, singleComp);
+                  }
+                  const propMap = /* @__PURE__ */ new Map();
+                  const itemDefs = safeGetComponentPropertyDefinitions(itemSet);
+                  for (const k of Object.keys(itemDefs)) {
+                    const def = itemDefs[k];
+                    if (def && def.type === "TEXT") {
+                      const clean = k.split("#")[0].trim();
+                      propMap.set(clean, k);
+                    }
+                  }
+                  cachedItem = {
+                    itemSet,
+                    clusterToVariantComp,
+                    propMap,
+                    createdItemComponents: [singleComp]
+                  };
+                  createdItemsByTargetName.set(targetItemName, cachedItem);
+                } else {
+                  const clusterEntries = Array.from(clusters.entries()).map(([sig, nodes]) => ({
+                    sig,
+                    nodes,
+                    count: nodes.length
+                  }));
+                  clusterEntries.sort((a, b) => b.count - a.count);
+                  const variantNames = resolveClusterVariantNames(clusterEntries);
+                  const createdItemComponents = [];
+                  const clusterToVariantComp = /* @__PURE__ */ new Map();
+                  for (let i = 0; i < clusterEntries.length; i++) {
+                    const entry = clusterEntries[i];
+                    const repNode = entry.nodes[0];
+                    const cloned = repNode.clone();
+                    figma.currentPage.appendChild(cloned);
+                    cloned.x = placeX + i * 120;
+                    cloned.y = placeY;
+                    const comp = figma.createComponentFromNode(cloned);
+                    comp.name = variantNames[i];
+                    createdItemComponents.push(comp);
+                    clusterToVariantComp.set(entry.sig, comp);
+                  }
+                  const defaultIdx = createdItemComponents.findIndex((c) => c.name === "State=Default");
+                  if (defaultIdx > 0) {
+                    const defComp = createdItemComponents.splice(defaultIdx, 1)[0];
+                    createdItemComponents.unshift(defComp);
+                  }
+                  const itemSet = figma.combineAsVariants(createdItemComponents, figma.currentPage);
+                  itemSet.name = targetItemName;
+                  itemSet.x = placeX;
+                  itemSet.y = placeY;
+                  await setupComponentSetOnlyHorizontal([itemSet]);
+                  const itemRebuild = cleanRebuildComponentProperties(itemSet, createdItemComponents, options);
+                  textPropsCount += itemRebuild.textPropsCount;
+                  instanceSwapPropsCount += itemRebuild.instanceSwapPropsCount;
+                  booleanPropsCount += itemRebuild.booleanPropsCount;
+                  const exposedNested = await applyNestedInstancesExposure(itemSet, createdItemComponents, options);
+                  nestedInstancesCount += exposedNested;
+                  extractedItemsCount += createdItemComponents.length;
+                  allCreatedItemSets.push(itemSet);
+                  const propMap = /* @__PURE__ */ new Map();
+                  const itemDefs = safeGetComponentPropertyDefinitions(itemSet);
+                  for (const k of Object.keys(itemDefs)) {
+                    const def = itemDefs[k];
+                    if (def && def.type === "TEXT") {
+                      const clean = k.split("#")[0].trim();
+                      propMap.set(clean, k);
+                    }
+                  }
+                  cachedItem = {
+                    itemSet,
+                    clusterToVariantComp,
+                    propMap,
+                    createdItemComponents
+                  };
+                  createdItemsByTargetName.set(targetItemName, cachedItem);
+                }
+              } else {
+                for (const fn of repeatingNodes) {
+                  const sig = getVisualSignature(fn);
+                  if (!cachedItem.clusterToVariantComp.has(sig)) {
+                    const cloned = fn.clone();
+                    figma.currentPage.appendChild(cloned);
+                    const comp = figma.createComponentFromNode(cloned);
+                    let vNum = cachedItem.createdItemComponents.length + 1;
+                    comp.name = `State=Variant${vNum}`;
+                    cachedItem.itemSet.appendChild(comp);
+                    cachedItem.createdItemComponents.push(comp);
+                    cachedItem.clusterToVariantComp.set(sig, comp);
+                    await setupComponentSetOnlyHorizontal([cachedItem.itemSet]);
+                    cleanRebuildComponentProperties(cachedItem.itemSet, cachedItem.createdItemComponents, options);
+                    extractedItemsCount++;
                   }
                 }
-                createdItemsByTargetName.set(targetItemName, { itemComponent, propMap });
               }
               let runParent = null;
+              const newlyCreatedInstances = [];
               for (const oldContainer of repeatingNodes) {
                 const parent = oldContainer.parent;
                 if (!parent || !("insertChild" in parent)) continue;
@@ -11973,8 +14244,11 @@ ${usageJsx}
                 const sizingV = oldContainer.layoutSizingVertical;
                 const layoutAlign = oldContainer.layoutAlign;
                 const layoutGrow = oldContainer.layoutGrow;
-                const instance = itemComponent.createInstance();
+                const sig = getVisualSignature(oldContainer);
+                const targetVariantComp = cachedItem.clusterToVariantComp.get(sig) || cachedItem.itemSet.defaultVariant || cachedItem.createdItemComponents[0];
+                const instance = targetVariantComp.createInstance();
                 parent.insertChild(index, instance);
+                newlyCreatedInstances.push(instance);
                 try {
                   instance.layoutSizingHorizontal = sizingH;
                   instance.layoutSizingVertical = sizingV;
@@ -11984,7 +14258,7 @@ ${usageJsx}
                 }
                 const propsToSet = {};
                 for (const [layerName, textVal] of Object.entries(originalTexts)) {
-                  const propKey = propMap.get(layerName);
+                  const propKey = cachedItem.propMap.get(layerName);
                   if (propKey && textVal) {
                     propsToSet[propKey] = textVal;
                   }
@@ -11999,50 +14273,94 @@ ${usageJsx}
                 oldContainer.remove();
               }
               if (runParent && "children" in runParent) {
-                const allChildrenAreItems = runParent.children.length > 0 && runParent.children.every(
-                  (c) => {
-                    var _a, _b;
-                    return c.type === "INSTANCE" && (((_a = c.mainComponent) == null ? void 0 : _a.name) === targetItemName || ((_b = c.mainComponent) == null ? void 0 : _b.id) === itemComponent.id);
-                  }
+                const nonItemChildren = runParent.children.filter(
+                  (c) => !newlyCreatedInstances.includes(c)
                 );
-                if (allChildrenAreItems) {
+                if (nonItemChildren.length === 0) {
                   runParent.name = "Slot";
                   sanitizeSlotFrame(runParent, runParent.parent);
                   applySlotMetricsAndVariables(runParent, runParent.parent, preloadedVars);
+                  slotsCreatedCount++;
                   for (const ch of runParent.children) {
                     if ("componentPropertyReferences" in ch) {
                       try {
-                        ch.componentPropertyReferences = {};
+                        ch.componentPropertyReferences = null;
+                      } catch (_) {
+                      }
+                    }
+                    if (ch.type === "INSTANCE") {
+                      try {
+                        ch.isExposedInstance = false;
                       } catch (_) {
                       }
                     }
                   }
-                } else {
-                  if ("layoutMode" in runParent && runParent.layoutMode === "HORIZONTAL") {
-                    runParent.name = "RowStack";
-                  } else {
-                    runParent.name = "ColumnStack";
+                } else if (newlyCreatedInstances.length > 0) {
+                  const firstChild = newlyCreatedInstances[0];
+                  const firstIdx = runParent.children.indexOf(firstChild);
+                  const slotFrame = figma.createFrame();
+                  slotFrame.name = "Slot";
+                  const parentMode = "layoutMode" in runParent ? runParent.layoutMode : "HORIZONTAL";
+                  slotFrame.layoutMode = parentMode === "VERTICAL" ? "VERTICAL" : "HORIZONTAL";
+                  if ("itemSpacing" in runParent && typeof runParent.itemSpacing === "number") {
+                    slotFrame.itemSpacing = runParent.itemSpacing;
                   }
+                  slotFrame.paddingLeft = 0;
+                  slotFrame.paddingRight = 0;
+                  slotFrame.paddingTop = 0;
+                  slotFrame.paddingBottom = 0;
+                  slotFrame.fills = [];
+                  slotFrame.strokes = [];
+                  if (firstIdx !== -1) {
+                    runParent.insertChild(firstIdx, slotFrame);
+                  } else {
+                    runParent.appendChild(slotFrame);
+                  }
+                  for (const inst of newlyCreatedInstances) {
+                    slotFrame.appendChild(inst);
+                    if ("componentPropertyReferences" in inst) {
+                      try {
+                        inst.componentPropertyReferences = null;
+                      } catch (_) {
+                      }
+                    }
+                    try {
+                      inst.isExposedInstance = false;
+                    } catch (_) {
+                    }
+                  }
+                  sanitizeSlotFrame(slotFrame, runParent);
+                  applySlotMetricsAndVariables(slotFrame, runParent, preloadedVars);
+                  slotsCreatedCount++;
                 }
               }
             }
           }
         }
       }
-      if (!propertyHost && rootComponent.type === "FRAME") {
+      if (propertyHost && propertyHost.type === "COMPONENT" && (!propertyHost.parent || propertyHost.parent.type !== "COMPONENT_SET")) {
         try {
-          const parentComp = convertFrameToComponentAtomic(
-            rootComponent,
-            "replace-in-parent",
-            preloadedVars
-          );
-          propertyHost = parentComp;
-          variants = [parentComp];
+          const comp = propertyHost;
+          let origName = comp.name.trim();
+          if (/^frame(\s*\d+)?$/i.test(origName)) {
+            origName = "Container";
+          } else {
+            origName = toPascalCase(origName);
+          }
+          const parent = comp.parent && "children" in comp.parent ? comp.parent : figma.currentPage;
+          comp.name = "State=Default";
+          const compSet = figma.combineAsVariants([comp], parent);
+          compSet.name = origName;
+          await setupComponentSetOnlyHorizontal([compSet]);
+          propertyHost = compSet;
+          variants = [comp];
+          allMasterNodes.add(compSet);
         } catch (e) {
-          console.warn("[AutoProps] Could not convert parent frame to component:", e);
+          console.warn("[AutoProps] Could not wrap propertyHost in COMPONENT_SET:", e);
         }
       }
       if (propertyHost && (propertyHost.type === "COMPONENT_SET" || propertyHost.type === "COMPONENT")) {
+        allMasterNodes.add(propertyHost);
         if (propertyHost.type === "COMPONENT_SET") {
           reorderComponentSetVariants(propertyHost);
         }
@@ -12064,10 +14382,24 @@ ${usageJsx}
         textPropsCount += rebuildRes.textPropsCount;
         instanceSwapPropsCount += rebuildRes.instanceSwapPropsCount;
         booleanPropsCount += rebuildRes.booleanPropsCount;
-        nestedInstancesCount += rebuildRes.nestedInstancesCount;
+        const exposedNested = await applyNestedInstancesExposure(propertyHost, variants, options);
+        nestedInstancesCount += exposedNested;
+        try {
+          await purgeIgnoredPropertiesAndReferences(propertyHost);
+        } catch (_) {
+        }
       }
     }
-    return { extractedItemsCount, textPropsCount, instanceSwapPropsCount, booleanPropsCount, slotsCreatedCount, nestedInstancesCount };
+    return {
+      extractedItemsCount,
+      textPropsCount,
+      instanceSwapPropsCount,
+      booleanPropsCount,
+      slotsCreatedCount,
+      nestedInstancesCount,
+      createdItemSets: allCreatedItemSets,
+      masterNodes: Array.from(allMasterNodes)
+    };
   }
   function collectAutoPropsPreviewData(roots) {
     const result = [];
@@ -12087,7 +14419,11 @@ ${usageJsx}
       }
       const primaryVariant = (host.type === "COMPONENT_SET" ? host.defaultVariant : null) || variants[0] || host;
       const instances = collectDirectInstances(primaryVariant).filter((inst) => {
+        var _a;
         if (isInsideSlot(inst, primaryVariant)) return false;
+        if (isSystemOrIgnoredNode(inst) || isIgnoredName(inst.name) || inst.mainComponent && isIgnoredName(inst.mainComponent.name) || ((_a = inst.mainComponent) == null ? void 0 : _a.parent) && isIgnoredName(inst.mainComponent.parent.name)) {
+          return false;
+        }
         const parent = inst.parent;
         if (parent && "children" in parent && Array.isArray(parent.children)) {
           const siblings = parent.children.filter((c) => c.type === "INSTANCE");
@@ -12098,8 +14434,11 @@ ${usageJsx}
         }
         return true;
       });
-      const texts = collectDirectTextNodes(primaryVariant);
-      const instanceList = instances.map((inst) => {
+      const texts = collectDirectTextNodes(primaryVariant).filter((t) => {
+        if (isSystemOrIgnoredNode(t) || isIgnoredName(t.name)) return false;
+        return true;
+      });
+      const instanceList = instances.filter((inst) => !isIgnoredName(cleanInstancePropertyName(inst.name).propName)).map((inst) => {
         var _a, _b;
         const clean = cleanInstancePropertyName(inst.name);
         const isIcon = isIconInstanceNode(inst);
@@ -12132,7 +14471,7 @@ ${usageJsx}
     return result;
   }
 
-  // ../../../../plugins/components-setup/src/components/smartSwap.ts
+  // src/components/smartSwap.ts
   function buildRelativePath(node, rootNode) {
     const parts = [];
     let curr = node;
@@ -12514,7 +14853,7 @@ ${usageJsx}
     };
   }
 
-  // ../../../../plugins/components-setup/src/components/fontReplacer.ts
+  // src/components/fontReplacer.ts
   var cachedAvailableFontsMap = null;
   var WEIGHT_RANK_MAP = [
     { pattern: /\b(thin|hairline|100)\b/i, weight: 100 },
@@ -12655,6 +14994,7 @@ ${usageJsx}
   async function scanSelectionFonts(includeAvailableFonts = false) {
     const selection = figma.currentPage.selection;
     const textNodes = collectTextNodesRecursive(selection);
+    const availableTextStyles = await getAllAvailableTextStyles();
     const specMap = /* @__PURE__ */ new Map();
     const familyMap = /* @__PURE__ */ new Map();
     for (const textNode of textNodes) {
@@ -12662,6 +15002,17 @@ ${usageJsx}
       for (const sp of nodeSpecs) {
         let existingSpec = specMap.get(sp.specKey);
         if (!existingSpec) {
+          const numSize = parseFloat(sp.size);
+          const numLineHeight = sp.lineHeight.toLowerCase() === "auto" ? null : parseFloat(sp.lineHeight);
+          const matched = matchTextStyleForSpec(
+            sp.family,
+            sp.style,
+            numSize,
+            numLineHeight,
+            "",
+            availableTextStyles,
+            { mode: "exact" }
+          );
           existingSpec = {
             specKey: sp.specKey,
             familyKey: sp.family,
@@ -12670,7 +15021,8 @@ ${usageJsx}
             size: sp.size,
             lineHeight: sp.lineHeight,
             nodeIds: [],
-            layerCount: 0
+            layerCount: 0,
+            matchedTextStyle: matched ? { id: matched.id, key: matched.key, name: matched.name } : null
           };
           specMap.set(sp.specKey, existingSpec);
         }
@@ -12858,7 +15210,7 @@ ${usageJsx}
     };
   }
 
-  // ../../../../plugins/components-setup/src/ds-generator/utils/equality.ts
+  // src/ds-generator/utils/equality.ts
   function isColorEqual(c1, c2) {
     if (!c1 || !c2) return c1 === c2;
     if (typeof c1 !== "object" || typeof c2 !== "object") return c1 === c2;
@@ -12936,7 +15288,15 @@ ${usageJsx}
     for (let i = 0; i < e1.length; i++) {
       const a = e1[i], b = e2[i];
       if (a.type !== b.type) return false;
+      if (a.blurType !== b.blurType) return false;
       if (a.radius !== b.radius) return false;
+      if ((a.startRadius !== void 0 || b.startRadius !== void 0) && a.startRadius !== b.startRadius) return false;
+      if (a.startOffset && b.startOffset) {
+        if (a.startOffset.x !== b.startOffset.x || a.startOffset.y !== b.startOffset.y) return false;
+      }
+      if (a.endOffset && b.endOffset) {
+        if (a.endOffset.x !== b.endOffset.x || a.endOffset.y !== b.endOffset.y) return false;
+      }
       if (a.offset && b.offset) {
         if (a.offset.x !== b.offset.x || a.offset.y !== b.offset.y) return false;
       }
@@ -12949,11 +15309,14 @@ ${usageJsx}
       const bvrA = a.boundVariables && a.boundVariables.radius ? a.boundVariables.radius.id : void 0;
       const bvrB = b.boundVariables && b.boundVariables.radius ? b.boundVariables.radius.id : void 0;
       if (bvrA !== bvrB) return false;
+      const bvsrA = a.boundVariables && a.boundVariables.startRadius ? a.boundVariables.startRadius.id : void 0;
+      const bvsrB = b.boundVariables && b.boundVariables.startRadius ? b.boundVariables.startRadius.id : void 0;
+      if (bvsrA !== bvsrB) return false;
     }
     return true;
   }
 
-  // ../../../../plugins/components-setup/src/ds-generator/utils/strings.ts
+  // src/ds-generator/utils/strings.ts
   function toPascalCase3(str) {
     if (!str && str !== 0) return "";
     const trimmed = str.toString().trim();
@@ -13004,7 +15367,7 @@ ${usageJsx}
     return str.charAt(0).toUpperCase() + str.slice(1);
   }
 
-  // ../../../../plugins/components-setup/src/ds-generator/variables/variableHelpers.ts
+  // src/ds-generator/variables/variableHelpers.ts
   var stepRawValues = {
     none: 0,
     pico: 1,
@@ -13441,7 +15804,7 @@ ${usageJsx}
     return null;
   }
 
-  // ../../../../plugins/components-setup/src/ds-generator/utils/colorMath.ts
+  // src/ds-generator/utils/colorMath.ts
   function hexToRgb(hex) {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
     return result ? { r: parseInt(result[1], 16) / 255, g: parseInt(result[2], 16) / 255, b: parseInt(result[3], 16) / 255 } : { r: 0, g: 0, b: 0 };
@@ -13665,7 +16028,7 @@ ${usageJsx}
     return null;
   }
 
-  // ../../../../plugins/components-setup/src/ds-generator/detector/detectFromDoc.ts
+  // src/ds-generator/detector/detectFromDoc.ts
   async function detectTypographyFromDocument() {
     const detected = {};
     try {
@@ -13673,48 +16036,79 @@ ${usageJsx}
       const allLocalVars = await figma.variables.getLocalVariablesAsync();
       const typoCol = collections.find((c) => c.name === "_TypographyControls" || c.name === "_typographyControls" || c.name === "TypographyControls" || c.name === "typographyControls");
       if (typoCol) {
-        const defaultMode = typoCol.modes[0];
-        if (defaultMode) {
-          const modeId = defaultMode.modeId;
-          const headVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontFamily/heading", "fontFamily/header");
-          const bodyVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontFamily/default", "fontFamily/body");
+        const headVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontFamily/heading", "fontFamily/header");
+        const bodyVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontFamily/default", "fontFamily/body");
+        const headRegVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/heading/base", "fontWeight/header/base");
+        const headMedVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/heading/medium", "fontWeight/header/medium");
+        const headBoldVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/heading/bold", "fontWeight/header/bold");
+        const bodyRegVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/default/base", "fontWeight/base", "fontWeight/regular");
+        const bodyMedVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/default/medium", "fontWeight/medium");
+        const bodyBoldVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/default/bold", "fontWeight/bold");
+        const readModeFonts = (modeId) => {
+          const result = {};
           if (headVar) {
             const val = headVar.valuesByMode[modeId];
-            if (typeof val === "string") {
-              detected.headersFont = val;
-            }
+            if (typeof val === "string") result.headersFont = val;
           }
           if (bodyVar) {
             const val = bodyVar.valuesByMode[modeId];
-            if (typeof val === "string") {
-              detected.bodyFont = val;
-            }
+            if (typeof val === "string") result.bodyFont = val;
           }
-          const headRegVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/heading/base", "fontWeight/header/base");
-          const headMedVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/heading/medium", "fontWeight/header/medium");
-          const headBoldVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/heading/bold", "fontWeight/header/bold");
-          const bodyRegVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/default/base", "fontWeight/base", "fontWeight/regular");
-          const bodyMedVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/default/medium", "fontWeight/medium");
-          const bodyBoldVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/default/bold", "fontWeight/bold");
           if (headRegVar || headMedVar || headBoldVar) {
-            detected.headersStyles = {
+            result.headersStyles = {
               regular: headRegVar ? headRegVar.valuesByMode[modeId] : bodyRegVar ? bodyRegVar.valuesByMode[modeId] : "Regular",
               medium: headMedVar ? headMedVar.valuesByMode[modeId] : bodyMedVar ? bodyMedVar.valuesByMode[modeId] : "Medium",
               bold: headBoldVar ? headBoldVar.valuesByMode[modeId] : bodyBoldVar ? bodyBoldVar.valuesByMode[modeId] : "Bold"
             };
           } else if (bodyRegVar || bodyMedVar || bodyBoldVar) {
-            detected.headersStyles = {
+            result.headersStyles = {
               regular: bodyRegVar ? bodyRegVar.valuesByMode[modeId] : "Regular",
               medium: bodyMedVar ? bodyMedVar.valuesByMode[modeId] : "Medium",
               bold: bodyBoldVar ? bodyBoldVar.valuesByMode[modeId] : "Bold"
             };
           }
           if (bodyRegVar || bodyMedVar || bodyBoldVar) {
-            detected.bodyStyles = {
+            result.bodyStyles = {
               regular: bodyRegVar ? bodyRegVar.valuesByMode[modeId] : "Regular",
               medium: bodyMedVar ? bodyMedVar.valuesByMode[modeId] : "Medium",
               bold: bodyBoldVar ? bodyBoldVar.valuesByMode[modeId] : "Bold"
             };
+          }
+          return result;
+        };
+        const defaultMode = typoCol.modes[0];
+        if (defaultMode) {
+          Object.assign(detected, readModeFonts(defaultMode.modeId));
+        }
+        const secondaryMode = typoCol.modes[1];
+        if (secondaryMode) {
+          const sec = readModeFonts(secondaryMode.modeId);
+          detected.includeSecondaryFont = true;
+          if (sec.headersFont) detected.secondaryHeadersFont = sec.headersFont;
+          if (sec.bodyFont) detected.secondaryBodyFont = sec.bodyFont;
+          if (sec.headersStyles) detected.secondaryHeadersStyles = sec.headersStyles;
+          if (sec.bodyStyles) detected.secondaryBodyStyles = sec.bodyStyles;
+        } else {
+          detected.includeSecondaryFont = false;
+        }
+      }
+      const iconsCol = collections.find((c) => c.name === "_MaterialIconsControls" || c.name === "_materialIconsControls" || c.name === "MaterialIconsControls" || c.name === "materialIconsControls");
+      if (iconsCol) {
+        detected.includeMaterialIcons = true;
+        const defaultMode = iconsCol.modes[0];
+        if (defaultMode) {
+          const modeId = defaultMode.modeId;
+          const famVar = findLocalVarByNormName(allLocalVars, iconsCol.id, "fontFamily/icon");
+          if (famVar && typeof famVar.valuesByMode[modeId] === "string") {
+            detected.materialIconsFamily = famVar.valuesByMode[modeId];
+          }
+          const fillVar = findLocalVarByNormName(allLocalVars, iconsCol.id, "variableAxes/fill");
+          if (fillVar && typeof fillVar.valuesByMode[modeId] === "number") {
+            detected.materialIconsFill = fillVar.valuesByMode[modeId];
+          }
+          const weightVar = findLocalVarByNormName(allLocalVars, iconsCol.id, "variableAxes/weight");
+          if (weightVar && typeof weightVar.valuesByMode[modeId] === "number") {
+            detected.materialIconsWeight = weightVar.valuesByMode[modeId];
           }
         }
       }
@@ -13834,6 +16228,16 @@ ${usageJsx}
           const m2xlMode = layoutCol.modes.find((m) => m.name === "2XL" || m.name === "2xl");
           if (m2xlMode && typeof marginVar.valuesByMode[m2xlMode.modeId] === "number") {
             detected.layoutMargin2xl = marginVar.valuesByMode[m2xlMode.modeId];
+          }
+        }
+        const maxWidthVar = findLocalVarByNormName(allLocalVars, layoutCol.id, "maxwidth/screen");
+        const maxHeightVar = findLocalVarByNormName(allLocalVars, layoutCol.id, "maxheight/screen");
+        const smMode = layoutCol.modes.find((m) => m.name === "SM" || m.name === "sm");
+        if (smMode && maxWidthVar && maxHeightVar) {
+          const w = maxWidthVar.valuesByMode[smMode.modeId];
+          const h = maxHeightVar.valuesByMode[smMode.modeId];
+          if (typeof w === "number" && typeof h === "number") {
+            detected.smPhoneModel = `${w}x${h}`;
           }
         }
       }
@@ -13960,7 +16364,7 @@ ${usageJsx}
     return detected;
   }
 
-  // ../../../../plugins/components-setup/src/ds-generator/init.ts
+  // src/ds-generator/init.ts
   async function initDsGeneratorUI() {
     try {
       const savedSettings = await figma.clientStorage.getAsync("pluginSettings");
@@ -13986,10 +16390,20 @@ ${usageJsx}
       const savedLayoutMarginXl = await figma.clientStorage.getAsync("pluginLayoutMarginXl");
       const savedLayoutMarginLg = await figma.clientStorage.getAsync("pluginLayoutMarginLg");
       const savedLayoutMargin2xl = await figma.clientStorage.getAsync("pluginLayoutMargin2xl");
+      const savedSmPhoneModel = await figma.clientStorage.getAsync("pluginSmPhoneModel");
       const savedHeadersStyles = await figma.clientStorage.getAsync("pluginHeadersStyles");
       const savedBodyStyles = await figma.clientStorage.getAsync("pluginBodyStyles");
       const savedCustomGradients = await figma.clientStorage.getAsync("pluginCustomGradients");
       const savedCustomColors = await figma.clientStorage.getAsync("pluginCustomColors");
+      const savedIncludeMaterialIcons = await figma.clientStorage.getAsync("pluginIncludeMaterialIcons");
+      const savedMaterialIconsFamily = await figma.clientStorage.getAsync("pluginMaterialIconsFamily");
+      const savedMaterialIconsFill = await figma.clientStorage.getAsync("pluginMaterialIconsFill");
+      const savedMaterialIconsWeight = await figma.clientStorage.getAsync("pluginMaterialIconsWeight");
+      const savedIncludeSecondaryFont = await figma.clientStorage.getAsync("pluginIncludeSecondaryFont");
+      const savedSecondaryHeadersFont = await figma.clientStorage.getAsync("pluginSecondaryHeadersFont");
+      const savedSecondaryBodyFont = await figma.clientStorage.getAsync("pluginSecondaryBodyFont");
+      const savedSecondaryHeadersStyles = await figma.clientStorage.getAsync("pluginSecondaryHeadersStyles");
+      const savedSecondaryBodyStyles = await figma.clientStorage.getAsync("pluginSecondaryBodyStyles");
       const initialCollections = await figma.variables.getLocalVariableCollectionsAsync();
       const updatedModesCount = updateExistingCollectionModes(initialCollections);
       const initialVars = await figma.variables.getLocalVariablesAsync();
@@ -14039,6 +16453,11 @@ ${usageJsx}
         headersStyles: detectedTypo.headersStyles || savedHeadersStyles,
         bodyFont: detectedTypo.bodyFont || savedBodyFont,
         bodyStyles: detectedTypo.bodyStyles || savedBodyStyles,
+        includeSecondaryFont: detectedTypo.includeSecondaryFont !== void 0 ? detectedTypo.includeSecondaryFont : savedIncludeSecondaryFont !== void 0 ? savedIncludeSecondaryFont : false,
+        secondaryHeadersFont: detectedTypo.secondaryHeadersFont || savedSecondaryHeadersFont,
+        secondaryHeadersStyles: detectedTypo.secondaryHeadersStyles || savedSecondaryHeadersStyles,
+        secondaryBodyFont: detectedTypo.secondaryBodyFont || savedSecondaryBodyFont,
+        secondaryBodyStyles: detectedTypo.secondaryBodyStyles || savedSecondaryBodyStyles,
         fontStyles: fontFamiliesMap,
         lsHeading: detectedTypo.lsHeading !== void 0 ? detectedTypo.lsHeading : savedLS_H,
         lsDisplay: detectedTypo.lsDisplay !== void 0 ? detectedTypo.lsDisplay : savedLS_D,
@@ -14052,8 +16471,13 @@ ${usageJsx}
         layoutMarginXl: detectedTypo.layoutMarginXl !== void 0 ? detectedTypo.layoutMarginXl : savedLayoutMarginXl !== void 0 ? savedLayoutMarginXl : 72,
         layoutMarginLg: detectedTypo.layoutMarginLg !== void 0 ? detectedTypo.layoutMarginLg : savedLayoutMarginLg !== void 0 ? savedLayoutMarginLg : null,
         layoutMargin2xl: detectedTypo.layoutMargin2xl !== void 0 ? detectedTypo.layoutMargin2xl : savedLayoutMargin2xl !== void 0 ? savedLayoutMargin2xl : null,
+        smPhoneModel: detectedTypo.smPhoneModel || savedSmPhoneModel || "393x852",
         customGradients: savedCustomGradients || [],
-        customColors: savedCustomColors && savedCustomColors.length > 0 ? savedCustomColors : detectedSeeds._customColors || []
+        customColors: savedCustomColors && savedCustomColors.length > 0 ? savedCustomColors : detectedSeeds._customColors || [],
+        includeMaterialIcons: detectedTypo.includeMaterialIcons !== void 0 ? detectedTypo.includeMaterialIcons : savedIncludeMaterialIcons !== void 0 ? savedIncludeMaterialIcons : true,
+        materialIconsFamily: detectedTypo.materialIconsFamily || savedMaterialIconsFamily || "Material Symbols Rounded",
+        materialIconsFill: detectedTypo.materialIconsFill !== void 0 ? detectedTypo.materialIconsFill : savedMaterialIconsFill !== void 0 ? savedMaterialIconsFill : 0,
+        materialIconsWeight: detectedTypo.materialIconsWeight !== void 0 ? detectedTypo.materialIconsWeight : savedMaterialIconsWeight !== void 0 ? savedMaterialIconsWeight : 400
       });
       figma.ui.postMessage({
         type: "fonts-loaded",
@@ -14065,7 +16489,7 @@ ${usageJsx}
     }
   }
 
-  // ../../../../plugins/components-setup/src/ds-generator/bridge/exportJson.ts
+  // src/ds-generator/bridge/exportJson.ts
   async function exportVariablesToJson(options = {}) {
     try {
       const collections = await figma.variables.getLocalVariableCollectionsAsync();
@@ -14103,6 +16527,8 @@ ${usageJsx}
         "_glassControls",
         "_TypographyControls",
         "_typographyControls",
+        "_MaterialIconsControls",
+        "_materialIconsControls",
         "Layout",
         "layout",
         "_StatesControls",
@@ -14344,11 +16770,44 @@ ${usageJsx}
     }
   }
 
-  // ../../../../plugins/components-setup/src/ds-generator/generator/createPalette.ts
+  // src/ds-generator/generator/createPalette.ts
   async function handleCreatePalette(msg) {
+    var _a, _b, _c;
     const seeds = msg.seeds;
     const remValue = 16;
-    const { radiusPreset: msgRadiusPreset, spacingPreset: msgSpacingPreset, buttonHoverPreset: msgButtonHoverPreset, stylePreset, baseFontSize, lhHeading, lhDisplay, lhOthers, lsHeading, lsDisplay, lsOthers, psDisplay, psOthers, piDisplay, piOthers, wrapDisplay, wrapOthers, layoutMarginXl, layoutMarginLg, layoutMargin2xl, customGradients, customColors } = msg;
+    const {
+      radiusPreset: msgRadiusPreset,
+      spacingPreset: msgSpacingPreset,
+      buttonHoverPreset: msgButtonHoverPreset,
+      stylePreset,
+      baseFontSize,
+      lhHeading,
+      lhDisplay,
+      lhOthers,
+      lsHeading,
+      lsDisplay,
+      lsOthers,
+      psDisplay,
+      psOthers,
+      piDisplay,
+      piOthers,
+      wrapDisplay,
+      wrapOthers,
+      layoutMarginXl,
+      layoutMarginLg,
+      layoutMargin2xl,
+      smPhoneModel,
+      customGradients,
+      customColors,
+      includeMaterialIcons: msgIncludeMaterialIcons,
+      materialIconsFamily: msgMaterialIconsFamily,
+      materialIconsFill: msgMaterialIconsFill,
+      materialIconsWeight: msgMaterialIconsWeight
+    } = msg;
+    const includeMaterialIcons = msgIncludeMaterialIcons !== void 0 ? !!msgIncludeMaterialIcons : true;
+    const materialIconsFamily = msgMaterialIconsFamily || "Material Symbols Rounded";
+    const materialIconsFill = msgMaterialIconsFill !== void 0 ? parseInt(msgMaterialIconsFill, 10) || 0 : 0;
+    const materialIconsWeight = msgMaterialIconsWeight !== void 0 ? parseInt(msgMaterialIconsWeight, 10) || 400 : 400;
     const buttonHoverPreset = msgButtonHoverPreset || "color";
     const targetWrapDisplay = wrapDisplay || "BALANCE";
     const targetWrapOthers = wrapOthers || "BALANCE";
@@ -14392,6 +16851,8 @@ ${usageJsx}
       opacitySteps.sort((a, b) => a - b);
       const createdVariablesMap = /* @__PURE__ */ new Map();
       const metricsMap = /* @__PURE__ */ new Map();
+      let metricsCol = null;
+      let mModeIds = null;
       const allLocalVars = await figma.variables.getLocalVariablesAsync();
       const fallbackRenamedMap = migrateFallbackColorVariables(allLocalVars);
       const highlightRenamedMap = migrateHighlightVariables(allLocalVars);
@@ -14416,6 +16877,11 @@ ${usageJsx}
       const bodyFont = msg.bodyFont || "Inter";
       const headersStyles = msg.headersStyles || { regular: "Regular", medium: "Medium", bold: "Bold" };
       const bodyStyles = msg.bodyStyles || { regular: "Regular", medium: "Medium", bold: "Bold" };
+      const includeSecondaryFont = !!msg.includeSecondaryFont;
+      const secondaryHeadersFont = msg.secondaryHeadersFont || "Inter";
+      const secondaryBodyFont = msg.secondaryBodyFont || "Inter";
+      const secondaryHeadersStyles = msg.secondaryHeadersStyles || { regular: "Regular", medium: "Medium", bold: "Bold" };
+      const secondaryBodyStyles = msg.secondaryBodyStyles || { regular: "Regular", medium: "Medium", bold: "Bold" };
       if (!seeds.accessibility) seeds.accessibility = { name: "accessibility", color: "#ffed00" };
       const baseActionColor = seeds.action ? seeds.action.color : "#2979FF";
       const baseSuccessColor = seeds.success ? seeds.success.color : "#27AE60";
@@ -14439,6 +16905,11 @@ ${usageJsx}
       await figma.clientStorage.setAsync("pluginHeadersStyles", headersStyles);
       await figma.clientStorage.setAsync("pluginBodyFont", bodyFont);
       await figma.clientStorage.setAsync("pluginBodyStyles", bodyStyles);
+      await figma.clientStorage.setAsync("pluginIncludeSecondaryFont", includeSecondaryFont);
+      await figma.clientStorage.setAsync("pluginSecondaryHeadersFont", secondaryHeadersFont);
+      await figma.clientStorage.setAsync("pluginSecondaryHeadersStyles", secondaryHeadersStyles);
+      await figma.clientStorage.setAsync("pluginSecondaryBodyFont", secondaryBodyFont);
+      await figma.clientStorage.setAsync("pluginSecondaryBodyStyles", secondaryBodyStyles);
       await figma.clientStorage.setAsync("pluginLS_H", lsHeading !== void 0 ? lsHeading : 0);
       await figma.clientStorage.setAsync("pluginLS_D", lsDisplay);
       await figma.clientStorage.setAsync("pluginLS_O", lsOthers);
@@ -14451,14 +16922,49 @@ ${usageJsx}
       await figma.clientStorage.setAsync("pluginLayoutMarginXl", layoutMarginXl);
       await figma.clientStorage.setAsync("pluginLayoutMarginLg", layoutMarginLg);
       await figma.clientStorage.setAsync("pluginLayoutMargin2xl", layoutMargin2xl);
+      await figma.clientStorage.setAsync("pluginSmPhoneModel", smPhoneModel || "393x852");
       await figma.clientStorage.setAsync("pluginCustomGradients", customGradients || []);
       await figma.clientStorage.setAsync("pluginCustomColors", customColors || []);
+      await figma.clientStorage.setAsync("pluginIncludeMaterialIcons", includeMaterialIcons);
+      await figma.clientStorage.setAsync("pluginMaterialIconsFamily", materialIconsFamily);
+      await figma.clientStorage.setAsync("pluginMaterialIconsFill", materialIconsFill);
+      await figma.clientStorage.setAsync("pluginMaterialIconsWeight", materialIconsWeight);
       async function resolveMetric(value, col, modeId) {
+        if (value === null || value === void 0) return null;
+        const numVal = typeof value === "number" ? value : parseFloat(value);
+        if (isNaN(numVal)) return null;
+        const targetCol = col || metricsCol;
+        const targetMode = modeId || mModeIds && mModeIds.default;
+        if (targetCol && targetCol.id && varLookupMap instanceof Map) {
+          const constKey = `${targetCol.id}:Constant/${numVal}`;
+          const constVar = varLookupMap.get(constKey);
+          if (constVar) return constVar.id;
+          for (const [k, v] of varLookupMap.entries()) {
+            if (k.startsWith(`${targetCol.id}:`) && v.resolvedType === "FLOAT" && !v.removed) {
+              const mVal = v.valuesByMode ? v.valuesByMode[targetMode || Object.keys(v.valuesByMode)[0]] : null;
+              if (typeof mVal === "number" && Math.abs(mVal - numVal) < 1e-3) {
+                return v.id;
+              }
+            }
+          }
+        }
+        if (Array.isArray(allLocalVars)) {
+          const floatVars = allLocalVars.filter((v) => v.resolvedType === "FLOAT" && !v.removed);
+          const match = floatVars.find((v) => {
+            if (!v.valuesByMode) return false;
+            for (const mId of Object.keys(v.valuesByMode)) {
+              const mVal = v.valuesByMode[mId];
+              if (typeof mVal === "number" && Math.abs(mVal - numVal) < 1e-3) return true;
+            }
+            return false;
+          });
+          if (match) return match.id;
+        }
         return null;
       }
       const allAvailableFonts = await figma.listAvailableFontsAsync();
       const fontsToLoad = allAvailableFonts.filter(
-        (f) => f.fontName.family === headersFont || f.fontName.family === bodyFont
+        (f) => f.fontName.family === headersFont || f.fontName.family === bodyFont || includeSecondaryFont && (f.fontName.family === secondaryHeadersFont || f.fontName.family === secondaryBodyFont) || includeMaterialIcons && f.fontName.family === materialIconsFamily
       );
       await Promise.all(fontsToLoad.map((f) => figma.loadFontAsync(f.fontName).catch(() => {
       })));
@@ -14500,6 +17006,20 @@ ${usageJsx}
       const loadedBodyReg = await safeLoadFont(bodyFont, bodyStyles.regular, "Regular");
       const loadedBodyMed = await safeLoadFont(bodyFont, bodyStyles.medium, loadedBodyReg);
       const loadedBodyBold = await safeLoadFont(bodyFont, bodyStyles.bold, loadedBodyMed);
+      let loadedSecHeadReg = "Regular";
+      let loadedSecHeadMed = "Medium";
+      let loadedSecHeadBold = "Bold";
+      let loadedSecBodyReg = "Regular";
+      let loadedSecBodyMed = "Medium";
+      let loadedSecBodyBold = "Bold";
+      if (includeSecondaryFont) {
+        loadedSecHeadReg = await safeLoadFont(secondaryHeadersFont, secondaryHeadersStyles.regular, "Regular");
+        loadedSecHeadMed = await safeLoadFont(secondaryHeadersFont, secondaryHeadersStyles.medium, loadedSecHeadReg);
+        loadedSecHeadBold = await safeLoadFont(secondaryHeadersFont, secondaryHeadersStyles.bold, loadedSecHeadMed);
+        loadedSecBodyReg = await safeLoadFont(secondaryBodyFont, secondaryBodyStyles.regular, "Regular");
+        loadedSecBodyMed = await safeLoadFont(secondaryBodyFont, secondaryBodyStyles.medium, loadedSecBodyReg);
+        loadedSecBodyBold = await safeLoadFont(secondaryBodyFont, secondaryBodyStyles.bold, loadedSecBodyMed);
+      }
       const paletteCollectionName = "_Palettes";
       const collections = await figma.variables.getLocalVariableCollectionsAsync();
       updateExistingCollectionModes(collections);
@@ -14982,10 +17502,10 @@ ${usageJsx}
         };
         const subtleRules = isLightRole ? {
           light: 95,
-          lightContrast: 88,
-          dark: 22,
-          darkContrast: 22,
-          accessibility: 22
+          lightContrast: 85,
+          dark: 20,
+          darkContrast: 25,
+          accessibility: 20
         } : {
           light: 95,
           lightContrast: 85,
@@ -15133,6 +17653,11 @@ ${usageJsx}
             if (modeId) {
               let targetRole = role;
               let finalTone = toneValue;
+              if (!neutralTones.includes(finalTone)) {
+                finalTone = neutralTones.reduce(
+                  (prev, curr) => Math.abs(curr - finalTone) < Math.abs(prev - finalTone) ? curr : prev
+                );
+              }
               const isAccessRole = ["primary", "secondary", "tertiary"].includes(role);
               const accessRoleName = seeds.accessibility ? seeds.accessibility.name : "accessibility";
               const isFallbackToken = token.name.toLowerCase().includes("fallback");
@@ -15259,10 +17784,10 @@ ${usageJsx}
           };
           const subtleRules = isLightRole ? {
             light: 95,
-            lightContrast: 88,
-            dark: 22,
-            darkContrast: 22,
-            accessibility: 22
+            lightContrast: 85,
+            dark: 20,
+            darkContrast: 25,
+            accessibility: 20
           } : {
             light: 95,
             lightContrast: 85,
@@ -15376,11 +17901,14 @@ ${usageJsx}
             }
             const assignAlias = (modeId, toneValue) => {
               if (modeId) {
-                const mapKey = `${pascalCustomName}/${toneValue}`;
+                const finalTone = neutralTones.includes(toneValue) ? toneValue : neutralTones.reduce(
+                  (prev, curr) => Math.abs(curr - toneValue) < Math.abs(prev - toneValue) ? curr : prev
+                );
+                const mapKey = `${pascalCustomName}/${finalTone}`;
                 let targetId = createdVariablesMap.get(mapKey);
-                if (!targetId) targetId = createdVariablesMap.get(`${customName}/${toneValue}`);
+                if (!targetId) targetId = createdVariablesMap.get(`${customName}/${finalTone}`);
                 if (targetId) smartSetValueForMode(semanticVar, modeId, { type: "VARIABLE_ALIAS", id: targetId });
-                return { role: pascalCustomName, tone: toneValue };
+                return { role: pascalCustomName, tone: finalTone };
               }
               return null;
             };
@@ -15586,14 +18114,14 @@ ${usageJsx}
         oldMetricsControlsCol.remove();
       }
       const metricsColName = "Metrics";
-      let metricsCol = collections.find((c) => c.name === metricsColName || c.name === "metrics" || normalizePathForMatch(c.name) === "metrics");
+      metricsCol = collections.find((c) => c.name === metricsColName || c.name === "metrics" || normalizePathForMatch(c.name) === "metrics");
       if (metricsCol) {
         if (metricsCol.name !== metricsColName) metricsCol.name = metricsColName;
       } else {
         metricsCol = figma.variables.createVariableCollection(metricsColName);
       }
       const metricsModesMap = ensureCollectionModes(metricsCol, ["Default"]);
-      const mModeIds = {
+      mModeIds = {
         default: metricsModesMap["Default"] || metricsModesMap["default"]
       };
       const presetConfigs = {
@@ -15854,6 +18382,16 @@ ${usageJsx}
           default: { default: 96 },
           relaxed: { default: 104 }
         },
+        layoutAstronomical: {
+          compact: { default: 104 },
+          default: { default: 112 },
+          relaxed: { default: 120 }
+        },
+        layoutCosmic: {
+          compact: { default: 112 },
+          default: { default: 120 },
+          relaxed: { default: 128 }
+        },
         border: {
           thin: { default: 1 },
           default: { default: 1 },
@@ -15939,21 +18477,22 @@ ${usageJsx}
         { name: "layout/titanic", scope: ["GAP"], values: presetConfigs.layoutTitanic[gapPreset] || presetConfigs.layoutTitanic.default },
         { name: "layout/monumental", scope: ["GAP"], values: presetConfigs.layoutMonumental[gapPreset] || presetConfigs.layoutMonumental.default },
         { name: "layout/gargantuan", scope: ["GAP"], values: presetConfigs.layoutGargantuan[gapPreset] || presetConfigs.layoutGargantuan.default },
+        { name: "layout/astronomical", scope: ["GAP"], values: presetConfigs.layoutAstronomical[gapPreset] || presetConfigs.layoutAstronomical.default },
+        { name: "layout/cosmic", scope: ["GAP"], values: presetConfigs.layoutCosmic[gapPreset] || presetConfigs.layoutCosmic.default },
         // --- Ujemne odstępy (Negative Layout - niepublikowalne) ---
         { name: "layout/_negative/extraSmall", scope: [], hidden: true, values: getNegativeLayoutConfig(presetConfigs.layoutExtraSmall[gapPreset] || presetConfigs.layoutExtraSmall.default) },
         { name: "layout/_negative/small", scope: [], hidden: true, values: getNegativeLayoutConfig(presetConfigs.layoutSmall[gapPreset] || presetConfigs.layoutSmall.default) },
         { name: "layout/_negative/base", oldName: "layout/_negative/regular", scope: [], hidden: true, values: getNegativeLayoutConfig(presetConfigs.layoutBase[gapPreset] || presetConfigs.layoutBase.default) },
         { name: "layout/_negative/medium", scope: [], hidden: true, values: getNegativeLayoutConfig(presetConfigs.layoutMedium[gapPreset] || presetConfigs.layoutMedium.default) },
         // --- Stałe pomocnicze (Constants) ---
-        { name: "constant/none", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 0 } },
+        { name: "constant/none", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT", "EFFECT_FLOAT"], values: { default: 0 } },
         { name: "constant/full", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 9999 } },
         { name: "constant/1", oldName: "constant/one", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 1 } },
         { name: "constant/2", oldName: "constant/two", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 2 } },
         { name: "constant/3", oldName: "constant/three", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 3 } },
         { name: "constant/4", oldName: "constant/four", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 4 } },
         { name: "constant/6", oldName: "constant/six", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 6 } },
-        { name: "constant/8", oldName: "constant/eight", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 8 } },
-        { name: "constant/wcagMinTarget", scope: ["WIDTH_HEIGHT"], values: { default: 44 }, description: "WCAG 2.1/2.2 minimum target size for interactive elements (44x44px)." }
+        { name: "constant/8", oldName: "constant/eight", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 8 } }
       ];
       let constantNoneVar = null;
       let constantOneVar = null;
@@ -16490,8 +19029,10 @@ ${usageJsx}
         createStringReadout("SplayText", glass.splay, "splay text");
       }
       const blurTypes = [
-        { prefix: "Blurs/Layer", rawPrefix: "blurs/layer", type: "LAYER_BLUR" },
-        { prefix: "Blurs/Background", rawPrefix: "blurs/background", type: "BACKGROUND_BLUR" }
+        { prefix: "Blurs/Layer", rawPrefix: "blurs/layer", type: "LAYER_BLUR", isProgressive: false, isReverse: false },
+        { prefix: "Blurs/Background", rawPrefix: "blurs/background", type: "BACKGROUND_BLUR", isProgressive: false, isReverse: false },
+        { prefix: "Blurs/Progressive", rawPrefix: "blurs/progressive", type: "BACKGROUND_BLUR", isProgressive: true, isReverse: false },
+        { prefix: "Blurs/Progressive/Reverse", rawPrefix: "blurs/progressive/reverse", type: "BACKGROUND_BLUR", isProgressive: true, isReverse: true }
       ];
       for (const bType of blurTypes) {
         for (const conf of blurLevels) {
@@ -16500,7 +19041,7 @@ ${usageJsx}
           const styleName = `${bType.prefix}/${cleanLevel}`;
           const targetNorm = normalizePathForMatch(styleName);
           let effectStyle = localEffectStyles.find(
-            (s) => s.name === styleName || normalizePathForMatch(s.name) === targetNorm || normalizePathForMatch(s.name) === normalizePathForMatch(`${bType.rawPrefix}/${rawCleanLevel}`) || normalizePathForMatch(s.name) === normalizePathForMatch(`${bType.rawPrefix}/${conf.level}`)
+            (s) => s.name === styleName || normalizePathForMatch(s.name) === targetNorm || normalizePathForMatch(s.name) === normalizePathForMatch(`${bType.rawPrefix}/${rawCleanLevel}`) || normalizePathForMatch(s.name) === normalizePathForMatch(`${bType.rawPrefix}/${conf.level}`) || bType.isProgressive && !bType.isReverse && (normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/background/progressive/${rawCleanLevel}`) || normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/backgroundprogressive/${rawCleanLevel}`) || normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/progressive/background/${rawCleanLevel}`)) || bType.isProgressive && bType.isReverse && (normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/progressive/reverse/${rawCleanLevel}`) || normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/progressivereverse/${rawCleanLevel}`) || normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/progressive reverse/${rawCleanLevel}`) || normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/reverseprogressive/${rawCleanLevel}`) || normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/reverse/progressive/${rawCleanLevel}`) || normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/background/progressive/reverse/${rawCleanLevel}`) || normalizePathForMatch(s.name) === normalizePathForMatch(`blurs/background/progressivereverse/${rawCleanLevel}`))
           );
           if (!effectStyle) {
             effectStyle = figma.createEffectStyle();
@@ -16509,18 +19050,55 @@ ${usageJsx}
           } else {
             effectStyle.name = styleName;
           }
-          const blurDesc = `Semantic generic blur effect style: ${styleName}`;
+          const blurDesc = bType.isProgressive ? bType.isReverse ? `Semantic progressive reverse background blur effect style: ${styleName} (${conf.blurValue}px to 0px)` : `Semantic progressive background blur effect style: ${styleName} (0px to ${conf.blurValue}px)` : `Semantic generic blur effect style: ${styleName}`;
           if (effectStyle.description !== blurDesc) effectStyle.description = blurDesc;
-          const newEffects = [{
+          const varAliasId = blurControlsMap.get(cleanLevel) || blurControlsMap.get(conf.level);
+          const baseEffect = {
             type: bType.type,
-            radius: conf.blurValue,
-            visible: true,
-            boundVariables: blurControlsMap.has(conf.level) || blurControlsMap.has(cleanLevel) ? {
-              radius: { type: "VARIABLE_ALIAS", id: blurControlsMap.get(cleanLevel) || blurControlsMap.get(conf.level) }
-            } : {}
-          }];
+            visible: true
+          };
+          if (bType.isProgressive) {
+            baseEffect.blurType = "PROGRESSIVE";
+            baseEffect.startOffset = { x: 0, y: 0 };
+            baseEffect.endOffset = { x: 0, y: 1 };
+            if (bType.isReverse) {
+              baseEffect.startRadius = conf.blurValue;
+              baseEffect.radius = 0;
+              baseEffect.boundVariables = constantNoneVar ? {
+                radius: { type: "VARIABLE_ALIAS", id: constantNoneVar.id }
+              } : {};
+            } else {
+              baseEffect.startRadius = 0;
+              baseEffect.radius = conf.blurValue;
+              baseEffect.boundVariables = varAliasId ? {
+                radius: { type: "VARIABLE_ALIAS", id: varAliasId }
+              } : {};
+            }
+          } else {
+            baseEffect.radius = conf.blurValue;
+            baseEffect.boundVariables = varAliasId ? {
+              radius: { type: "VARIABLE_ALIAS", id: varAliasId }
+            } : {};
+          }
+          const newEffects = [baseEffect];
           if (!areEffectsEqual(effectStyle.effects, newEffects)) {
-            effectStyle.effects = newEffects;
+            try {
+              effectStyle.effects = newEffects;
+            } catch (err) {
+              if (bType.isReverse && ((_b = (_a = newEffects[0]) == null ? void 0 : _a.boundVariables) == null ? void 0 : _b.radius)) {
+                try {
+                  const fallbackEffects = [{
+                    ...newEffects[0],
+                    boundVariables: {}
+                  }];
+                  effectStyle.effects = fallbackEffects;
+                } catch (err2) {
+                  console.warn(`Could not set effect for ${styleName}:`, err2);
+                }
+              } else {
+                console.warn(`Could not set effect for ${styleName}:`, err);
+              }
+            }
           }
         }
       }
@@ -16569,26 +19147,35 @@ ${usageJsx}
       } else {
         typoControlsCollection = figma.variables.createVariableCollection(typoControlsCollectionName);
       }
-      const typoModesMap = ensureCollectionModes(typoControlsCollection, ["Default"]);
+      const rawSecondaryModeName = secondaryBodyFont !== bodyFont ? secondaryBodyFont : secondaryHeadersFont !== headersFont ? secondaryHeadersFont : secondaryBodyFont;
+      const secondaryModeFormatted = formatModeName(rawSecondaryModeName).toLowerCase() === "default" ? "Secondary" : formatModeName(rawSecondaryModeName);
+      const typoModesMap = ensureCollectionModes(
+        typoControlsCollection,
+        includeSecondaryFont ? ["Default", secondaryModeFormatted] : ["Default"]
+      );
       const typoModeId = typoModesMap["Default"] || typoModesMap["default"];
-      const createTypoString = (varName, value, scope, oldName) => {
+      const secondaryTypoModeId = includeSecondaryFont ? typoModesMap[secondaryModeFormatted] || typoModesMap[secondaryModeFormatted.toLowerCase()] : null;
+      const createTypoString = (varName, value, scope, oldName, secondaryValue) => {
         let strVar = ensureVariable(varName, typoControlsCollection, "STRING", varLookupMap, oldName);
         smartSetVariableMeta(strVar, {
           description: `Typography structural binding: ${varName}.`,
           scopes: scope ? [scope] : []
         });
         smartSetValueForMode(strVar, typoModeId, value);
+        if (secondaryTypoModeId && secondaryValue !== void 0) {
+          smartSetValueForMode(strVar, secondaryTypoModeId, secondaryValue);
+        }
         trackVariable(typoControlsCollection.id, varName);
         return strVar;
       };
-      const headFontVar = createTypoString("FontFamily/Heading", headersFont, "FONT_FAMILY", ["fontFamily/header", "fontFamily/heading", "FontFamily/Heading"]);
-      const bodyFontVar = createTypoString("FontFamily/Default", bodyFont, "FONT_FAMILY", ["fontFamily/body", "fontFamily/default", "FontFamily/Default"]);
-      const headRegWeightVar = createTypoString("FontWeight/Heading/Base", loadedHeadReg, "FONT_STYLE", ["fontWeight/header/base", "fontWeight/heading/base", "FontWeight/Heading/Base"]);
-      const headMedWeightVar = createTypoString("FontWeight/Heading/Medium", loadedHeadMed, "FONT_STYLE", ["fontWeight/header/medium", "fontWeight/heading/medium", "FontWeight/Heading/Medium"]);
-      const headBoldWeightVar = createTypoString("FontWeight/Heading/Bold", loadedHeadBold, "FONT_STYLE", ["fontWeight/header/bold", "fontWeight/heading/bold", "FontWeight/Heading/Bold"]);
-      const regWeightVar = createTypoString("FontWeight/Default/Base", loadedBodyReg, "FONT_STYLE", ["fontWeight/base", "fontWeight/regular", "fontWeight/default/base", "FontWeight/Default/Base"]);
-      const medWeightVar = createTypoString("FontWeight/Default/Medium", loadedBodyMed, "FONT_STYLE", ["fontWeight/medium", "fontWeight/default/medium", "FontWeight/Default/Medium"]);
-      const boldWeightVar = createTypoString("FontWeight/Default/Bold", loadedBodyBold, "FONT_STYLE", ["fontWeight/bold", "fontWeight/default/bold", "FontWeight/Default/Bold"]);
+      const headFontVar = createTypoString("FontFamily/Heading", headersFont, "FONT_FAMILY", ["fontFamily/header", "fontFamily/heading", "FontFamily/Heading"], secondaryHeadersFont);
+      const bodyFontVar = createTypoString("FontFamily/Default", bodyFont, "FONT_FAMILY", ["fontFamily/body", "fontFamily/default", "FontFamily/Default"], secondaryBodyFont);
+      const headRegWeightVar = createTypoString("FontWeight/Heading/Base", loadedHeadReg, "FONT_STYLE", ["fontWeight/header/base", "fontWeight/heading/base", "FontWeight/Heading/Base"], loadedSecHeadReg);
+      const headMedWeightVar = createTypoString("FontWeight/Heading/Medium", loadedHeadMed, "FONT_STYLE", ["fontWeight/header/medium", "fontWeight/heading/medium", "FontWeight/Heading/Medium"], loadedSecHeadMed);
+      const headBoldWeightVar = createTypoString("FontWeight/Heading/Bold", loadedHeadBold, "FONT_STYLE", ["fontWeight/header/bold", "fontWeight/heading/bold", "FontWeight/Heading/Bold"], loadedSecHeadBold);
+      const regWeightVar = createTypoString("FontWeight/Default/Base", loadedBodyReg, "FONT_STYLE", ["fontWeight/base", "fontWeight/regular", "fontWeight/default/base", "FontWeight/Default/Base"], loadedSecBodyReg);
+      const medWeightVar = createTypoString("FontWeight/Default/Medium", loadedBodyMed, "FONT_STYLE", ["fontWeight/medium", "fontWeight/default/medium", "FontWeight/Default/Medium"], loadedSecBodyMed);
+      const boldWeightVar = createTypoString("FontWeight/Default/Bold", loadedBodyBold, "FONT_STYLE", ["fontWeight/bold", "fontWeight/default/bold", "FontWeight/Default/Bold"], loadedSecBodyBold);
       const lsId_H = await resolveMetric(lsHeading, null, null);
       const lsId_D = await resolveMetric(lsDisplay, null, null);
       const lsId_O = await resolveMetric(lsOthers, null, null);
@@ -16914,6 +19501,245 @@ ${usageJsx}
           }
         }
       }
+      if (includeMaterialIcons) {
+        let resolveIconStyle = function(weight, fill) {
+          const isFill = fill === 1;
+          const numWeight = weight === "ExtraLight" ? 200 : weight === "Light" ? 300 : weight === "Medium" ? 500 : 400;
+          if (isFill) {
+            const fillMatch = availableStyles.find((s) => {
+              const sl = s.toLowerCase();
+              return (sl.includes(weight.toLowerCase()) || sl.includes(String(numWeight))) && (sl.includes("fill") || sl.includes("filled"));
+            });
+            if (fillMatch) return fillMatch;
+            const genericFillMatch = availableStyles.find((s) => s.toLowerCase().includes("fill") || s.toLowerCase().includes("filled"));
+            if (genericFillMatch && (weight === "Regular" || availableStyles.length === 1)) return genericFillMatch;
+          }
+          const exactMatch = availableStyles.find((s) => s.toLowerCase() === weight.toLowerCase() || s.toLowerCase() === String(numWeight));
+          if (exactMatch) return exactMatch;
+          if (weight === "ExtraLight") {
+            const elMatch = availableStyles.find((s) => {
+              const sl = s.toLowerCase();
+              return sl === "200" || sl === "extralight" || sl === "extra light" || sl === "thin" || sl === "100";
+            });
+            if (elMatch) return elMatch;
+          }
+          if (weight === "Light") {
+            const lMatch = availableStyles.find((s) => {
+              const sl = s.toLowerCase();
+              return sl === "300" || sl === "light";
+            });
+            if (lMatch) return lMatch;
+          }
+          if (weight === "Medium") {
+            const medMatch = availableStyles.find((s) => {
+              const sl = s.toLowerCase();
+              return sl === "500" || sl === "medium" || sl === "semibold" || sl === "600";
+            });
+            if (medMatch) return medMatch;
+          }
+          const regMatch = availableStyles.find((s) => {
+            const sl = s.toLowerCase();
+            return sl === "regular" || sl === "normal" || sl === "book" || sl === "400";
+          });
+          if (regMatch) return regMatch;
+          if (availableStyles.length > 0) {
+            return availableStyles[0];
+          }
+          return weight;
+        };
+        const iconControlsCollectionName = "_MaterialIconsControls";
+        let iconControlsCollection = collections.find((c) => c.name === iconControlsCollectionName || c.name === "_materialIconsControls" || normalizePathForMatch(c.name) === "materialiconscontrols");
+        if (iconControlsCollection) {
+          if (iconControlsCollection.name !== iconControlsCollectionName) iconControlsCollection.name = iconControlsCollectionName;
+        } else {
+          iconControlsCollection = figma.variables.createVariableCollection(iconControlsCollectionName);
+        }
+        const iconModesMap = ensureCollectionModes(iconControlsCollection, ["Default"]);
+        const iconModeId = iconModesMap["Default"] || iconModesMap["default"] || iconControlsCollection.defaultModeId;
+        const targetWeights = ["ExtraLight", "Light", "Regular", "Medium"];
+        const matchedFamily = ((_c = allAvailableFonts.find((f) => f.fontName.family.trim().toLowerCase() === materialIconsFamily.trim().toLowerCase())) == null ? void 0 : _c.fontName.family) || materialIconsFamily;
+        const familyFonts = allAvailableFonts.filter((f) => f.fontName.family.trim().toLowerCase() === matchedFamily.trim().toLowerCase());
+        const availableStyles = familyFonts.map((f) => f.fontName.style);
+        const resolvedStyles = {
+          ExtraLight: resolveIconStyle("ExtraLight", materialIconsFill),
+          Light: resolveIconStyle("Light", materialIconsFill),
+          Regular: resolveIconStyle("Regular", materialIconsFill),
+          Medium: resolveIconStyle("Medium", materialIconsFill)
+        };
+        for (const styleName of Object.values(resolvedStyles)) {
+          await safeLoadFont(matchedFamily, styleName, "Regular");
+        }
+        const iconFontFamilyVar = ensureVariable("FontFamily/Icon", iconControlsCollection, "STRING", varLookupMap, ["fontFamily/icon", "FontFamily/Icon"]);
+        smartSetVariableMeta(iconFontFamilyVar, {
+          description: `Material Symbols font family: ${matchedFamily}.`,
+          scopes: ["FONT_FAMILY"]
+        });
+        smartSetValueForMode(iconFontFamilyVar, iconModeId, matchedFamily);
+        trackVariable(iconControlsCollection.id, "FontFamily/Icon");
+        const iconFontWeightVars = {};
+        for (const w of targetWeights) {
+          const varName = `FontWeight/${w}`;
+          const wVar = ensureVariable(varName, iconControlsCollection, "STRING", varLookupMap, [`fontWeight/${w.toLowerCase()}`, varName]);
+          smartSetVariableMeta(wVar, {
+            description: `Material Symbols font weight style for ${w}.`,
+            scopes: ["FONT_STYLE"]
+          });
+          smartSetValueForMode(wVar, iconModeId, resolvedStyles[w]);
+          trackVariable(iconControlsCollection.id, varName);
+          iconFontWeightVars[w] = wVar;
+        }
+        const varAxesSpecs = [
+          { name: "VariableAxes/Fill", value: materialIconsFill, desc: "Variable font axis: Fill (0 for outlined, 1 for filled)." },
+          { name: "VariableAxes/Weight", value: materialIconsWeight, desc: "Variable font axis: Default Weight (100\u2013700)." },
+          { name: "VariableAxes/WeightExtraLight", value: 200, desc: "Variable font axis: Weight for ExtraLight (200)." },
+          { name: "VariableAxes/WeightLight", value: 300, desc: "Variable font axis: Weight for Light (300)." },
+          { name: "VariableAxes/WeightRegular", value: 400, desc: "Variable font axis: Weight for Regular (400)." },
+          { name: "VariableAxes/WeightMedium", value: 500, desc: "Variable font axis: Weight for Medium (500)." },
+          { name: "VariableAxes/Grade", value: 0, desc: "Variable font axis: Grade (0)." },
+          { name: "VariableAxes/OpticalSize", value: 24, desc: "Variable font axis: Optical Size (24px)." }
+        ];
+        for (const va of varAxesSpecs) {
+          const vaVar = ensureVariable(va.name, iconControlsCollection, "FLOAT", varLookupMap, [va.name.toLowerCase(), va.name]);
+          smartSetVariableMeta(vaVar, {
+            description: va.desc,
+            scopes: []
+          });
+          smartSetValueForMode(vaVar, iconModeId, va.value);
+          trackVariable(iconControlsCollection.id, va.name);
+        }
+        const iconSizes = [8, 12, 16, 20, 24, 28, 32];
+        const iconFontSizeVars = {};
+        const iconLineHeightVars = {};
+        for (const size of iconSizes) {
+          const metricAliasId = await resolveMetric(size, metricsCol, mModeIds.default);
+          const sizeVal = metricAliasId ? { type: "VARIABLE_ALIAS", id: metricAliasId } : size;
+          const fsVarName = `FontSize/Icon/${size}`;
+          const fsVar = ensureVariable(fsVarName, iconControlsCollection, "FLOAT", varLookupMap, [
+            `fontSize/icon/${size}`,
+            fsVarName
+          ]);
+          smartSetVariableMeta(fsVar, {
+            description: `Material Symbols icon font size ${size}px.`,
+            scopes: ["FONT_SIZE"]
+          });
+          smartSetValueForMode(fsVar, iconModeId, sizeVal);
+          trackVariable(iconControlsCollection.id, fsVarName);
+          iconFontSizeVars[size] = fsVar;
+          const lhVarName = `LineHeight/Icon/${size}`;
+          const lhVar = ensureVariable(lhVarName, iconControlsCollection, "FLOAT", varLookupMap, [
+            `lineHeight/icon/${size}`,
+            lhVarName
+          ]);
+          smartSetVariableMeta(lhVar, {
+            description: `Material Symbols icon line height ${size}px (equal to font size for square bounding box).`,
+            scopes: ["LINE_HEIGHT"]
+          });
+          smartSetValueForMode(lhVar, iconModeId, sizeVal);
+          trackVariable(iconControlsCollection.id, lhVarName);
+          iconLineHeightVars[size] = lhVar;
+        }
+        const createdIconStylesCatalog = [];
+        for (const size of iconSizes) {
+          for (const weight of targetWeights) {
+            const resolvedStyle = resolvedStyles[weight];
+            const targetStyleName = `Icon/${size}/${weight}`;
+            const targetNorm = normalizePathForMatch(targetStyleName);
+            let tStyle = localTextStyles.find((s) => s.name === targetStyleName || normalizePathForMatch(s.name) === targetNorm);
+            if (!tStyle) {
+              const defaultPrefixNorm = normalizePathForMatch(`Default/Icon/${size}/${weight}`);
+              tStyle = localTextStyles.find((s) => normalizePathForMatch(s.name) === defaultPrefixNorm);
+            }
+            if (tStyle) {
+              if (tStyle.name !== targetStyleName) {
+                tStyle.name = targetStyleName;
+              }
+            } else {
+              tStyle = figma.createTextStyle();
+              tStyle.name = targetStyleName;
+              localTextStyles.push(tStyle);
+            }
+            const targetDesc = `Material Symbols Text Icon (${materialIconsFamily}) \u2022 Size: ${size}px \u2022 Weight: ${weight} \u2022 Fill: ${materialIconsFill}`;
+            if (tStyle.description !== targetDesc) {
+              tStyle.description = targetDesc;
+            }
+            try {
+              const actualStyle = await safeLoadFont(matchedFamily, resolvedStyle, "Regular");
+              tStyle.fontName = { family: matchedFamily, style: actualStyle };
+            } catch (err) {
+              console.warn(`Could not load font ${matchedFamily} ${resolvedStyle}:`, err);
+              try {
+                await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+                tStyle.fontName = { family: "Inter", style: "Regular" };
+              } catch (e) {
+              }
+            }
+            const isFsBound = tStyle.boundVariables && tStyle.boundVariables.fontSize && tStyle.boundVariables.fontSize.id === iconFontSizeVars[size].id;
+            if (!isFsBound && Math.abs((tStyle.fontSize || 0) - size) > 0.01) {
+              tStyle.fontSize = size;
+            }
+            const isLhBound = tStyle.boundVariables && tStyle.boundVariables.lineHeight && tStyle.boundVariables.lineHeight.id === iconLineHeightVars[size].id;
+            if (!isLhBound && !isLineHeightEqual(tStyle.lineHeight, { value: size, unit: "PIXELS" })) {
+              tStyle.lineHeight = { value: size, unit: "PIXELS" };
+            }
+            if (!tStyle.letterSpacing || tStyle.letterSpacing.unit !== "PIXELS" || Math.abs(tStyle.letterSpacing.value || 0) > 0.01) {
+              tStyle.letterSpacing = { value: 0, unit: "PIXELS" };
+            }
+            smartSetBoundVariable(tStyle, "fontFamily", iconFontFamilyVar);
+            smartSetBoundVariable(tStyle, "fontStyle", iconFontWeightVars[weight]);
+            smartSetBoundVariable(tStyle, "fontSize", iconFontSizeVars[size]);
+            smartSetBoundVariable(tStyle, "lineHeight", iconLineHeightVars[size]);
+            createdIconStylesCatalog.push({
+              id: tStyle.id,
+              name: tStyle.name,
+              key: tStyle.key,
+              description: tStyle.description,
+              family: materialIconsFamily,
+              weight: resolvedStyle,
+              fontSize: size,
+              lineHeightPx: size,
+              lineHeight: size,
+              fontFamily: materialIconsFamily,
+              fontStyle: resolvedStyle,
+              fill: materialIconsFill,
+              isIcon: true
+            });
+          }
+        }
+        try {
+          const existingCatalog = await figma.clientStorage.getAsync("ds_library_text_styles");
+          let catalogList = [];
+          if (Array.isArray(existingCatalog)) {
+            catalogList = existingCatalog.filter((item) => {
+              var _a2;
+              return !((_a2 = item.name) == null ? void 0 : _a2.startsWith("Icon/"));
+            });
+          }
+          catalogList.push(...createdIconStylesCatalog);
+          await figma.clientStorage.setAsync("ds_library_text_styles", catalogList);
+        } catch (err) {
+          console.warn("Could not save to ds_library_text_styles:", err);
+        }
+      } else {
+        if (msg.cleanUnused) {
+          const iconControlsCollectionName = "_MaterialIconsControls";
+          const iconControlsCollection = collections.find((c) => c.name === iconControlsCollectionName || c.name === "_materialIconsControls" || normalizePathForMatch(c.name) === "materialiconscontrols");
+          if (iconControlsCollection) {
+            try {
+              iconControlsCollection.remove();
+            } catch (e) {
+              console.warn("Could not remove _MaterialIconsControls:", e);
+            }
+          }
+          const iconStyles = localTextStyles.filter((s) => s.name.startsWith("Icon/") || s.name.startsWith("Default/Icon/"));
+          for (const s of iconStyles) {
+            try {
+              s.remove();
+            } catch (e) {
+              console.warn("Could not remove icon style:", e);
+            }
+          }
+        }
+      }
       const oldInternalCol = collections.find((c) => c.name === "_layoutControls" || c.name === "_LayoutControls");
       if (oldInternalCol) oldInternalCol.remove();
       const layoutColName = "Layout";
@@ -16924,15 +19750,27 @@ ${usageJsx}
         layoutCollection = figma.variables.createVariableCollection(layoutColName);
       }
       const layoutModesMap = ensureCollectionModes(layoutCollection, ["SM", "MD", "LG", "XL", "2XL"]);
-      const m_xl = Math.max(32, Math.min(parseInt(layoutMarginXl, 10) || 72, 200));
-      const m_lg = layoutMarginLg !== null && layoutMarginLg !== void 0 ? Math.max(16, Math.min(parseInt(layoutMarginLg, 10), 200)) : Math.round(m_xl * (1366 / 1536));
-      const m_2xl = layoutMargin2xl !== null && layoutMargin2xl !== void 0 ? Math.max(32, Math.min(parseInt(layoutMargin2xl, 10), 300)) : Math.round(m_xl * (1920 / 1536));
+      const parsedXl = parseInt(layoutMarginXl, 10);
+      const m_xl = !isNaN(parsedXl) ? Math.max(0, parsedXl) : 72;
+      const m_lg = layoutMarginLg !== null && layoutMarginLg !== void 0 ? Math.max(0, parseInt(layoutMarginLg, 10) || 0) : Math.round(m_xl * (1366 / 1536));
+      const m_2xl = layoutMargin2xl !== null && layoutMargin2xl !== void 0 ? Math.max(0, parseInt(layoutMargin2xl, 10) || 0) : Math.round(m_xl * (1920 / 1536));
+      let smWidth = 393;
+      let smHeight = 852;
+      if (smPhoneModel && typeof smPhoneModel === "string" && smPhoneModel.includes("x")) {
+        const parts = smPhoneModel.split("x").map((p) => parseInt(p.trim(), 10));
+        if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1]) && parts[0] > 0 && parts[1] > 0) {
+          smWidth = parts[0];
+          smHeight = parts[1];
+        }
+      }
+      const smMargin = 16;
+      const smContentWidth = smWidth - 2 * smMargin;
       const layoutConfigs = [
         { name: "2XL", oldName: "2xl", platform: "Desktop", range: ">= 1920", count: 16, margin: m_2xl, gutter: 16, maxWidth: 1920, maxHeight: 1080, maxElementWidth: 640 },
         { name: "XL", oldName: "xl", platform: "Desktop", range: "1536 - 1919", count: 16, margin: m_xl, gutter: 16, maxWidth: 1536, maxHeight: 960, maxElementWidth: 640 },
         { name: "LG", oldName: "lg", platform: "Desktop", range: "801 - 1535", count: 12, margin: m_lg, gutter: 16, maxWidth: 1366, maxHeight: 768, maxElementWidth: 560 },
-        { name: "MD", oldName: "md", platform: "Tablet", range: "441 - 800", count: 8, margin: 32, gutter: 16, maxWidth: 800, maxHeight: 1280, maxElementWidth: 480 },
-        { name: "SM", oldName: "sm", platform: "Mobile", range: "<= 393", count: 4, margin: 16, gutter: 16, maxWidth: 393, maxHeight: 852, maxElementWidth: 361 }
+        { name: "MD", oldName: "md", platform: "Tablet", range: `${smWidth + 1} - 800`, count: 8, margin: 32, gutter: 16, maxWidth: 800, maxHeight: 1280, maxElementWidth: 480 },
+        { name: "SM", oldName: "sm", platform: "Mobile", range: `<= ${smWidth}`, count: 4, margin: smMargin, gutter: 16, maxWidth: smWidth, maxHeight: smHeight, maxElementWidth: smContentWidth }
       ];
       const localGridStyles = await figma.getLocalGridStylesAsync();
       const layoutVarsMap = {};
@@ -16954,13 +19792,15 @@ ${usageJsx}
         { name: "MinMax/Small", oldName: ["min-max/small", "MinMax/Small", "minMax/small"], hidden: false, scopes: ["WIDTH_HEIGHT"] },
         { name: "MinMax/Base", oldName: ["min-max/base", "min-max/regular", "MinMax/Base", "minMax/base"], hidden: false, scopes: ["WIDTH_HEIGHT"] },
         { name: "MinMax/Medium", oldName: ["min-max/medium", "MinMax/Medium", "minMax/medium"], hidden: false, scopes: ["WIDTH_HEIGHT"] },
+        { name: "MinMax/SemiLarge", oldName: ["min-max/semiLarge", "MinMax/SemiLarge", "minMax/semiLarge"], hidden: false, scopes: ["WIDTH_HEIGHT"] },
         { name: "MinMax/Large", oldName: ["min-max/large", "MinMax/Large", "minMax/large"], hidden: false, scopes: ["WIDTH_HEIGHT"] },
         { name: "MinMax/ExtraLarge", oldName: ["min-max/extraLarge", "MinMax/ExtraLarge", "minMax/extraLarge"], hidden: false, scopes: ["WIDTH_HEIGHT"] },
         { name: "MinMax/Huge", oldName: ["min-max/huge", "MinMax/Huge", "minMax/huge"], hidden: false, scopes: ["WIDTH_HEIGHT"] },
         { name: "MinMax/ExtraHuge", oldName: ["min-max/extraHuge", "MinMax/ExtraHuge", "minMax/extraHuge", "min-max/semiExtraHuge", "MinMax/SemiExtraHuge", "min-max/semi-extra-huge"], hidden: false, scopes: ["WIDTH_HEIGHT"] },
         { name: "MinMax/Massive", oldName: ["min-max/massive", "MinMax/Massive", "minMax/massive"], hidden: false, scopes: ["WIDTH_HEIGHT"] },
         { name: "MinMax/Gigantic", oldName: ["min-max/gigantic", "MinMax/Gigantic", "minMax/gigantic"], hidden: false, scopes: ["WIDTH_HEIGHT"] },
-        { name: "MinMax/Colossal", oldName: ["min-max/colossal", "MinMax/Colossal", "minMax/colossal"], hidden: false, scopes: ["WIDTH_HEIGHT"] }
+        { name: "MinMax/Colossal", oldName: ["min-max/colossal", "MinMax/Colossal", "minMax/colossal"], hidden: false, scopes: ["WIDTH_HEIGHT"] },
+        { name: "MinMax/Titanic", oldName: ["min-max/titanic", "MinMax/Titanic", "minMax/titanic"], hidden: false, scopes: ["WIDTH_HEIGHT"] }
       ];
       for (const spec of varSpecs) {
         const oldVar = allLocalVars.find((iv) => (iv.name === spec.name || spec.oldName && (Array.isArray(spec.oldName) ? spec.oldName.includes(iv.name) : iv.name === spec.oldName) || normalizePathForMatch(iv.name) === normalizePathForMatch(spec.name)) && iv.variableCollectionId !== layoutCollection.id);
@@ -17028,13 +19868,15 @@ ${usageJsx}
         smartSetValueForMode(layoutVarsMap["MinMax/Small"], modeId, 20);
         smartSetValueForMode(layoutVarsMap["MinMax/Base"], modeId, 24);
         smartSetValueForMode(layoutVarsMap["MinMax/Medium"], modeId, 32);
-        smartSetValueForMode(layoutVarsMap["MinMax/Large"], modeId, 44);
-        smartSetValueForMode(layoutVarsMap["MinMax/ExtraLarge"], modeId, 48);
-        smartSetValueForMode(layoutVarsMap["MinMax/Huge"], modeId, 56);
-        smartSetValueForMode(layoutVarsMap["MinMax/ExtraHuge"], modeId, 64);
-        smartSetValueForMode(layoutVarsMap["MinMax/Massive"], modeId, 112);
-        smartSetValueForMode(layoutVarsMap["MinMax/Gigantic"], modeId, 128);
-        smartSetValueForMode(layoutVarsMap["MinMax/Colossal"], modeId, 144);
+        smartSetValueForMode(layoutVarsMap["MinMax/SemiLarge"], modeId, 36);
+        smartSetValueForMode(layoutVarsMap["MinMax/Large"], modeId, 40);
+        smartSetValueForMode(layoutVarsMap["MinMax/ExtraLarge"], modeId, 44);
+        smartSetValueForMode(layoutVarsMap["MinMax/Huge"], modeId, 48);
+        smartSetValueForMode(layoutVarsMap["MinMax/ExtraHuge"], modeId, 56);
+        smartSetValueForMode(layoutVarsMap["MinMax/Massive"], modeId, 64);
+        smartSetValueForMode(layoutVarsMap["MinMax/Gigantic"], modeId, 112);
+        smartSetValueForMode(layoutVarsMap["MinMax/Colossal"], modeId, 128);
+        smartSetValueForMode(layoutVarsMap["MinMax/Titanic"], modeId, 144);
       }
       const mainStyleName = "Layout/Main";
       const mainStyleNorm = normalizePathForMatch(mainStyleName);
@@ -17097,8 +19939,19 @@ ${usageJsx}
     }
   }
 
-  // ../../../../plugins/components-setup/src/main.ts
+  // src/main.ts
   var currentPluginMode = "components";
+  async function sendLibraryStylesCacheCount() {
+    try {
+      const count = await getLibraryStylesCacheCount();
+      figma.ui.postMessage({
+        type: "library-styles-cache-count",
+        count
+      });
+    } catch (e) {
+      console.warn("Failed to send library styles cache count:", e);
+    }
+  }
   async function launchPluginMode(mode) {
     currentPluginMode = mode;
     try {
@@ -17110,11 +19963,13 @@ ${usageJsx}
       figma.showUI(html, { width: 640, height: 1024, themeColors: true });
       figma.ui.onmessage = handleUiMessage;
       await initDsGeneratorUI();
+      sendLibraryStylesCacheCount();
     } else {
       figma.showUI(html, { width: 640, height: 1024, themeColors: true });
       figma.ui.onmessage = handleUiMessage;
       sendInitialData();
       sendSmartSwapSelectionToUI();
+      sendLibraryStylesCacheCount();
     }
   }
   figma.on("selectionchange", () => {
@@ -17210,6 +20065,521 @@ ${usageJsx}
       matchStats
     });
   }
+  async function runMasterSetup(msg) {
+    try {
+      const selection = figma.currentPage.selection;
+      if (!selection || selection.length === 0) {
+        figma.notify("Zaznacz komponent, Component Set lub ramk\u0119 na canvasie.", { error: true });
+        figma.ui.postMessage({ type: "master-setup-complete", success: false });
+        return;
+      }
+      for (const node of selection) {
+        if (node.removed) continue;
+        if (node.type === "COMPONENT_SET") {
+          try {
+            repairComponentSetVariants(node);
+          } catch (_) {
+          }
+        } else if (node.parent && node.parent.type === "COMPONENT_SET") {
+          try {
+            repairComponentSetVariants(node.parent);
+          } catch (_) {
+          }
+        }
+      }
+      const step1Setup = msg.step1Setup !== false;
+      const step1Mode = msg.step1Mode === "set-only" ? "set-only" : "full";
+      const step2BindTokens = msg.step2BindTokens !== false;
+      const step2Mode = msg.step2Mode === "exact" ? "exact" : "snap";
+      const ignoreFontFamily = msg.ignoreFontFamily !== false;
+      const step3Naming = msg.step3Naming !== false;
+      const namingMode = msg.namingMode === "ai" ? "ai" : "fast";
+      const step4Props = msg.step4Props !== false;
+      const reviewAutoProps = Boolean(msg.reviewAutoProps);
+      const autoPropsOptions = typeof msg.autoProps === "object" && msg.autoProps !== null ? msg.autoProps : void 0;
+      if (step1Setup && step1Mode === "set-only" && !step2BindTokens && !step3Naming && !step4Props) {
+        await runSetupComponentSetHorizontalLogic();
+        await sendSelectionToUI();
+        await sendSmartSwapSelectionToUI();
+        figma.ui.postMessage({ type: "master-setup-complete", success: true });
+        return;
+      }
+      figma.ui.postMessage({
+        type: "master-setup-progress",
+        step: 0,
+        label: "Running Phase 0/4: Pre-fetching variables, styles & fonts..."
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      const uniqueFontKeys = /* @__PURE__ */ new Set();
+      const uniqueFonts = [{ family: "Inter", style: "Regular" }];
+      uniqueFontKeys.add("Inter::Regular");
+      const directInstances = [];
+      const rootSet = new Set(selection);
+      const collectPreloadTargets = (node) => {
+        if (node.removed) return;
+        if (node.type === "INSTANCE") {
+          directInstances.push(node);
+          if (!rootSet.has(node)) return;
+        }
+        if (node.type === "TEXT") {
+          const fn = node.fontName;
+          if (fn !== figma.mixed && fn && fn.family && fn.style) {
+            const key = `${fn.family}::${fn.style}`;
+            if (!uniqueFontKeys.has(key)) {
+              uniqueFontKeys.add(key);
+              uniqueFonts.push(fn);
+            }
+          } else if (fn === figma.mixed) {
+            try {
+              const len = node.characters.length;
+              if (len > 0) {
+                const allFonts = node.getRangeAllFontNames(0, len);
+                for (const f of allFonts) {
+                  const key = `${f.family}::${f.style}`;
+                  if (!uniqueFontKeys.has(key)) {
+                    uniqueFontKeys.add(key);
+                    uniqueFonts.push(f);
+                  }
+                }
+              }
+            } catch (e) {
+            }
+          }
+        }
+        if ("children" in node && node.children) {
+          for (const child of node.children) {
+            collectPreloadTargets(child);
+          }
+        }
+      };
+      for (const n of selection) {
+        collectPreloadTargets(n);
+      }
+      await Promise.all([
+        preloadAutoBinderCaches(),
+        Promise.all(
+          uniqueFonts.map(async (f) => {
+            try {
+              await figma.loadFontAsync(f);
+            } catch (e) {
+            }
+          })
+        ),
+        Promise.all(
+          directInstances.map(async (inst) => {
+            if (inst.getMainComponentAsync) {
+              try {
+                await inst.getMainComponentAsync();
+              } catch (e) {
+              }
+            }
+          })
+        )
+      ]);
+      let binderStats = { metricsBound: 0, colorsBound: 0, textStylesBound: 0 };
+      if (step1Setup || step2BindTokens) {
+        figma.ui.postMessage({
+          type: "master-setup-progress",
+          step: 1,
+          label: "Running Step 1-2/4: Container Setup & Token/Style Auto-Binder..."
+        });
+        await new Promise((r) => setTimeout(r, 10));
+        if (step1Setup) {
+          if (step1Mode === "set-only") {
+            await runSetupComponentSetHorizontalLogic();
+          } else {
+            await prepareContainersForMasterPipeline(figma.currentPage.selection);
+          }
+        }
+        if (step2BindTokens || step1Setup && step1Mode === "full") {
+          binderStats = await runSmartTokenAutoBinder(figma.currentPage.selection, {
+            mode: step2Mode,
+            ignoreFontFamily,
+            notify: false,
+            setupContainers: step1Setup && step1Mode === "full",
+            bindTokens: step2BindTokens
+          });
+        }
+      }
+      let renamedCount = 0;
+      let scannedTargetRoots = [];
+      if (step3Naming) {
+        figma.ui.postMessage({
+          type: "master-setup-progress",
+          step: 2,
+          label: "Running Step 3/4: Smart Layer Naming..."
+        });
+        await new Promise((r) => setTimeout(r, 10));
+        const { items, totalVariantsCount, targetRoots } = await scanLayersForAiRenaming();
+        scannedTargetRoots = targetRoots || [];
+        if (namingMode === "ai" && items && items.length > 0) {
+          figma.ui.postMessage({
+            type: "ai-layers-structure-extracted",
+            success: true,
+            payload: items,
+            totalVariantsCount,
+            fromMasterPipeline: true
+          });
+          return;
+        }
+        if (items && items.length > 0) {
+          const seenNodeIds = /* @__PURE__ */ new Set();
+          for (const item of items) {
+            const suggested = sanitizePascalCase(item.suggestedName || "");
+            if (!suggested) continue;
+            const peerIds = lastAiRenamerPeerMap.get(item.id) || [item.id];
+            for (const tId of peerIds) {
+              if (seenNodeIds.has(tId)) continue;
+              seenNodeIds.add(tId);
+              if (lastAiRenamerRootIds.includes(tId)) continue;
+              const node = figma.getNodeById(tId) || await figma.getNodeByIdAsync(tId);
+              if (node && (node.type === "FRAME" || node.type === "GROUP" || node.type === "TEXT")) {
+                if (isSystemOrIgnoredNode(node) || isSystemOrIgnoredPropName(node.name)) continue;
+                let detectedRoot = "";
+                let curr = node.parent;
+                while (curr) {
+                  if (curr.type === "COMPONENT_SET" || curr.type === "COMPONENT") {
+                    detectedRoot = curr.name || "";
+                    break;
+                  }
+                  curr = curr.parent;
+                }
+                const finalizedName = sanitizeLayerNameByContext(suggested, node, detectedRoot);
+                if (node.name !== finalizedName) {
+                  node.name = finalizedName;
+                  renamedCount++;
+                }
+              }
+            }
+          }
+        }
+        for (const n of figma.currentPage.selection) {
+          try {
+            if (!isSystemOrIgnoredNode(n) && !isSystemOrIgnoredPropName(n.name)) {
+              sanitizeLayerNames(n);
+            }
+          } catch (e) {
+          }
+        }
+      }
+      const validRoots = [];
+      const candidateSources = scannedTargetRoots.length > 0 ? scannedTargetRoots : [...figma.currentPage.selection];
+      for (const r of candidateSources) {
+        if (r.removed) continue;
+        let resolved = r;
+        if (r.parent && r.parent.type === "COMPONENT_SET") {
+          resolved = r.parent;
+        } else if (r.type !== "COMPONENT_SET" && r.type !== "COMPONENT") {
+          let p = r.parent;
+          while (p && p.type !== "PAGE" && p.type !== "DOCUMENT") {
+            if (p.type === "COMPONENT_SET") {
+              resolved = p;
+              break;
+            }
+            if (p.type === "COMPONENT") {
+              resolved = p.parent && p.parent.type === "COMPONENT_SET" ? p.parent : p;
+              break;
+            }
+            p = p.parent;
+          }
+        }
+        if ((resolved.type === "COMPONENT_SET" || resolved.type === "COMPONENT" || resolved.type === "FRAME") && !validRoots.includes(resolved)) {
+          validRoots.push(resolved);
+        }
+      }
+      let propsSummaryParts = [];
+      let createdItemSets = [];
+      let masterNodesToTransfer = [];
+      if (step4Props && validRoots.length > 0) {
+        for (const r of validRoots) {
+          if (r.type === "COMPONENT_SET" || r.type === "COMPONENT") {
+            try {
+              await purgeIgnoredPropertiesAndReferences(r);
+            } catch (_) {
+            }
+          }
+        }
+        figma.ui.postMessage({
+          type: "master-setup-progress",
+          step: 3,
+          label: "Running Step 4/4: Props, Slots & ../Item Extraction..."
+        });
+        await new Promise((r) => setTimeout(r, 10));
+        if (reviewAutoProps) {
+          const previewData = collectAutoPropsPreviewData(validRoots);
+          figma.ui.postMessage({
+            type: "auto-props-preview-needed",
+            previewData,
+            renamedCount
+          });
+          figma.ui.postMessage({ type: "master-setup-complete", success: true });
+          figma.notify("Skonfigurowano tokeny i warstwy! Przejrzyj w\u0142a\u015Bciwo\u015Bci przed wdro\u017Ceniem... \u2728");
+          await sendSelectionToUI();
+          await sendSmartSwapSelectionToUI();
+          return;
+        }
+        const loadedVars = await preloadBoundVariablesForRoots(validRoots);
+        const autoRes = await autoCreateTextPropsAndExtractItemsSync(validRoots, loadedVars, autoPropsOptions);
+        createdItemSets = autoRes.createdItemSets || [];
+        const candidateMasters = autoRes.masterNodes && autoRes.masterNodes.length > 0 ? autoRes.masterNodes : validRoots.filter((r) => r.type === "COMPONENT_SET" || r.type === "COMPONENT");
+        for (const m of candidateMasters) {
+          if (m.removed) continue;
+          let resolved = m;
+          if (m.type === "COMPONENT" && m.parent && m.parent.type === "COMPONENT_SET") {
+            resolved = m.parent;
+          }
+          if (!masterNodesToTransfer.includes(resolved)) {
+            masterNodesToTransfer.push(resolved);
+          }
+        }
+        if (autoRes.slotsCreatedCount > 0) {
+          propsSummaryParts.push(`${autoRes.slotsCreatedCount} Slot`);
+        }
+        if (autoRes.extractedItemsCount > 0) {
+          propsSummaryParts.push(`${autoRes.extractedItemsCount} .../Item`);
+        }
+        if (autoRes.instanceSwapPropsCount > 0) {
+          propsSummaryParts.push(`${autoRes.instanceSwapPropsCount} INSTANCE_SWAP`);
+        }
+        if (autoRes.booleanPropsCount > 0) {
+          propsSummaryParts.push(`${autoRes.booleanPropsCount} BOOLEAN`);
+        }
+        if (autoRes.textPropsCount > 0) {
+          propsSummaryParts.push(`${autoRes.textPropsCount} TEXT`);
+        }
+        if (autoRes.nestedInstancesCount > 0) {
+          propsSummaryParts.push(`${autoRes.nestedInstancesCount} Nested`);
+        }
+        for (const r of validRoots) {
+          if (r.type === "COMPONENT_SET" || r.type === "COMPONENT") {
+            try {
+              await purgeIgnoredPropertiesAndReferences(r);
+            } catch (_) {
+            }
+          }
+        }
+      } else if ((step1Setup || step3Naming) && validRoots.length > 0) {
+        for (const r of validRoots) {
+          if (r.removed) continue;
+          if (r.type === "COMPONENT_SET") {
+            if (!masterNodesToTransfer.includes(r)) masterNodesToTransfer.push(r);
+          } else if (r.type === "COMPONENT") {
+            const comp = r;
+            const host = comp.parent && comp.parent.type === "COMPONENT_SET" ? comp.parent : comp;
+            if (!masterNodesToTransfer.includes(host)) masterNodesToTransfer.push(host);
+          }
+          if (r.type === "COMPONENT_SET" || r.type === "COMPONENT") {
+            try {
+              if (r.type === "COMPONENT_SET") {
+                reorderComponentSetVariants(r);
+              }
+              const variants = r.type === "COMPONENT_SET" ? r.children.filter((c) => c.type === "COMPONENT") : [r];
+              cleanRebuildComponentProperties(r, variants, {
+                enableText: false,
+                enableInstanceSwap: false,
+                enableBoolean: false,
+                enableSlotExtract: false
+              });
+            } catch (e) {
+            }
+          }
+        }
+      }
+      if (masterNodesToTransfer.length > 0) {
+        const isAlreadyOnLib = isLibraryComponentsPage(figma.currentPage);
+        if (isAlreadyOnLib) {
+          for (const master of masterNodesToTransfer) {
+            const cleanMasterName = master.name.split(",")[0].trim();
+            const matchingItemSets = createdItemSets.filter((is) => is.name.startsWith(cleanMasterName));
+            let currentItemX = master.x + master.width + 64;
+            for (const itemSet of matchingItemSets) {
+              itemSet.x = currentItemX;
+              itemSet.y = master.y;
+              currentItemX += itemSet.width + 64;
+            }
+          }
+        } else {
+          const targetPage = getOrCreateTargetPage("components");
+          if (typeof targetPage.loadAsync === "function") {
+            await targetPage.loadAsync();
+          }
+          let maxX = 0;
+          for (const ch of targetPage.children) {
+            if ("x" in ch && "width" in ch) {
+              const r = ch.x + ch.width;
+              if (r > maxX) maxX = r;
+            }
+          }
+          let currentTargetX = maxX > 0 ? maxX + 120 : 0;
+          let currentTargetY = 0;
+          const leftBehindInstances = [];
+          for (const masterNode of masterNodesToTransfer) {
+            if (masterNode.removed) continue;
+            const originalParent = masterNode.parent;
+            let leftBehindInstance = null;
+            if (originalParent && "children" in originalParent) {
+              const originalIndex = originalParent.children.indexOf(masterNode);
+              const originalX = masterNode.x;
+              const originalY = masterNode.y;
+              const originalWidth = masterNode.width;
+              const originalHeight = masterNode.height;
+              const originalName = masterNode.name;
+              const sizingH = masterNode.layoutSizingHorizontal;
+              const sizingV = masterNode.layoutSizingVertical;
+              const layoutAlign = masterNode.layoutAlign;
+              const layoutGrow = masterNode.layoutGrow;
+              const layoutPositioning = masterNode.layoutPositioning;
+              let compToInstantiate = null;
+              if (masterNode.type === "COMPONENT") {
+                compToInstantiate = masterNode;
+              } else if (masterNode.type === "COMPONENT_SET") {
+                const compSet = masterNode;
+                compToInstantiate = compSet.defaultVariant || compSet.children.find((c) => c.type === "COMPONENT") || null;
+              }
+              if (compToInstantiate) {
+                try {
+                  leftBehindInstance = compToInstantiate.createInstance();
+                  if ("insertChild" in originalParent && originalIndex !== -1) {
+                    originalParent.insertChild(originalIndex, leftBehindInstance);
+                  } else if ("appendChild" in originalParent) {
+                    originalParent.appendChild(leftBehindInstance);
+                  }
+                  leftBehindInstance.x = originalX;
+                  leftBehindInstance.y = originalY;
+                  try {
+                    leftBehindInstance.resize(originalWidth, originalHeight);
+                  } catch (_) {
+                  }
+                  try {
+                    if (sizingH) leftBehindInstance.layoutSizingHorizontal = sizingH;
+                    if (sizingV) leftBehindInstance.layoutSizingVertical = sizingV;
+                    if (layoutAlign) leftBehindInstance.layoutAlign = layoutAlign;
+                    if (typeof layoutGrow === "number") leftBehindInstance.layoutGrow = layoutGrow;
+                    if (layoutPositioning) leftBehindInstance.layoutPositioning = layoutPositioning;
+                  } catch (_) {
+                  }
+                  leftBehindInstance.name = originalName.split(",")[0].trim();
+                  leftBehindInstances.push(leftBehindInstance);
+                } catch (instErr) {
+                  console.warn(`[MasterSetup] Could not leave instance for "${masterNode.name}":`, instErr);
+                }
+              }
+            }
+            try {
+              targetPage.appendChild(masterNode);
+              masterNode.x = currentTargetX;
+              masterNode.y = currentTargetY;
+              let nextX = masterNode.x + masterNode.width + 64;
+              const cleanMasterName = masterNode.name.split(",")[0].trim();
+              const matchingItemSets = createdItemSets.filter((is) => is.name.startsWith(cleanMasterName));
+              for (const itemSet of matchingItemSets) {
+                try {
+                  targetPage.appendChild(itemSet);
+                  itemSet.x = nextX;
+                  itemSet.y = currentTargetY;
+                  nextX += itemSet.width + 64;
+                } catch (e) {
+                  console.warn(`[MasterSetup] Could not move itemSet "${itemSet.name}":`, e);
+                }
+              }
+              currentTargetX = nextX + 120;
+            } catch (moveErr) {
+              console.error(`[MasterSetup] Could not move masterNode "${masterNode.name}" to targetPage:`, moveErr);
+            }
+          }
+          if (leftBehindInstances.length > 0) {
+            figma.currentPage.selection = leftBehindInstances;
+            try {
+              figma.viewport.scrollAndZoomIntoView(leftBehindInstances);
+            } catch (_) {
+            }
+          }
+          propsSummaryParts.push("\u{1F537} Components");
+        }
+      }
+      const summaryTokens = [];
+      if (binderStats.metricsBound > 0) summaryTokens.push(`${binderStats.metricsBound} metrics`);
+      if (binderStats.colorsBound > 0) summaryTokens.push(`${binderStats.colorsBound} schemes`);
+      if (binderStats.textStylesBound > 0) summaryTokens.push(`${binderStats.textStylesBound} Text Styles`);
+      if (renamedCount > 0) summaryTokens.push(`${renamedCount} warstw nazwanych`);
+      const propsSuffix = propsSummaryParts.length > 0 ? ` [${propsSummaryParts.join(", ")}]` : "";
+      const tokensText = summaryTokens.length > 0 ? `: ${summaryTokens.join(", ")}` : "";
+      let deletedProps = [];
+      try {
+        const targetSetsToCheck = /* @__PURE__ */ new Set([
+          ...masterNodesToTransfer,
+          ...validRoots.filter((r) => r.type === "COMPONENT_SET" || r.type === "COMPONENT")
+        ]);
+        for (const targetSet of targetSetsToCheck) {
+          if (!targetSet || targetSet.removed) continue;
+          const finalDefs = safeGetComponentPropertyDefinitions(targetSet);
+          for (const propKey of Object.keys(finalDefs)) {
+            if (finalDefs[propKey].type === "VARIANT" || finalDefs[propKey].type === "SLOT") continue;
+            const normKey = propKey.split("#")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
+            const withoutShow = normKey.startsWith("show") ? normKey.slice(4) : normKey;
+            if (normKey.includes("statusbar") || normKey.includes("homeindicator") || normKey.includes("bezel") || normKey.includes("iphone") || normKey.includes("wrapper") || withoutShow === "bg" || withoutShow.startsWith("bg") || withoutShow.includes("glass")) {
+              if (typeof targetSet.findAll === "function") {
+                try {
+                  targetSet.findAll().forEach((n) => {
+                    try {
+                      if ("componentPropertyReferences" in n && n.componentPropertyReferences) {
+                        const rawRefs = n.componentPropertyReferences;
+                        const refs = {};
+                        let modified = false;
+                        for (const [k, v] of Object.entries(rawRefs)) {
+                          if (v === propKey) {
+                            modified = true;
+                          } else if (typeof v === "string") {
+                            refs[k] = v;
+                          }
+                        }
+                        if (modified) {
+                          try {
+                            n.componentPropertyReferences = Object.keys(refs).length > 0 ? refs : null;
+                          } catch (_) {
+                          }
+                        }
+                      }
+                    } catch (_) {
+                    }
+                  });
+                } catch (_) {
+                }
+              }
+              try {
+                targetSet.deleteComponentProperty(propKey);
+                deletedProps.push(propKey.split("#")[0]);
+              } catch (e) {
+                console.error("Delete failed for", propKey, e);
+              }
+            }
+          }
+        }
+      } catch (phase5Err) {
+        console.warn("[MasterSetup Phase 5 Purge]", phase5Err);
+      }
+      figma.notify(`[v2.5 PURGE] Master Setup gotowy! Usuni\u0119to wykluczone: ${deletedProps.join(", ") || "0"}`);
+      await sendSelectionToUI();
+      await sendSmartSwapSelectionToUI();
+      figma.ui.postMessage({
+        type: "master-setup-complete",
+        success: true,
+        binderStats,
+        renamedCount,
+        propsSummaryParts
+      });
+    } catch (err) {
+      console.error("[MasterSetup] Error:", err);
+      const stack = err && err.stack ? String(err.stack) : "";
+      const topStack = stack.split("\n").filter(Boolean).slice(0, 3).join(" > ");
+      figma.notify(`B\u0142\u0105d Master Setup: ${(err == null ? void 0 : err.message) || String(err)}${topStack ? ` [${topStack}]` : ""}`, { error: true, timeout: 25e3 });
+      figma.ui.postMessage({
+        type: "master-setup-complete",
+        success: false,
+        error: `${(err == null ? void 0 : err.message) || String(err)}${topStack ? ` [${topStack}]` : ""}`
+      });
+    }
+  }
   var handleUiMessage = async (msg) => {
     var _a, _b;
     if (msg.type === "switch-plugin-mode") {
@@ -17245,6 +20615,32 @@ ${usageJsx}
       await scanDocument(msg.scope || "page");
     } else if (msg.type === "audit-tokens") {
       await runAuditTokens(msg.scope || "selection");
+    } else if (msg.type === "run-master-setup") {
+      await runMasterSetup(msg);
+      return;
+    } else if (msg.type === "run-auto-bind-variables") {
+      await runSmartTokenAutoBinder(figma.currentPage.selection, {
+        mode: msg.mode === "snap" ? "snap" : "exact",
+        ignoreFontFamily: Boolean(msg.ignoreFontFamily),
+        notify: true
+      });
+      return;
+    } else if (msg.type === "sync-library-text-styles") {
+      try {
+        const count = await syncLibraryTextStylesToCache();
+        await sendLibraryStylesCacheCount();
+        if (count > 0) {
+          figma.notify(`Zapisano ${count} styl\xF3w tekstowych z biblioteki do pami\u0119ci podr\u0119cznej! \u{1F4E5}\u2728`);
+        } else {
+          figma.notify("Nie znaleziono lokalnych styl\xF3w tekstowych w bie\u017C\u0105cym pliku. Otw\xF3rz plik biblioteki DS i spr\xF3buj ponownie.", { error: true });
+        }
+      } catch (e) {
+        figma.notify(`B\u0142\u0105d synchronizacji styl\xF3w: ${e.message}`, { error: true });
+      }
+      return;
+    } else if (msg.type === "get-library-styles-cache-count") {
+      await sendLibraryStylesCacheCount();
+      return;
     } else if (msg.type === "toggle-audit-ignore") {
       const nodeIds = Array.isArray(msg.nodeIds) ? msg.nodeIds : msg.nodeId ? [msg.nodeId] : [];
       const category = msg.category || "";
@@ -17263,6 +20659,22 @@ ${usageJsx}
       const count = nodeIds.length;
       const msgText = ignored ? `Zignorowano problem (${category}) dla ${count} warstw${count === 1 ? "y" : ""} (zapisano w pliku) \u{1F441}\uFE0F` : `Przywr\xF3cono problem (${category}) dla ${count} warstw${count === 1 ? "y" : ""} \u21A9\uFE0F`;
       figma.notify(msgText);
+      await runAuditTokens(msg.scope || "selection");
+    } else if (msg.type === "trust-audit-library") {
+      if (msg.key) {
+        addTrustedAuditLibrary({
+          key: String(msg.key),
+          label: String(msg.label || msg.key),
+          source: msg.source === "remote" ? "remote" : "local-other"
+        });
+        figma.notify(`Oznaczono bibliotek\u0119 "${msg.label || msg.key}" jako zaufan\u0105 (pomijana w audycie) \u2713`);
+      }
+      await runAuditTokens(msg.scope || "selection");
+    } else if (msg.type === "untrust-audit-library") {
+      if (msg.key) {
+        removeTrustedAuditLibrary(String(msg.key));
+        figma.notify(`Usuni\u0119to bibliotek\u0119 z zaufanych \u2014 jej zmienne zn\xF3w b\u0119d\u0105 audytowane \u21A9\uFE0F`);
+      }
       await runAuditTokens(msg.scope || "selection");
     } else if (msg.type === "restore-all-audit-ignored") {
       const nodeIds = Array.isArray(msg.nodeIds) ? msg.nodeIds : [];
@@ -17778,7 +21190,7 @@ ${usageJsx}
             if (typeof msg.autoProps === "object" && msg.autoProps !== null) {
               autoPropsOptions = msg.autoProps;
             }
-            const autoRes = autoCreateTextPropsAndExtractItemsSync(validRoots, loadedVars, autoPropsOptions);
+            const autoRes = await autoCreateTextPropsAndExtractItemsSync(validRoots, loadedVars, autoPropsOptions);
             const parts = [];
             if (didAutoSmartSetup) parts.push("Smart Setup");
             if (autoRes.slotsCreatedCount > 0) parts.push(`${autoRes.slotsCreatedCount} ${autoRes.slotsCreatedCount === 1 ? "kontener Slot" : "kontenery Slot"}`);
@@ -17871,6 +21283,7 @@ ${usageJsx}
               if (lastAiRenamerRootIds.includes(tId)) continue;
               const node = figma.getNodeById(tId) || await figma.getNodeByIdAsync(tId);
               if (node && (node.type === "FRAME" || node.type === "GROUP" || node.type === "TEXT")) {
+                if (isSystemOrIgnoredNode(node) || isSystemOrIgnoredPropName(node.name)) continue;
                 let detectedRoot = "";
                 let curr = node.parent;
                 while (curr) {
@@ -17983,7 +21396,7 @@ ${usageJsx}
         let autoPropsSummary = "";
         if (msg.autoProps !== false) {
           try {
-            const autoRes = autoCreateTextPropsAndExtractItemsSync(roots, preloadedVars, autoPropsOptions);
+            const autoRes = await autoCreateTextPropsAndExtractItemsSync(roots, preloadedVars, autoPropsOptions);
             if (autoRes.slotsCreatedCount > 0 || autoRes.extractedItemsCount > 0 || autoRes.textPropsCount > 0 || autoRes.instanceSwapPropsCount > 0 || autoRes.booleanPropsCount > 0 || autoRes.nestedInstancesCount > 0) {
               const parts = [];
               if (autoRes.slotsCreatedCount > 0) {
@@ -18121,7 +21534,7 @@ ${usageJsx}
           })(),
           preloadBoundVariablesForRoots(targetRoots)
         ]);
-        const autoRes = autoCreateTextPropsAndExtractItemsSync(targetRoots, loadedVars, msg.options);
+        const autoRes = await autoCreateTextPropsAndExtractItemsSync(targetRoots, loadedVars, msg.options);
         const parts = [];
         if (autoRes.instanceSwapPropsCount > 0) parts.push(`${autoRes.instanceSwapPropsCount} INSTANCE_SWAP`);
         if (autoRes.booleanPropsCount > 0) parts.push(`${autoRes.booleanPropsCount} BOOLEAN`);
@@ -18219,6 +21632,46 @@ ${usageJsx}
       } catch (e) {
         console.error("[FontReplacer] Swap error:", e);
         figma.notify(`B\u0142\u0105d podmiany fontu: ${e.message}`, { error: true });
+      }
+    } else if (msg.type === "font-replacer-bind-style") {
+      try {
+        const nodeIds = Array.isArray(msg.nodeIds) ? msg.nodeIds : [];
+        const styleId = msg.styleId || "";
+        const styleKey = msg.styleKey || "";
+        let styleObj = null;
+        if (styleId) {
+          try {
+            styleObj = await figma.getStyleByIdAsync(styleId);
+          } catch (e) {
+          }
+        }
+        if (!styleObj && styleKey) {
+          try {
+            styleObj = await figma.importStyleByKeyAsync(styleKey);
+          } catch (e) {
+          }
+        }
+        if (!styleObj) {
+          figma.notify("Nie uda\u0142o si\u0119 odnale\u017A\u0107 ani zaimportowa\u0107 stylu tekstowego.", { error: true });
+          return;
+        }
+        let count = 0;
+        for (const id of nodeIds) {
+          const node = await figma.getNodeByIdAsync(id);
+          if (node && node.type === "TEXT") {
+            await node.setTextStyleIdAsync(styleObj.id);
+            count++;
+          }
+        }
+        figma.notify(`Przypisano styl tekstowy (${styleObj.name}) do ${count} ${count === 1 ? "warstwy" : "warstw"}! \u2728`);
+        const updatedScan = await scanSelectionFonts(false);
+        figma.ui.postMessage({
+          type: "font-replacer-data",
+          data: updatedScan
+        });
+        sendSelectionToUI();
+      } catch (e) {
+        figma.notify(`B\u0142\u0105d przypisywania stylu: ${e.message}`, { error: true });
       }
     }
   };

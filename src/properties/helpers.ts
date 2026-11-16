@@ -1,6 +1,8 @@
+import { isIgnoredName, safeGetComponentPropertyDefinitions } from '../utils/nodes';
+
 export function findExistingTextPropKey(host: ComponentNode | ComponentSetNode, baseName: string): string | null {
   try {
-    const defs = host.componentPropertyDefinitions;
+    const defs = safeGetComponentPropertyDefinitions(host);
     if (!defs) return null;
     const search = baseName.trim().toLowerCase();
     for (const key of Object.keys(defs)) {
@@ -23,8 +25,9 @@ export function findOrCreateComponentTextProperty(
   propName: string,
   defaultValue: string
 ): { propKey: string; created: boolean } | null {
+  if (isIgnoredName(propName)) return null;
   try {
-    const defs = host.componentPropertyDefinitions || {};
+    const defs = safeGetComponentPropertyDefinitions(host);
     const search = propName.trim().toLowerCase();
 
     // 1. Check if an exact matching TEXT property already exists on the host
@@ -71,7 +74,7 @@ export function findOrCreateComponentTextProperty(
 
 export function findExistingInstanceSwapPropKey(host: ComponentNode | ComponentSetNode, baseName: string): string | null {
   try {
-    const defs = host.componentPropertyDefinitions;
+    const defs = safeGetComponentPropertyDefinitions(host);
     if (!defs) return null;
     const search = baseName.trim().toLowerCase();
     for (const key of Object.keys(defs)) {
@@ -94,8 +97,9 @@ export function findOrCreateComponentInstanceSwapProperty(
   propName: string,
   defaultValue: string
 ): { propKey: string; created: boolean } | null {
+  if (isIgnoredName(propName)) return null;
   try {
-    const defs = host.componentPropertyDefinitions || {};
+    const defs = safeGetComponentPropertyDefinitions(host);
     const search = propName.trim().toLowerCase();
 
     // 1. Check if an exact matching INSTANCE_SWAP property already exists on the host

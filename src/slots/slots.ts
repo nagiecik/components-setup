@@ -1,4 +1,5 @@
 import { ResolvedVariable } from '../types/variables';
+import { isSystemOrIgnoredNode, isSystemOrIgnoredPropName } from '../utils/nodes';
 import {
   bindColorVariablesRecursively,
   bindOrReplaceField,
@@ -420,6 +421,7 @@ export function consolidateRepeatingInstancesIntoSlot(
   unwrapRedundantSlotWrappers(root, preloadedVars);
 
   const inspectNode = (n: SceneNode) => {
+    if (isSystemOrIgnoredNode(n)) return; // Stop at system/ignored boundary
     if (n.type === 'INSTANCE') return;
     if (isSlotContainer(n)) return; // Stop at Slot boundary
     if (n.type === 'FRAME' || n.type === 'COMPONENT' || (n as any).type === 'SLOT') {
@@ -560,7 +562,7 @@ export function consolidateRepeatingInstancesIntoSlot(
     const instanceRuns: InstanceNode[][] = [];
 
     for (const child of children) {
-      if (child.type === 'INSTANCE') {
+      if (child.type === 'INSTANCE' && !isSystemOrIgnoredNode(child) && !isSystemOrIgnoredPropName(child.name)) {
         const inst = child as InstanceNode;
         const compKey = getInstanceFamilyKey(inst);
         if (currentCompKey && compKey === currentCompKey) {
@@ -708,7 +710,7 @@ export function consolidateRepeatingInstancesIntoSlot(
       for (const inst of run) {
         slotNode.appendChild(inst);
         try {
-          inst.componentPropertyReferences = {};
+          inst.componentPropertyReferences = null;
         } catch (_) {}
         if (effectiveLayoutMode === 'VERTICAL') {
           try {

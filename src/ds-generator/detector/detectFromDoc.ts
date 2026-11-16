@@ -11,53 +11,89 @@ export async function detectTypographyFromDocument(): Promise<Record<string, any
     // 1. Detect fonts from "_TypographyControls" or "_typographyControls"
     const typoCol = collections.find(c => c.name === "_TypographyControls" || c.name === "_typographyControls" || c.name === "TypographyControls" || c.name === "typographyControls");
     if (typoCol) {
-      const defaultMode = typoCol.modes[0];
-      if (defaultMode) {
-        const modeId = defaultMode.modeId;
-        const headVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontFamily/heading", "fontFamily/header");
-        const bodyVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontFamily/default", "fontFamily/body");
+      const headVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontFamily/heading", "fontFamily/header");
+      const bodyVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontFamily/default", "fontFamily/body");
+      const headRegVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/heading/base", "fontWeight/header/base");
+      const headMedVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/heading/medium", "fontWeight/header/medium");
+      const headBoldVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/heading/bold", "fontWeight/header/bold");
+      const bodyRegVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/default/base", "fontWeight/base", "fontWeight/regular");
+      const bodyMedVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/default/medium", "fontWeight/medium");
+      const bodyBoldVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/default/bold", "fontWeight/bold");
 
+      const readModeFonts = (modeId: string) => {
+        const result: {
+          headersFont?: string;
+          bodyFont?: string;
+          headersStyles?: { regular: any; medium: any; bold: any };
+          bodyStyles?: { regular: any; medium: any; bold: any };
+        } = {};
         if (headVar) {
           const val = headVar.valuesByMode[modeId];
-          if (typeof val === 'string') {
-            detected.headersFont = val;
-          }
+          if (typeof val === 'string') result.headersFont = val;
         }
         if (bodyVar) {
           const val = bodyVar.valuesByMode[modeId];
-          if (typeof val === 'string') {
-            detected.bodyFont = val;
-          }
+          if (typeof val === 'string') result.bodyFont = val;
         }
-
-        const headRegVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/heading/base", "fontWeight/header/base");
-        const headMedVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/heading/medium", "fontWeight/header/medium");
-        const headBoldVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/heading/bold", "fontWeight/header/bold");
-
-        const bodyRegVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/default/base", "fontWeight/base", "fontWeight/regular");
-        const bodyMedVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/default/medium", "fontWeight/medium");
-        const bodyBoldVar = findLocalVarByNormName(allLocalVars, typoCol.id, "fontWeight/default/bold", "fontWeight/bold");
-
         if (headRegVar || headMedVar || headBoldVar) {
-          detected.headersStyles = {
+          result.headersStyles = {
             regular: headRegVar ? headRegVar.valuesByMode[modeId] : (bodyRegVar ? bodyRegVar.valuesByMode[modeId] : 'Regular'),
             medium: headMedVar ? headMedVar.valuesByMode[modeId] : (bodyMedVar ? bodyMedVar.valuesByMode[modeId] : 'Medium'),
             bold: headBoldVar ? headBoldVar.valuesByMode[modeId] : (bodyBoldVar ? bodyBoldVar.valuesByMode[modeId] : 'Bold')
           };
         } else if (bodyRegVar || bodyMedVar || bodyBoldVar) {
-          detected.headersStyles = {
+          result.headersStyles = {
             regular: bodyRegVar ? bodyRegVar.valuesByMode[modeId] : 'Regular',
             medium: bodyMedVar ? bodyMedVar.valuesByMode[modeId] : 'Medium',
             bold: bodyBoldVar ? bodyBoldVar.valuesByMode[modeId] : 'Bold'
           };
         }
-
         if (bodyRegVar || bodyMedVar || bodyBoldVar) {
-          detected.bodyStyles = {
+          result.bodyStyles = {
             regular: bodyRegVar ? bodyRegVar.valuesByMode[modeId] : 'Regular',
             medium: bodyMedVar ? bodyMedVar.valuesByMode[modeId] : 'Medium',
             bold: bodyBoldVar ? bodyBoldVar.valuesByMode[modeId] : 'Bold'
           };
+        }
+        return result;
+      };
+
+      const defaultMode = typoCol.modes[0];
+      if (defaultMode) {
+        Object.assign(detected, readModeFonts(defaultMode.modeId));
+      }
+
+      const secondaryMode = typoCol.modes[1];
+      if (secondaryMode) {
+        const sec = readModeFonts(secondaryMode.modeId);
+        detected.includeSecondaryFont = true;
+        if (sec.headersFont) detected.secondaryHeadersFont = sec.headersFont;
+        if (sec.bodyFont) detected.secondaryBodyFont = sec.bodyFont;
+        if (sec.headersStyles) detected.secondaryHeadersStyles = sec.headersStyles;
+        if (sec.bodyStyles) detected.secondaryBodyStyles = sec.bodyStyles;
+      } else {
+        detected.includeSecondaryFont = false;
+      }
+    }
+
+    // 1.5. Detect Material Icons from "_MaterialIconsControls"
+    const iconsCol = collections.find(c => c.name === "_MaterialIconsControls" || c.name === "_materialIconsControls" || c.name === "MaterialIconsControls" || c.name === "materialIconsControls");
+    if (iconsCol) {
+      detected.includeMaterialIcons = true;
+      const defaultMode = iconsCol.modes[0];
+      if (defaultMode) {
+        const modeId = defaultMode.modeId;
+        const famVar = findLocalVarByNormName(allLocalVars, iconsCol.id, "fontFamily/icon");
+        if (famVar && typeof famVar.valuesByMode[modeId] === 'string') {
+          detected.materialIconsFamily = famVar.valuesByMode[modeId];
+        }
+        const fillVar = findLocalVarByNormName(allLocalVars, iconsCol.id, "variableAxes/fill");
+        if (fillVar && typeof fillVar.valuesByMode[modeId] === 'number') {
+          detected.materialIconsFill = fillVar.valuesByMode[modeId];
+        }
+        const weightVar = findLocalVarByNormName(allLocalVars, iconsCol.id, "variableAxes/weight");
+        if (weightVar && typeof weightVar.valuesByMode[modeId] === 'number') {
+          detected.materialIconsWeight = weightVar.valuesByMode[modeId];
         }
       }
     }
@@ -196,6 +232,17 @@ export async function detectTypographyFromDocument(): Promise<Record<string, any
         const m2xlMode = layoutCol.modes.find(m => m.name === '2XL' || m.name === '2xl');
         if (m2xlMode && typeof marginVar.valuesByMode[m2xlMode.modeId] === 'number') {
           detected.layoutMargin2xl = marginVar.valuesByMode[m2xlMode.modeId];
+        }
+      }
+
+      const maxWidthVar = findLocalVarByNormName(allLocalVars, layoutCol.id, "maxwidth/screen");
+      const maxHeightVar = findLocalVarByNormName(allLocalVars, layoutCol.id, "maxheight/screen");
+      const smMode = layoutCol.modes.find(m => m.name === 'SM' || m.name === 'sm');
+      if (smMode && maxWidthVar && maxHeightVar) {
+        const w = maxWidthVar.valuesByMode[smMode.modeId];
+        const h = maxHeightVar.valuesByMode[smMode.modeId];
+        if (typeof w === 'number' && typeof h === 'number') {
+          detected.smPhoneModel = `${w}x${h}`;
         }
       }
     }

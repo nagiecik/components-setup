@@ -1,4 +1,4 @@
-import { TokenColorDef } from '../types/audit';
+import { TokenColorDef, TrustedAuditLibrary } from '../types/audit';
 
 const DEFAULT_DS_COLORS: Record<string, TokenColorDef> = {
   'primary': { hex: '#F04248', variableName: 'primary' },
@@ -348,6 +348,49 @@ export function setNodeAuditIgnored(node: SceneNode, category: string, property:
     (node as any).setPluginData('ignored_audit_issues', JSON.stringify(list));
   } catch (e) {
     console.warn('Failed to set pluginData for audit ignore on node:', (node as any)?.id, e);
+  }
+}
+
+const TRUSTED_LIBRARIES_KEY = 'audit_trusted_libraries';
+
+export function getTrustedAuditLibraries(): TrustedAuditLibrary[] {
+  try {
+    const raw = figma.root.getPluginData(TRUSTED_LIBRARIES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.filter(
+        (item): item is TrustedAuditLibrary =>
+          Boolean(item && typeof item.key === 'string' && typeof item.label === 'string')
+      );
+    }
+  } catch (e) {}
+  return [];
+}
+
+export function addTrustedAuditLibrary(entry: TrustedAuditLibrary): void {
+  try {
+    if (!entry || !entry.key) return;
+    const existing = getTrustedAuditLibraries();
+    if (existing.some((t) => t.key === entry.key)) return;
+    existing.push({
+      key: entry.key,
+      label: entry.label || entry.key,
+      source: entry.source === 'remote' ? 'remote' : 'local-other',
+    });
+    figma.root.setPluginData(TRUSTED_LIBRARIES_KEY, JSON.stringify(existing));
+  } catch (e) {
+    console.warn('Failed to save trusted audit library:', e);
+  }
+}
+
+export function removeTrustedAuditLibrary(key: string): void {
+  try {
+    if (!key) return;
+    const filtered = getTrustedAuditLibraries().filter((t) => t.key !== key);
+    figma.root.setPluginData(TRUSTED_LIBRARIES_KEY, JSON.stringify(filtered));
+  } catch (e) {
+    console.warn('Failed to remove trusted audit library:', e);
   }
 }
 

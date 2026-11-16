@@ -1,6 +1,7 @@
 import { toCamelCase, toPascalCase } from '../utils/strings';
 import { cleanRebuildComponentProperties } from './rebuilder';
 import { reorderComponentSetVariants } from '../components/canvas';
+import { purgeIgnoredPropertiesAndReferences, safeGetComponentPropertyDefinitions } from '../utils/nodes';
 
 export function collectComponentTargets(nodes: readonly BaseNode[]): Set<ComponentNode | ComponentSetNode> {
   const targets = new Set<ComponentNode | ComponentSetNode>();
@@ -77,7 +78,19 @@ export function collectComponentTargets(nodes: readonly BaseNode[]): Set<Compone
 export async function resolveComponentSetConflicts(compSet: ComponentSetNode): Promise<number> {
   if (!compSet || compSet.type !== 'COMPONENT_SET') return 0;
   const variants = compSet.children.filter((c): c is ComponentNode => c.type === 'COMPONENT');
-  if (variants.length <= 1) return 0;
+  if (variants.length <= 1) {
+    if (variants.length === 1) {
+      const v = variants[0];
+      const raw = (v.name || '').trim();
+      if (!raw.includes('=')) {
+        try {
+          v.name = `Type=${toPascalCase(raw) || 'Default'}`;
+          return 1;
+        } catch (_) {}
+      }
+    }
+    return 0;
+  }
 
   let resolvedCount = 0;
 
@@ -119,7 +132,7 @@ export async function resolveComponentSetConflicts(compSet: ComponentSetNode): P
   const allPropertyKeysLower = new Set<string>();
 
   try {
-    const defs = (compSet as any).componentPropertyDefinitions;
+    const defs = safeGetComponentPropertyDefinitions(compSet);
     if (defs) {
       for (const propKey of Object.keys(defs)) {
         if (defs[propKey]?.type === 'VARIANT') {
@@ -303,8 +316,13 @@ export async function sanitizeComponentProperties(root: BaseNode | readonly Base
         while (changed && iterations < 30) {
           changed = false;
           iterations++;
-          const defs = (target as any).componentPropertyDefinitions;
-          if (!defs) break;
+          let defs: ComponentPropertyDefinitions = {};
+          try {
+            defs = safeGetComponentPropertyDefinitions(target);
+          } catch (_) {
+            break;
+          }
+          if (!defs || Object.keys(defs).length === 0) break;
 
           for (const propKey of Object.keys(defs)) {
             const def = defs[propKey];
@@ -382,7 +400,8 @@ export async function sanitizeComponentProperties(root: BaseNode | readonly Base
         // 3. Enforce canonical schema ordering of EXISTING non-variant properties ONLY (do NOT create new properties):
         // Group 3 (BOOLEAN Show*) -> Group 4 (TEXT) -> Group 5 (INSTANCE_SWAP) -> Group 6 (SLOT)
         try {
-          const finalDefs = (target as any).componentPropertyDefinitions || {};
+          await purgeIgnoredPropertiesAndReferences(target);
+          const finalDefs = safeGetComponentPropertyDefinitions(target);
           const nonVariantKeys = Object.keys(finalDefs).filter(k => finalDefs[k] && finalDefs[k].type !== 'VARIANT');
           if (nonVariantKeys.length > 1) {
             const variants = target.type === 'COMPONENT_SET'

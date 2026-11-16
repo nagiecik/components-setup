@@ -22,6 +22,12 @@ export interface VariableResult {
   categories: VariableCategoryGroup[];
 }
 
+export interface TrustedAuditLibrary {
+  key: string;
+  label: string;
+  source: 'remote' | 'local-other';
+}
+
 export interface AuditIssue {
   id: string;
   nodeId: string;
@@ -34,11 +40,15 @@ export interface AuditIssue {
   categoryLabel: string;
   property: string;
   propertyLabel: string;
-  issueType: 'unbound' | 'missing';
+  issueType: 'unbound' | 'missing' | 'foreign';
   value: number | string;
   formattedValue: string;
   varId?: string;
   varName?: string;
+  foreignSource?: 'remote' | 'local-other';
+  foreignLibraryKey?: string;
+  collectionName?: string;
+  libraryName?: string;
   suggestion?: string;
   isIgnored?: boolean;
 }
@@ -48,6 +58,7 @@ export interface AuditSummary {
   totalOccurrences?: number;
   unboundCount: number;
   missingCount: number;
+  foreignCount?: number;
   gapCount: number;
   paddingCount: number;
   radiusCount: number;

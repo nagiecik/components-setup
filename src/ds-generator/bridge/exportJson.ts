@@ -43,6 +43,8 @@ export async function exportVariablesToJson(options: { autoSync?: boolean; silen
       '_glassControls',
       '_TypographyControls',
       '_typographyControls',
+      '_MaterialIconsControls',
+      '_materialIconsControls',
       'Layout',
       'layout',
       '_StatesControls',

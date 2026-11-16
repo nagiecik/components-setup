@@ -1,4 +1,9 @@
-import { dsRegistry, setNodeAuditIgnored } from './audit/registry';
+import {
+  addTrustedAuditLibrary,
+  dsRegistry,
+  removeTrustedAuditLibrary,
+  setNodeAuditIgnored,
+} from './audit/registry';
 import { runAuditTokens, scanDocument } from './audit/inspector';
 import {
   exportNodesToCode,
@@ -12,6 +17,7 @@ import {
 } from './retextifier/retextifier';
 import {
   needsSmartSetup,
+  prepareContainersForMasterPipeline,
   runComponentSetLogic,
   runRenamePascalCaseLogic,
   runSetupComponentSetHorizontalLogic,
@@ -19,6 +25,7 @@ import {
 } from './components/setup';
 import {
   isLibraryComponentsPage,
+  getOrCreateTargetPage,
   moveSelectedToComponentsPage,
   organizeElementsOnCanvas
 } from './components/canvas';
@@ -38,11 +45,18 @@ import { sanitizePascalCase } from './utils/strings';
 import { loadFontsForTextNode, safeLoadFontAndSetCharacters } from './utils/fonts';
 import { calculateMatchStats, executeSmartSwapBatch } from './components/smartSwap';
 import { executeFontSwapRules, FontSwapRule, scanSelectionFonts } from './components/fontReplacer';
-import { sanitizeLayerNameByContext } from './renamer/frameClassifier';
+import { sanitizeLayerNameByContext, sanitizeLayerNames } from './renamer/frameClassifier';
+import { isIgnoredName, isSystemOrIgnoredNode, isSystemOrIgnoredPropName, purgeIgnoredPropertiesAndReferences, repairComponentSetVariants, safeGetComponentPropertyDefinitions } from './utils/nodes';
 import { collectDirectInstances, collectDirectTextNodes } from './properties/collectors';
 import { cleanRebuildComponentProperties } from './properties/rebuilder';
 import { reorderComponentSetVariants } from './components/canvas';
 import { ensureTemporaryMetricsCollection, preloadBoundVariablesForRoots } from './variables/variables';
+import {
+  runSmartTokenAutoBinder,
+  syncLibraryTextStylesToCache,
+  getLibraryStylesCacheCount,
+  preloadAutoBinderCaches
+} from './variables/autoBinder';
 import { AutoPropsOptions } from './types/auto-props';
 import { initDsGeneratorUI } from './ds-generator/init';
 import { exportVariablesToJson } from './ds-generator/bridge/exportJson';
@@ -52,6 +66,18 @@ import { handleCreatePalette } from './ds-generator/generator/createPalette';
 declare const __uiFiles__: { components?: string; generator?: string } | undefined;
 
 let currentPluginMode: 'components' | 'generator' = 'components';
+
+async function sendLibraryStylesCacheCount() {
+  try {
+    const count = await getLibraryStylesCacheCount();
+    figma.ui.postMessage({
+      type: 'library-styles-cache-count',
+      count
+    });
+  } catch (e) {
+    console.warn('Failed to send library styles cache count:', e);
+  }
+}
 
 async function launchPluginMode(mode: 'components' | 'generator') {
   currentPluginMode = mode;
@@ -68,11 +94,13 @@ async function launchPluginMode(mode: 'components' | 'generator') {
     figma.showUI(html, { width: 640, height: 1024, themeColors: true });
     figma.ui.onmessage = handleUiMessage;
     await initDsGeneratorUI();
+    sendLibraryStylesCacheCount();
   } else {
     figma.showUI(html, { width: 640, height: 1024, themeColors: true });
     figma.ui.onmessage = handleUiMessage;
     sendInitialData();
     sendSmartSwapSelectionToUI();
+    sendLibraryStylesCacheCount();
   }
 }
 
@@ -179,6 +207,592 @@ async function sendSmartSwapSelectionToUI() {
   });
 }
 
+async function runMasterSetup(msg: any) {
+  try {
+    const selection = figma.currentPage.selection;
+    if (!selection || selection.length === 0) {
+      figma.notify('Zaznacz komponent, Component Set lub ramkę na canvasie.', { error: true });
+      figma.ui.postMessage({ type: 'master-setup-complete', success: false });
+      return;
+    }
+
+    // Pre-repair any ComponentSet variant syntax errors immediately before inspecting defs
+    for (const node of selection) {
+      if ((node as any).removed) continue;
+      if (node.type === 'COMPONENT_SET') {
+        try { repairComponentSetVariants(node as ComponentSetNode); } catch (_) {}
+      } else if (node.parent && node.parent.type === 'COMPONENT_SET') {
+        try { repairComponentSetVariants(node.parent as ComponentSetNode); } catch (_) {}
+      }
+    }
+
+    const step1Setup = msg.step1Setup !== false;
+    const step1Mode: 'full' | 'set-only' = msg.step1Mode === 'set-only' ? 'set-only' : 'full';
+    const step2BindTokens = msg.step2BindTokens !== false;
+    const step2Mode: 'snap' | 'exact' = msg.step2Mode === 'exact' ? 'exact' : 'snap';
+    const ignoreFontFamily = msg.ignoreFontFamily !== false;
+    const step3Naming = msg.step3Naming !== false;
+    const namingMode: 'fast' | 'ai' = msg.namingMode === 'ai' ? 'ai' : 'fast';
+    const step4Props = msg.step4Props !== false;
+    const reviewAutoProps = Boolean(msg.reviewAutoProps);
+    const autoPropsOptions: AutoPropsOptions | undefined =
+      typeof msg.autoProps === 'object' && msg.autoProps !== null ? msg.autoProps : undefined;
+
+    // Special Fast-Path: Set Only mode configures the COMPONENT_SET wrapper in ~5ms and finishes
+    if (step1Setup && step1Mode === 'set-only' && !step2BindTokens && !step3Naming && !step4Props) {
+      await runSetupComponentSetHorizontalLogic();
+      await sendSelectionToUI();
+      await sendSmartSwapSelectionToUI();
+      figma.ui.postMessage({ type: 'master-setup-complete', success: true });
+      return;
+    }
+
+    // --- PHASE 0: PRE-FETCH & SESSION CACHE (< 30ms) ---
+    figma.ui.postMessage({
+      type: 'master-setup-progress',
+      step: 0,
+      label: 'Running Phase 0/4: Pre-fetching variables, styles & fonts...'
+    });
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Collect unique fonts & direct instances across selection (skipping nested instances)
+    const uniqueFontKeys = new Set<string>();
+    const uniqueFonts: FontName[] = [{ family: 'Inter', style: 'Regular' }];
+    uniqueFontKeys.add('Inter::Regular');
+    const directInstances: InstanceNode[] = [];
+    const rootSet = new Set<BaseNode>(selection);
+
+    const collectPreloadTargets = (node: SceneNode) => {
+      if ((node as any).removed) return;
+      if (node.type === 'INSTANCE') {
+        directInstances.push(node);
+        if (!rootSet.has(node)) return;
+      }
+      if (node.type === 'TEXT') {
+        const fn = node.fontName;
+        if (fn !== figma.mixed && fn && fn.family && fn.style) {
+          const key = `${fn.family}::${fn.style}`;
+          if (!uniqueFontKeys.has(key)) {
+            uniqueFontKeys.add(key);
+            uniqueFonts.push(fn);
+          }
+        } else if (fn === figma.mixed) {
+          try {
+            const len = node.characters.length;
+            if (len > 0) {
+              const allFonts = node.getRangeAllFontNames(0, len);
+              for (const f of allFonts) {
+                const key = `${f.family}::${f.style}`;
+                if (!uniqueFontKeys.has(key)) {
+                  uniqueFontKeys.add(key);
+                  uniqueFonts.push(f);
+                }
+              }
+            }
+          } catch (e) {}
+        }
+      }
+      if ('children' in node && node.children) {
+        for (const child of node.children) {
+          collectPreloadTargets(child as SceneNode);
+        }
+      }
+    };
+
+    for (const n of selection) {
+      collectPreloadTargets(n);
+    }
+
+    await Promise.all([
+      preloadAutoBinderCaches(),
+      Promise.all(
+        uniqueFonts.map(async (f) => {
+          try {
+            await figma.loadFontAsync(f);
+          } catch (e) {}
+        })
+      ),
+      Promise.all(
+        directInstances.map(async (inst) => {
+          if (inst.getMainComponentAsync) {
+            try {
+              await inst.getMainComponentAsync();
+            } catch (e) {}
+          }
+        })
+      )
+    ]);
+
+    // --- PHASE 1: CONTAINER SETUP + SINGLE-PASS TOKEN & STYLE BINDER ---
+    let binderStats = { metricsBound: 0, colorsBound: 0, textStylesBound: 0 };
+    if (step1Setup || step2BindTokens) {
+      figma.ui.postMessage({
+        type: 'master-setup-progress',
+        step: 1,
+        label: 'Running Step 1-2/4: Container Setup & Token/Style Auto-Binder...'
+      });
+      await new Promise((r) => setTimeout(r, 10));
+
+      if (step1Setup) {
+        if (step1Mode === 'set-only') {
+          await runSetupComponentSetHorizontalLogic();
+        } else {
+          await prepareContainersForMasterPipeline(figma.currentPage.selection);
+        }
+      }
+
+      if (step2BindTokens || (step1Setup && step1Mode === 'full')) {
+        binderStats = await runSmartTokenAutoBinder(figma.currentPage.selection, {
+          mode: step2Mode,
+          ignoreFontFamily,
+          notify: false,
+          setupContainers: step1Setup && step1Mode === 'full',
+          bindTokens: step2BindTokens
+        });
+      }
+    }
+
+    // --- PHASE 2: SMART LAYER NAMING (SYNCHRONOUS / ZERO-LAG OR AI) ---
+    let renamedCount = 0;
+    let scannedTargetRoots: SceneNode[] = [];
+
+    if (step3Naming) {
+      figma.ui.postMessage({
+        type: 'master-setup-progress',
+        step: 2,
+        label: 'Running Step 3/4: Smart Layer Naming...'
+      });
+      await new Promise((r) => setTimeout(r, 10));
+
+      const { items, totalVariantsCount, targetRoots } = await scanLayersForAiRenaming();
+      scannedTargetRoots = targetRoots || [];
+
+      if (namingMode === 'ai' && items && items.length > 0) {
+        // Delegate naming to AI in UI; UI will invoke apply-ai-layer-names which executes Phase 3
+        figma.ui.postMessage({
+          type: 'ai-layers-structure-extracted',
+          success: true,
+          payload: items,
+          totalVariantsCount,
+          fromMasterPipeline: true
+        });
+        return;
+      }
+
+      // Fast TS Naming Mode (default, ~10ms deterministic TypeScript naming)
+      if (items && items.length > 0) {
+        const seenNodeIds = new Set<string>();
+        for (const item of items) {
+          const suggested = sanitizePascalCase(item.suggestedName || '');
+          if (!suggested) continue;
+          const peerIds = lastAiRenamerPeerMap.get(item.id) || [item.id];
+          for (const tId of peerIds) {
+            if (seenNodeIds.has(tId)) continue;
+            seenNodeIds.add(tId);
+            if (lastAiRenamerRootIds.includes(tId)) continue;
+            const node = (figma.getNodeById(tId) as SceneNode | null) || (await figma.getNodeByIdAsync(tId) as SceneNode | null);
+            if (node && (node.type === 'FRAME' || node.type === 'GROUP' || node.type === 'TEXT')) {
+              if (isSystemOrIgnoredNode(node) || isSystemOrIgnoredPropName(node.name)) continue;
+              let detectedRoot = '';
+              let curr: BaseNode | null = node.parent;
+              while (curr) {
+                if (curr.type === 'COMPONENT_SET' || curr.type === 'COMPONENT') {
+                  detectedRoot = curr.name || '';
+                  break;
+                }
+                curr = curr.parent;
+              }
+              const finalizedName = sanitizeLayerNameByContext(suggested, node, detectedRoot);
+              if (node.name !== finalizedName) {
+                node.name = finalizedName;
+                renamedCount++;
+              }
+            }
+          }
+        }
+      }
+
+      for (const n of figma.currentPage.selection) {
+        try {
+          if (!isSystemOrIgnoredNode(n) && !isSystemOrIgnoredPropName(n.name)) {
+            sanitizeLayerNames(n);
+          }
+        } catch (e) {}
+      }
+    }
+
+    // --- PHASE 3: PROPS, SLOTS, ../ITEM EXTRACTION & 6-GROUP SORT ---
+    const validRoots: (ComponentSetNode | ComponentNode | FrameNode)[] = [];
+    const candidateSources = scannedTargetRoots.length > 0 ? scannedTargetRoots : [...figma.currentPage.selection];
+    for (const r of candidateSources) {
+      if ((r as any).removed) continue;
+      let resolved: SceneNode = r;
+      if (r.parent && r.parent.type === 'COMPONENT_SET') {
+        resolved = r.parent as ComponentSetNode;
+      } else if (r.type !== 'COMPONENT_SET' && r.type !== 'COMPONENT') {
+        let p: BaseNode | null = r.parent;
+        while (p && p.type !== 'PAGE' && p.type !== 'DOCUMENT') {
+          if (p.type === 'COMPONENT_SET') {
+            resolved = p as ComponentSetNode;
+            break;
+          }
+          if (p.type === 'COMPONENT') {
+            resolved = p.parent && p.parent.type === 'COMPONENT_SET' ? (p.parent as ComponentSetNode) : (p as ComponentNode);
+            break;
+          }
+          p = p.parent;
+        }
+      }
+      if (
+        (resolved.type === 'COMPONENT_SET' || resolved.type === 'COMPONENT' || resolved.type === 'FRAME') &&
+        !validRoots.includes(resolved as any)
+      ) {
+        validRoots.push(resolved as any);
+      }
+    }
+
+    let propsSummaryParts: string[] = [];
+    let createdItemSets: ComponentSetNode[] = [];
+    let masterNodesToTransfer: (ComponentNode | ComponentSetNode)[] = [];
+
+    if (step4Props && validRoots.length > 0) {
+      for (const r of validRoots) {
+        if (r.type === 'COMPONENT_SET' || r.type === 'COMPONENT') {
+          try {
+            await purgeIgnoredPropertiesAndReferences(r as ComponentNode | ComponentSetNode);
+          } catch (_) {}
+        }
+      }
+
+      figma.ui.postMessage({
+        type: 'master-setup-progress',
+        step: 3,
+        label: 'Running Step 4/4: Props, Slots & ../Item Extraction...'
+      });
+      await new Promise((r) => setTimeout(r, 10));
+
+      if (reviewAutoProps) {
+        const previewData = collectAutoPropsPreviewData(validRoots);
+        figma.ui.postMessage({
+          type: 'auto-props-preview-needed',
+          previewData,
+          renamedCount
+        });
+        figma.ui.postMessage({ type: 'master-setup-complete', success: true });
+        figma.notify('Skonfigurowano tokeny i warstwy! Przejrzyj właściwości przed wdrożeniem... ✨');
+        await sendSelectionToUI();
+        await sendSmartSwapSelectionToUI();
+        return;
+      }
+
+      const loadedVars = await preloadBoundVariablesForRoots(validRoots);
+      const autoRes = await autoCreateTextPropsAndExtractItemsSync(validRoots, loadedVars, autoPropsOptions);
+      createdItemSets = autoRes.createdItemSets || [];
+
+      const candidateMasters = autoRes.masterNodes && autoRes.masterNodes.length > 0
+        ? autoRes.masterNodes
+        : (validRoots.filter(r => r.type === 'COMPONENT_SET' || r.type === 'COMPONENT') as (ComponentNode | ComponentSetNode)[]);
+
+      for (const m of candidateMasters) {
+        if ((m as any).removed) continue;
+        let resolved: ComponentNode | ComponentSetNode = m;
+        if (m.type === 'COMPONENT' && m.parent && m.parent.type === 'COMPONENT_SET') {
+          resolved = m.parent as ComponentSetNode;
+        }
+        if (!masterNodesToTransfer.includes(resolved)) {
+          masterNodesToTransfer.push(resolved);
+        }
+      }
+
+      if (autoRes.slotsCreatedCount > 0) {
+        propsSummaryParts.push(`${autoRes.slotsCreatedCount} Slot`);
+      }
+      if (autoRes.extractedItemsCount > 0) {
+        propsSummaryParts.push(`${autoRes.extractedItemsCount} .../Item`);
+      }
+      if (autoRes.instanceSwapPropsCount > 0) {
+        propsSummaryParts.push(`${autoRes.instanceSwapPropsCount} INSTANCE_SWAP`);
+      }
+      if (autoRes.booleanPropsCount > 0) {
+        propsSummaryParts.push(`${autoRes.booleanPropsCount} BOOLEAN`);
+      }
+      if (autoRes.textPropsCount > 0) {
+        propsSummaryParts.push(`${autoRes.textPropsCount} TEXT`);
+      }
+      if (autoRes.nestedInstancesCount > 0) {
+        propsSummaryParts.push(`${autoRes.nestedInstancesCount} Nested`);
+      }
+
+      for (const r of validRoots) {
+        if (r.type === 'COMPONENT_SET' || r.type === 'COMPONENT') {
+          try {
+            await purgeIgnoredPropertiesAndReferences(r as ComponentNode | ComponentSetNode);
+          } catch (_) {}
+        }
+      }
+    } else if ((step1Setup || step3Naming) && validRoots.length > 0) {
+      for (const r of validRoots) {
+        if ((r as any).removed) continue;
+        if (r.type === 'COMPONENT_SET') {
+          if (!masterNodesToTransfer.includes(r as ComponentSetNode)) masterNodesToTransfer.push(r as ComponentSetNode);
+        } else if (r.type === 'COMPONENT') {
+          const comp = r as ComponentNode;
+          const host = (comp.parent && comp.parent.type === 'COMPONENT_SET') ? (comp.parent as ComponentSetNode) : comp;
+          if (!masterNodesToTransfer.includes(host)) masterNodesToTransfer.push(host);
+        }
+
+        if (r.type === 'COMPONENT_SET' || r.type === 'COMPONENT') {
+          try {
+            if (r.type === 'COMPONENT_SET') {
+              reorderComponentSetVariants(r);
+            }
+            const variants =
+              r.type === 'COMPONENT_SET'
+                ? r.children.filter((c): c is ComponentNode => c.type === 'COMPONENT')
+                : [r];
+            cleanRebuildComponentProperties(r, variants, {
+              enableText: false,
+              enableInstanceSwap: false,
+              enableBoolean: false,
+              enableSlotExtract: false
+            });
+          } catch (e) {}
+        }
+      }
+    }
+
+    // ==========================================
+    // FAZA 4: Transfer Master Componentów na stronę 🔷 Components
+    // ==========================================
+    if (masterNodesToTransfer.length > 0) {
+      const isAlreadyOnLib = isLibraryComponentsPage(figma.currentPage);
+
+      if (isAlreadyOnLib) {
+        // Przypadek 2: Jesteśmy już na stronie 🔷 Components:
+        // Pozostaw Master Component w miejscu wywołania.
+        // Jeśli powstał powiązany .../Item Component Set, upewnij się, że leży tuż obok Master Componentu (+64px).
+        for (const master of masterNodesToTransfer) {
+          const cleanMasterName = master.name.split(',')[0].trim();
+          const matchingItemSets = createdItemSets.filter(is => is.name.startsWith(cleanMasterName));
+          let currentItemX = master.x + master.width + 64;
+          for (const itemSet of matchingItemSets) {
+            itemSet.x = currentItemX;
+            itemSet.y = master.y;
+            currentItemX += itemSet.width + 64;
+          }
+        }
+      } else {
+        // Przypadek 1: Jesteśmy na stronie roboczej (figma.currentPage.id !== targetPage.id)
+        const targetPage = getOrCreateTargetPage('components');
+        if (typeof targetPage.loadAsync === 'function') {
+          await targetPage.loadAsync();
+        }
+
+        // Oblicz wolne współrzędne na stronie docelowej (na prawo od istniejących z marginesem 120px)
+        let maxX = 0;
+        for (const ch of targetPage.children) {
+          if ('x' in ch && 'width' in ch) {
+            const r = (ch as any).x + (ch as any).width;
+            if (r > maxX) maxX = r;
+          }
+        }
+        let currentTargetX = maxX > 0 ? maxX + 120 : 0;
+        let currentTargetY = 0;
+
+        const leftBehindInstances: InstanceNode[] = [];
+
+        for (const masterNode of masterNodesToTransfer) {
+          if ((masterNode as any).removed) continue;
+          const originalParent = masterNode.parent;
+          let leftBehindInstance: InstanceNode | null = null;
+
+          if (originalParent && 'children' in originalParent) {
+            const originalIndex = originalParent.children.indexOf(masterNode);
+            const originalX = masterNode.x;
+            const originalY = masterNode.y;
+            const originalWidth = masterNode.width;
+            const originalHeight = masterNode.height;
+            const originalName = masterNode.name;
+            const sizingH = (masterNode as any).layoutSizingHorizontal;
+            const sizingV = (masterNode as any).layoutSizingVertical;
+            const layoutAlign = (masterNode as any).layoutAlign;
+            const layoutGrow = (masterNode as any).layoutGrow;
+            const layoutPositioning = (masterNode as any).layoutPositioning;
+
+            let compToInstantiate: ComponentNode | null = null;
+            if (masterNode.type === 'COMPONENT') {
+              compToInstantiate = masterNode as ComponentNode;
+            } else if (masterNode.type === 'COMPONENT_SET') {
+              const compSet = masterNode as ComponentSetNode;
+              compToInstantiate = compSet.defaultVariant || (compSet.children.find(c => c.type === 'COMPONENT') as ComponentNode) || null;
+            }
+
+            if (compToInstantiate) {
+              try {
+                leftBehindInstance = compToInstantiate.createInstance();
+                if ('insertChild' in originalParent && originalIndex !== -1) {
+                  originalParent.insertChild(originalIndex, leftBehindInstance);
+                } else if ('appendChild' in originalParent) {
+                  (originalParent as any).appendChild(leftBehindInstance);
+                }
+
+                leftBehindInstance.x = originalX;
+                leftBehindInstance.y = originalY;
+                try {
+                  leftBehindInstance.resize(originalWidth, originalHeight);
+                } catch (_) {}
+
+                try {
+                  if (sizingH) leftBehindInstance.layoutSizingHorizontal = sizingH;
+                  if (sizingV) leftBehindInstance.layoutSizingVertical = sizingV;
+                  if (layoutAlign) leftBehindInstance.layoutAlign = layoutAlign;
+                  if (typeof layoutGrow === 'number') leftBehindInstance.layoutGrow = layoutGrow;
+                  if (layoutPositioning) (leftBehindInstance as any).layoutPositioning = layoutPositioning;
+                } catch (_) {}
+
+                leftBehindInstance.name = originalName.split(',')[0].trim();
+                leftBehindInstances.push(leftBehindInstance);
+              } catch (instErr) {
+                console.warn(`[MasterSetup] Could not leave instance for "${masterNode.name}":`, instErr);
+              }
+            }
+          }
+
+          // Przenieś Master Component na targetPage
+          try {
+            targetPage.appendChild(masterNode);
+            masterNode.x = currentTargetX;
+            masterNode.y = currentTargetY;
+            let nextX = masterNode.x + masterNode.width + 64;
+
+            // Przenieś powiązane .../Item Component Set
+            const cleanMasterName = masterNode.name.split(',')[0].trim();
+            const matchingItemSets = createdItemSets.filter(is => is.name.startsWith(cleanMasterName));
+            for (const itemSet of matchingItemSets) {
+              try {
+                targetPage.appendChild(itemSet);
+                itemSet.x = nextX;
+                itemSet.y = currentTargetY;
+                nextX += itemSet.width + 64;
+              } catch (e) {
+                console.warn(`[MasterSetup] Could not move itemSet "${itemSet.name}":`, e);
+              }
+            }
+
+            currentTargetX = nextX + 120;
+          } catch (moveErr) {
+            console.error(`[MasterSetup] Could not move masterNode "${masterNode.name}" to targetPage:`, moveErr);
+          }
+        }
+
+        // Zaznacz na stronie roboczej nowo powstałe instancje
+        if (leftBehindInstances.length > 0) {
+          figma.currentPage.selection = leftBehindInstances;
+          try {
+            figma.viewport.scrollAndZoomIntoView(leftBehindInstances);
+          } catch (_) {}
+        }
+        propsSummaryParts.push('🔷 Components');
+      }
+    }
+
+    const summaryTokens: string[] = [];
+    if (binderStats.metricsBound > 0) summaryTokens.push(`${binderStats.metricsBound} metrics`);
+    if (binderStats.colorsBound > 0) summaryTokens.push(`${binderStats.colorsBound} schemes`);
+    if (binderStats.textStylesBound > 0) summaryTokens.push(`${binderStats.textStylesBound} Text Styles`);
+    if (renamedCount > 0) summaryTokens.push(`${renamedCount} warstw nazwanych`);
+    const propsSuffix = propsSummaryParts.length > 0 ? ` [${propsSummaryParts.join(', ')}]` : '';
+    const tokensText = summaryTokens.length > 0 ? `: ${summaryTokens.join(', ')}` : '';
+
+    // Ostateczny egzekutor na samym końcu runMasterSetup (PO wszystkich sortowaniach, PO Clean Rebuild i PO przeniesieniu na stronę 🔷 Components)
+    let deletedProps: string[] = [];
+    try {
+      const targetSetsToCheck = new Set<ComponentNode | ComponentSetNode>([
+        ...masterNodesToTransfer,
+        ...((validRoots.filter(r => r.type === 'COMPONENT_SET' || r.type === 'COMPONENT') as (ComponentNode | ComponentSetNode)[]))
+      ]);
+
+      for (const targetSet of targetSetsToCheck) {
+        if (!targetSet || (targetSet as any).removed) continue;
+        const finalDefs = safeGetComponentPropertyDefinitions(targetSet);
+        for (const propKey of Object.keys(finalDefs)) {
+          if (finalDefs[propKey].type === 'VARIANT' || (finalDefs[propKey].type as string) === 'SLOT') continue;
+          const normKey = propKey.split('#')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+          const withoutShow = normKey.startsWith('show') ? normKey.slice(4) : normKey;
+
+          if (
+            normKey.includes('statusbar') ||
+            normKey.includes('homeindicator') ||
+            normKey.includes('bezel') ||
+            normKey.includes('iphone') ||
+            normKey.includes('wrapper') ||
+            withoutShow === 'bg' ||
+            withoutShow.startsWith('bg') ||
+            withoutShow.includes('glass')
+          ) {
+            // Odepnij z warstw, żeby Figma pozwoliła usunąć
+            if (typeof targetSet.findAll === 'function') {
+              try {
+                targetSet.findAll().forEach(n => {
+                  try {
+                    if ('componentPropertyReferences' in n && (n as any).componentPropertyReferences) {
+                      const rawRefs = (n as any).componentPropertyReferences;
+                      const refs: Record<string, string> = {};
+                      let modified = false;
+                      for (const [k, v] of Object.entries(rawRefs)) {
+                        if (v === propKey) {
+                          modified = true;
+                        } else if (typeof v === 'string') {
+                          refs[k] = v;
+                        }
+                      }
+                      if (modified) {
+                        try {
+                          (n as any).componentPropertyReferences = Object.keys(refs).length > 0 ? refs : null;
+                        } catch (_) {}
+                      }
+                    }
+                  } catch (_) {}
+                });
+              } catch (_) {}
+            }
+            try {
+              targetSet.deleteComponentProperty(propKey);
+              deletedProps.push(propKey.split('#')[0]);
+            } catch (e) {
+              console.error("Delete failed for", propKey, e);
+            }
+          }
+        }
+      }
+    } catch (phase5Err) {
+      console.warn('[MasterSetup Phase 5 Purge]', phase5Err);
+    }
+
+    figma.notify(`[v2.5 PURGE] Master Setup gotowy! Usunięto wykluczone: ${deletedProps.join(', ') || '0'}`);
+
+    await sendSelectionToUI();
+    await sendSmartSwapSelectionToUI();
+    figma.ui.postMessage({
+      type: 'master-setup-complete',
+      success: true,
+      binderStats,
+      renamedCount,
+      propsSummaryParts
+    });
+  } catch (err: any) {
+    console.error('[MasterSetup] Error:', err);
+    const stack = (err && err.stack) ? String(err.stack) : '';
+    const topStack = stack.split('\n').filter(Boolean).slice(0, 3).join(' > ');
+    figma.notify(`Błąd Master Setup: ${err?.message || String(err)}${topStack ? ` [${topStack}]` : ''}`, { error: true, timeout: 25000 });
+    figma.ui.postMessage({
+      type: 'master-setup-complete',
+      success: false,
+      error: `${err?.message || String(err)}${topStack ? ` [${topStack}]` : ''}`
+    });
+  }
+}
+
 const handleUiMessage = async (msg: any) => {
   if (msg.type === 'switch-plugin-mode') {
     const targetMode = msg.mode === 'generator' ? 'generator' : 'components';
@@ -214,6 +828,32 @@ const handleUiMessage = async (msg: any) => {
     await scanDocument(msg.scope || 'page');
   } else if (msg.type === 'audit-tokens') {
     await runAuditTokens(msg.scope || 'selection');
+  } else if (msg.type === 'run-master-setup') {
+    await runMasterSetup(msg);
+    return;
+  } else if (msg.type === 'run-auto-bind-variables') {
+    await runSmartTokenAutoBinder(figma.currentPage.selection, {
+      mode: msg.mode === 'snap' ? 'snap' : 'exact',
+      ignoreFontFamily: Boolean(msg.ignoreFontFamily),
+      notify: true
+    });
+    return;
+  } else if (msg.type === 'sync-library-text-styles') {
+    try {
+      const count = await syncLibraryTextStylesToCache();
+      await sendLibraryStylesCacheCount();
+      if (count > 0) {
+        figma.notify(`Zapisano ${count} stylów tekstowych z biblioteki do pamięci podręcznej! 📥✨`);
+      } else {
+        figma.notify('Nie znaleziono lokalnych stylów tekstowych w bieżącym pliku. Otwórz plik biblioteki DS i spróbuj ponownie.', { error: true });
+      }
+    } catch (e: any) {
+      figma.notify(`Błąd synchronizacji stylów: ${e.message}`, { error: true });
+    }
+    return;
+  } else if (msg.type === 'get-library-styles-cache-count') {
+    await sendLibraryStylesCacheCount();
+    return;
   } else if (msg.type === 'toggle-audit-ignore') {
     const nodeIds: string[] = Array.isArray(msg.nodeIds) ? msg.nodeIds : (msg.nodeId ? [msg.nodeId] : []);
     const category: string = msg.category || '';
@@ -235,6 +875,22 @@ const handleUiMessage = async (msg: any) => {
       ? `Zignorowano problem (${category}) dla ${count} warstw${count === 1 ? 'y' : ''} (zapisano w pliku) 👁️`
       : `Przywrócono problem (${category}) dla ${count} warstw${count === 1 ? 'y' : ''} ↩️`;
     figma.notify(msgText);
+    await runAuditTokens(msg.scope || 'selection');
+  } else if (msg.type === 'trust-audit-library') {
+    if (msg.key) {
+      addTrustedAuditLibrary({
+        key: String(msg.key),
+        label: String(msg.label || msg.key),
+        source: msg.source === 'remote' ? 'remote' : 'local-other',
+      });
+      figma.notify(`Oznaczono bibliotekę "${msg.label || msg.key}" jako zaufaną (pomijana w audycie) ✓`);
+    }
+    await runAuditTokens(msg.scope || 'selection');
+  } else if (msg.type === 'untrust-audit-library') {
+    if (msg.key) {
+      removeTrustedAuditLibrary(String(msg.key));
+      figma.notify(`Usunięto bibliotekę z zaufanych — jej zmienne znów będą audytowane ↩️`);
+    }
     await runAuditTokens(msg.scope || 'selection');
   } else if (msg.type === 'restore-all-audit-ignored') {
     const nodeIds: string[] = Array.isArray(msg.nodeIds) ? msg.nodeIds : [];
@@ -778,7 +1434,7 @@ const handleUiMessage = async (msg: any) => {
             autoPropsOptions = msg.autoProps;
           }
 
-          const autoRes = autoCreateTextPropsAndExtractItemsSync(validRoots, loadedVars, autoPropsOptions);
+          const autoRes = await autoCreateTextPropsAndExtractItemsSync(validRoots, loadedVars, autoPropsOptions);
           const parts: string[] = [];
           if (didAutoSmartSetup) parts.push('Smart Setup');
           if (autoRes.slotsCreatedCount > 0) parts.push(`${autoRes.slotsCreatedCount} ${autoRes.slotsCreatedCount === 1 ? 'kontener Slot' : 'kontenery Slot'}`);
@@ -880,6 +1536,7 @@ const handleUiMessage = async (msg: any) => {
             if (lastAiRenamerRootIds.includes(tId)) continue;
             const node = (figma.getNodeById(tId) as SceneNode | null) || (await figma.getNodeByIdAsync(tId) as SceneNode | null);
             if (node && (node.type === 'FRAME' || node.type === 'GROUP' || node.type === 'TEXT')) {
+              if (isSystemOrIgnoredNode(node) || isSystemOrIgnoredPropName(node.name)) continue;
               let detectedRoot = '';
               let curr: BaseNode | null = node.parent;
               while (curr) {
@@ -1004,7 +1661,7 @@ const handleUiMessage = async (msg: any) => {
       let autoPropsSummary = '';
       if (msg.autoProps !== false) {
         try {
-          const autoRes = autoCreateTextPropsAndExtractItemsSync(roots, preloadedVars, autoPropsOptions);
+          const autoRes = await autoCreateTextPropsAndExtractItemsSync(roots, preloadedVars, autoPropsOptions);
           if (autoRes.slotsCreatedCount > 0 || autoRes.extractedItemsCount > 0 || autoRes.textPropsCount > 0 || autoRes.instanceSwapPropsCount > 0 || autoRes.booleanPropsCount > 0 || autoRes.nestedInstancesCount > 0) {
             const parts: string[] = [];
             if (autoRes.slotsCreatedCount > 0) {
@@ -1143,7 +1800,7 @@ const handleUiMessage = async (msg: any) => {
         preloadBoundVariablesForRoots(targetRoots)
       ]);
 
-      const autoRes = autoCreateTextPropsAndExtractItemsSync(targetRoots, loadedVars, msg.options);
+      const autoRes = await autoCreateTextPropsAndExtractItemsSync(targetRoots, loadedVars, msg.options);
       const parts: string[] = [];
       if (autoRes.instanceSwapPropsCount > 0) parts.push(`${autoRes.instanceSwapPropsCount} INSTANCE_SWAP`);
       if (autoRes.booleanPropsCount > 0) parts.push(`${autoRes.booleanPropsCount} BOOLEAN`);
@@ -1244,6 +1901,46 @@ const handleUiMessage = async (msg: any) => {
     } catch (e: any) {
       console.error('[FontReplacer] Swap error:', e);
       figma.notify(`Błąd podmiany fontu: ${e.message}`, { error: true });
+    }
+  } else if (msg.type === 'font-replacer-bind-style') {
+    try {
+      const nodeIds: string[] = Array.isArray(msg.nodeIds) ? msg.nodeIds : [];
+      const styleId: string = msg.styleId || '';
+      const styleKey: string = msg.styleKey || '';
+      let styleObj: TextStyle | null = null;
+
+      if (styleId) {
+        try {
+          styleObj = (await figma.getStyleByIdAsync(styleId)) as TextStyle | null;
+        } catch (e) {}
+      }
+      if (!styleObj && styleKey) {
+        try {
+          styleObj = (await figma.importStyleByKeyAsync(styleKey)) as TextStyle | null;
+        } catch (e) {}
+      }
+      if (!styleObj) {
+        figma.notify('Nie udało się odnaleźć ani zaimportować stylu tekstowego.', { error: true });
+        return;
+      }
+
+      let count = 0;
+      for (const id of nodeIds) {
+        const node = await figma.getNodeByIdAsync(id);
+        if (node && node.type === 'TEXT') {
+          await (node as TextNode).setTextStyleIdAsync(styleObj.id);
+          count++;
+        }
+      }
+      figma.notify(`Przypisano styl tekstowy (${styleObj.name}) do ${count} ${count === 1 ? 'warstwy' : 'warstw'}! ✨`);
+      const updatedScan = await scanSelectionFonts(false);
+      figma.ui.postMessage({
+        type: 'font-replacer-data',
+        data: updatedScan,
+      });
+      sendSelectionToUI();
+    } catch (e: any) {
+      figma.notify(`Błąd przypisywania stylu: ${e.message}`, { error: true });
     }
   }
 };

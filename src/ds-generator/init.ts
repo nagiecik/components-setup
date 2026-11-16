@@ -26,11 +26,23 @@ export async function initDsGeneratorUI(): Promise<void> {
     const savedLayoutMarginXl = await figma.clientStorage.getAsync('pluginLayoutMarginXl');
     const savedLayoutMarginLg = await figma.clientStorage.getAsync('pluginLayoutMarginLg');
     const savedLayoutMargin2xl = await figma.clientStorage.getAsync('pluginLayoutMargin2xl');
+    const savedSmPhoneModel = await figma.clientStorage.getAsync('pluginSmPhoneModel');
 
     const savedHeadersStyles = await figma.clientStorage.getAsync('pluginHeadersStyles');
     const savedBodyStyles = await figma.clientStorage.getAsync('pluginBodyStyles');
     const savedCustomGradients = await figma.clientStorage.getAsync('pluginCustomGradients');
     const savedCustomColors = await figma.clientStorage.getAsync('pluginCustomColors');
+
+    const savedIncludeMaterialIcons = await figma.clientStorage.getAsync('pluginIncludeMaterialIcons');
+    const savedMaterialIconsFamily = await figma.clientStorage.getAsync('pluginMaterialIconsFamily');
+    const savedMaterialIconsFill = await figma.clientStorage.getAsync('pluginMaterialIconsFill');
+    const savedMaterialIconsWeight = await figma.clientStorage.getAsync('pluginMaterialIconsWeight');
+
+    const savedIncludeSecondaryFont = await figma.clientStorage.getAsync('pluginIncludeSecondaryFont');
+    const savedSecondaryHeadersFont = await figma.clientStorage.getAsync('pluginSecondaryHeadersFont');
+    const savedSecondaryBodyFont = await figma.clientStorage.getAsync('pluginSecondaryBodyFont');
+    const savedSecondaryHeadersStyles = await figma.clientStorage.getAsync('pluginSecondaryHeadersStyles');
+    const savedSecondaryBodyStyles = await figma.clientStorage.getAsync('pluginSecondaryBodyStyles');
 
     const initialCollections = await figma.variables.getLocalVariableCollectionsAsync();
     const updatedModesCount = updateExistingCollectionModes(initialCollections);
@@ -86,6 +98,11 @@ export async function initDsGeneratorUI(): Promise<void> {
       headersStyles: detectedTypo.headersStyles || savedHeadersStyles,
       bodyFont: detectedTypo.bodyFont || savedBodyFont,
       bodyStyles: detectedTypo.bodyStyles || savedBodyStyles,
+      includeSecondaryFont: detectedTypo.includeSecondaryFont !== undefined ? detectedTypo.includeSecondaryFont : (savedIncludeSecondaryFont !== undefined ? savedIncludeSecondaryFont : false),
+      secondaryHeadersFont: detectedTypo.secondaryHeadersFont || savedSecondaryHeadersFont,
+      secondaryHeadersStyles: detectedTypo.secondaryHeadersStyles || savedSecondaryHeadersStyles,
+      secondaryBodyFont: detectedTypo.secondaryBodyFont || savedSecondaryBodyFont,
+      secondaryBodyStyles: detectedTypo.secondaryBodyStyles || savedSecondaryBodyStyles,
       fontStyles: fontFamiliesMap,
       lsHeading: detectedTypo.lsHeading !== undefined ? detectedTypo.lsHeading : savedLS_H,
       lsDisplay: detectedTypo.lsDisplay !== undefined ? detectedTypo.lsDisplay : savedLS_D,
@@ -99,8 +116,13 @@ export async function initDsGeneratorUI(): Promise<void> {
       layoutMarginXl: detectedTypo.layoutMarginXl !== undefined ? detectedTypo.layoutMarginXl : (savedLayoutMarginXl !== undefined ? savedLayoutMarginXl : 72),
       layoutMarginLg: detectedTypo.layoutMarginLg !== undefined ? detectedTypo.layoutMarginLg : (savedLayoutMarginLg !== undefined ? savedLayoutMarginLg : null),
       layoutMargin2xl: detectedTypo.layoutMargin2xl !== undefined ? detectedTypo.layoutMargin2xl : (savedLayoutMargin2xl !== undefined ? savedLayoutMargin2xl : null),
+      smPhoneModel: detectedTypo.smPhoneModel || savedSmPhoneModel || '393x852',
       customGradients: savedCustomGradients || [],
-      customColors: (savedCustomColors && savedCustomColors.length > 0) ? savedCustomColors : (detectedSeeds._customColors || [])
+      customColors: (savedCustomColors && savedCustomColors.length > 0) ? savedCustomColors : (detectedSeeds._customColors || []),
+      includeMaterialIcons: detectedTypo.includeMaterialIcons !== undefined ? detectedTypo.includeMaterialIcons : (savedIncludeMaterialIcons !== undefined ? savedIncludeMaterialIcons : true),
+      materialIconsFamily: detectedTypo.materialIconsFamily || savedMaterialIconsFamily || 'Material Symbols Rounded',
+      materialIconsFill: detectedTypo.materialIconsFill !== undefined ? detectedTypo.materialIconsFill : (savedMaterialIconsFill !== undefined ? savedMaterialIconsFill : 0),
+      materialIconsWeight: detectedTypo.materialIconsWeight !== undefined ? detectedTypo.materialIconsWeight : (savedMaterialIconsWeight !== undefined ? savedMaterialIconsWeight : 400)
     });
 
     figma.ui.postMessage({

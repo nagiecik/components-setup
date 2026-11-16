@@ -882,6 +882,12 @@
       color: #D8B4FE;
     }
 
+    .smart-setup-pill-toggle.is-snap {
+      background: rgba(16, 185, 129, 0.2);
+      border-color: rgba(16, 185, 129, 0.45);
+      color: #34D399;
+    }
+
     .ai-badge {
       font-size: 9px;
       font-weight: 700;
@@ -2922,6 +2928,11 @@
       color: var(--status-red);
     }
 
+    .audit-badge.foreign {
+      background: rgba(99, 102, 241, 0.14);
+      color: #6366f1;
+    }
+
     .audit-prop-row {
       display: flex;
       align-items: center;
@@ -3040,6 +3051,64 @@
     .btn-audit-action.restore:hover {
       color: var(--status-green, #10b981);
       border-color: var(--status-green, #10b981);
+    }
+
+    .btn-audit-action.trust {
+      color: #6366f1;
+      border-color: rgba(99, 102, 241, 0.3);
+    }
+
+    .btn-audit-action.trust:hover {
+      background: rgba(99, 102, 241, 0.12);
+      border-color: #6366f1;
+    }
+
+    .audit-trusted-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      margin-bottom: 8px;
+      border-radius: 8px;
+      background: rgba(99, 102, 241, 0.08);
+      border: 1px solid rgba(99, 102, 241, 0.22);
+      font-size: 10.5px;
+    }
+
+    .audit-trusted-title {
+      font-weight: 600;
+      color: var(--figma-color-text-secondary);
+      margin-right: 2px;
+    }
+
+    .audit-trusted-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--figma-color-bg, #ffffff);
+      border: 1px solid rgba(99, 102, 241, 0.28);
+      color: var(--figma-color-text, #181B1D);
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .audit-trusted-chip button {
+      border: none;
+      background: transparent;
+      color: var(--figma-color-text-secondary);
+      cursor: pointer;
+      padding: 0 2px;
+      font-size: 11px;
+      line-height: 1;
+      border-radius: 4px;
+    }
+
+    .audit-trusted-chip button:hover {
+      color: var(--status-red);
+      background: var(--status-red-light);
     }
 
     .audit-badge.ignored {
@@ -3470,23 +3539,23 @@
 
     <!-- Scrollable Categories Container -->
     <div class="launcher-scroll-area">
-      <!-- Section 1: ✨ AI & Smart Automation -->
+      <!-- Section 1: ⚡ Master Component Setup & AI -->
       <div class="launcher-section" data-section="ai">
-        <div class="launcher-section-header">✨ AI & Smart Automation</div>
+        <div class="launcher-section-header">⚡ Master Component Setup &amp; AI</div>
         <div class="bento-grid">
-          <!-- Auto-Name (AI) -->
-          <button id="btnAutoNameLayers" class="action-tile action-tile-ai" onclick="handleAutoNameLayersAI()" data-tool-name="Auto-Name (AI)" data-tool-desc="Smart layer renaming for Dev Handoff" title="Smart layer renaming for Dev Handoff">
-            <div class="tile-icon-box">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>
+          <!-- Hero Button: Run Master Setup -->
+          <button id="btnRunMasterSetup" class="action-tile action-tile-ai" onclick="handleRunMasterSetup()" data-tool-name="Master Component Setup" data-tool-desc="All-in-One Pipeline: Setup, Tokens, Styles, Naming & Props" title="Uruchom zintegrowany potok Master Component Setup (Single-Pass)">
+            <div class="tile-icon-box" style="background: linear-gradient(135deg, rgba(168, 85, 247, 0.25), rgba(16, 185, 129, 0.25)); border-color: rgba(168, 85, 247, 0.45); color: #E9D5FF;">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
               </svg>
             </div>
             <div class="tile-info">
               <div class="tile-title-row">
-                <span class="tile-title"><span id="autoNameBtnIcon" style="display:none;">⚡</span><span id="autoNameBtnText">Auto-Name (AI)</span></span>
-                <span class="ai-badge">AI</span>
+                <span class="tile-title"><span id="masterSetupBtnText">⚡ Run Master Setup</span></span>
+                <span class="ai-badge" id="masterSetupActiveStepsBadge">1-4</span>
               </div>
-              <span class="tile-desc">Smart layer renaming for Dev Handoff</span>
+              <span id="masterSetupTargetDesc" class="tile-desc">Target: Auto-detects selection</span>
             </div>
           </button>
 
@@ -3511,29 +3580,97 @@
           </button>
         </div>
 
-        <!-- Auto-Properties & Slot Extract Sub-panel (Figma UI3 / Raycast Dark) -->
-        <div class="auto-props-card">
-          <div class="auto-props-header">
-            <div class="auto-props-title-group">
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="#C084FC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
-              </svg>
-              <span class="auto-props-title">Auto-Properties &amp; Slot Extract</span>
-            </div>
-            <div class="auto-props-controls-group">
-              <button type="button" id="btnToggleAutoPropsDetails" onclick="toggleAutoPropsExpanded()" class="ui3-config-pill" title="Zwiń / rozwiń konfigurację opcji">
-                ⚙️ Konfiguracja
+        <!-- Unified Master Component Pipeline Control Center -->
+        <div class="auto-props-card" style="gap: 8px; padding: 9px 10px;">
+          <!-- Quick Mode Presets (1-Click Pills) -->
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 5px;">
+            <button type="button" id="presetFullPipeline" class="ui3-config-pill" onclick="selectMasterPreset('full')" style="flex: 1; justify-content: center; font-weight: 600; background: rgba(168, 85, 247, 0.18); border-color: rgba(168, 85, 247, 0.45); color: #E9D5FF;">
+              🔥 Full Pipeline (1-4)
+            </button>
+            <button type="button" id="presetTokensOnly" class="ui3-config-pill" onclick="selectMasterPreset('tokens')" style="flex: 1; justify-content: center;">
+              🎨 Tokens &amp; Styles Only
+            </button>
+            <button type="button" id="presetNamingPropsOnly" class="ui3-config-pill" onclick="selectMasterPreset('naming')" style="flex: 1; justify-content: center;">
+              ⚙️ Naming &amp; Props Only
+            </button>
+          </div>
+
+          <!-- 2x2 Pipeline Steps Grid -->
+          <div class="auto-props-chips-grid" style="gap: 6px;">
+            <!-- Step 1: Container & Set Setup -->
+            <label class="ui3-chip-card is-checked" id="chipStep1Setup" style="justify-content: space-between; padding-right: 6px;">
+              <input type="checkbox" id="chkMasterStep1" checked style="display:none;" onchange="syncMasterPipelineStepsUI()" />
+              <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+                <div class="ui3-chip-check">
+                  <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
+                  </svg>
+                </div>
+                <span class="ui3-chip-label">1. Container &amp; Set</span>
+              </div>
+              <span id="smartSetupModePill" class="smart-setup-pill-toggle" onclick="event.preventDefault(); event.stopPropagation(); toggleSmartSetupSetMode()" title="Przełącz tryb konfiguracji dla Component Set: Full (wraz z wariantami) / Set Only (tylko kontener Setu)">Full</span>
+            </label>
+
+            <!-- Step 2: Bind Tokens & Styles -->
+            <label class="ui3-chip-card is-checked" id="chipStep2Tokens" style="justify-content: space-between; padding-right: 6px;">
+              <input type="checkbox" id="chkMasterStep2" checked style="display:none;" onchange="syncMasterPipelineStepsUI()" />
+              <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+                <div class="ui3-chip-check">
+                  <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
+                  </svg>
+                </div>
+                <span class="ui3-chip-label">2. Tokens &amp; Styles</span>
+              </div>
+              <span id="autoBindModePill" class="smart-setup-pill-toggle is-snap" onclick="event.preventDefault(); event.stopPropagation(); toggleAutoBindMode()" title="Przełącz tryb dopasowania: Snap (dociągnij do najbliższego tokenu) / Exact (1:1)">Snap</span>
+            </label>
+
+            <!-- Step 3: Smart Layer Naming -->
+            <label class="ui3-chip-card is-checked" id="chipStep3Naming" style="justify-content: space-between; padding-right: 6px;">
+              <input type="checkbox" id="chkMasterStep3" checked style="display:none;" onchange="syncMasterPipelineStepsUI()" />
+              <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+                <div class="ui3-chip-check">
+                  <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
+                  </svg>
+                </div>
+                <span class="ui3-chip-label">3. Layer Naming</span>
+              </div>
+              <span id="namingModePill" class="smart-setup-pill-toggle" onclick="event.preventDefault(); event.stopPropagation(); toggleMasterNamingMode()" title="Przełącz silnik nazywania warstw: Fast TS (0.1s deterministyczny) / AI (LLM)">Fast TS</span>
+            </label>
+
+            <!-- Step 4: Props, Slots & ../Item -->
+            <label class="ui3-chip-card is-checked" id="chipStep4Props" style="justify-content: space-between; padding-right: 6px;">
+              <input type="checkbox" id="chkAutoPropsAndExtract" checked style="display:none;" onchange="syncMasterPipelineStepsUI(); toggleAutoPropsSubOptions()" />
+              <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+                <div class="ui3-chip-check">
+                  <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
+                  </svg>
+                </div>
+                <span class="ui3-chip-label">4. Props &amp; ../Item</span>
+              </div>
+              <button type="button" id="btnToggleAutoPropsDetails" onclick="event.preventDefault(); event.stopPropagation(); toggleAutoPropsExpanded()" class="smart-setup-pill-toggle" style="border: 1px solid rgba(255,255,255,0.14); cursor: pointer;" title="Pokaż / ukryj szczegółowe opcje właściwości i Slotów">
+                ⚙️ Opcje
               </button>
-              <label class="ui3-toggle" title="Włącz / wyłącz moduł Auto-Properties & Slot Extract">
-                <input type="checkbox" id="chkAutoPropsAndExtract" checked onchange="toggleAutoPropsSubOptions()" />
-                <span class="ui3-toggle-track">
-                  <span class="ui3-toggle-thumb"></span>
-                </span>
-              </label>
+            </label>
+          </div>
+
+          <!-- Compact DS Styles Cache & Font Matching Row -->
+          <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06); gap: 6px;">
+            <label style="display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: #a1a1aa; cursor: pointer; user-select: none;" title="Dopasuj style tekstowe po rozmiarze, wadze i interlinii niezależnie od rodziny fontu">
+              <input type="checkbox" id="chkAutoBindIgnoreFontFamily" checked style="accent-color: #10b981; cursor: pointer; width: 12px; height: 12px;" />
+              <span>Ignore font family</span>
+            </label>
+            <div style="display: inline-flex; align-items: center; gap: 5px;">
+              <span id="libraryStylesCacheCountBadge" style="font-size: 9px; padding: 1.5px 5px; border-radius: 4px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: #a1a1aa; font-family: monospace; white-space: nowrap;">Cache: Empty</span>
+              <button type="button" id="btnSyncLibraryStyles" onclick="handleSyncLibraryStyles()" style="font-size: 9px; padding: 2px 6px; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 4px; color: #38bdf8; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;" title="Kliknij w pliku biblioteki DS, aby zapisać klucze stylów tekstowych do pamięci podręcznej pluginu">
+                <span>📥 Cache DS Styles</span>
+              </button>
             </div>
           </div>
 
-          <div id="autoPropsSubOptions" class="auto-props-sub-options">
+          <div id="autoPropsSubOptions" class="auto-props-sub-options" style="display: none; padding-top: 6px; border-top: 1px dashed rgba(255,255,255,0.08);">
             <!-- Mode Segmented Control -->
             <div class="auto-props-segmented">
               <label class="auto-props-segmented-item active" id="lblAutoPropsFull" onclick="selectAutoPropsMode('full')">
@@ -3546,16 +3683,26 @@
               </label>
             </div>
 
-            <!-- 2x2 Chips Grid -->
+            <!-- 2x3 Chips Grid -->
             <div class="auto-props-chips-grid">
               <label class="ui3-chip-card is-checked" id="chipAutoPropSwap">
-                <input type="checkbox" id="chkAutoPropSwap" checked style="display:none;" onchange="syncChipCardUI(this, 'chipAutoPropSwap')" />
+                <input type="checkbox" id="prop-instance-swap" checked style="display:none;" onchange="syncChipCardUI(this, 'chipAutoPropSwap')" />
                 <div class="ui3-chip-check">
                   <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
                   </svg>
                 </div>
-                <span class="ui3-chip-label">Instance Swap &amp; Show</span>
+                <span class="ui3-chip-label">Instance Swap</span>
+              </label>
+
+              <label class="ui3-chip-card is-checked" id="chipAutoPropShow">
+                <input type="checkbox" id="prop-instance-show" checked style="display:none;" onchange="syncChipCardUI(this, 'chipAutoPropShow')" />
+                <div class="ui3-chip-check">
+                  <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
+                  </svg>
+                </div>
+                <span class="ui3-chip-label">Widoczność instancji (Show)</span>
               </label>
 
               <label class="ui3-chip-card is-checked" id="chipAutoPropText">
@@ -3585,17 +3732,17 @@
                     <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
                   </svg>
                 </div>
-                <span class="ui3-chip-label">Wydziel .../Item</span>
+                <span class="ui3-chip-label">Wydziel .../Item &amp; Slot</span>
               </label>
 
-              <label class="ui3-chip-card" id="chipAutoPropNested" style="grid-column: span 2;">
+              <label class="ui3-chip-card" id="chipAutoPropNested">
                 <input type="checkbox" id="chkAutoPropNested" style="display:none;" onchange="syncChipCardUI(this, 'chipAutoPropNested')" />
                 <div class="ui3-chip-check">
                   <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
                   </svg>
                 </div>
-                <span class="ui3-chip-label">Nested Instances (Expose wewnętrzne instancje)</span>
+                <span class="ui3-chip-label">Nested Instances (Expose)</span>
               </label>
             </div>
           </div>
@@ -3630,24 +3777,7 @@
       <div class="launcher-section" data-section="architecture">
         <div class="launcher-section-header">🧩 Component Architecture</div>
         <div class="bento-grid">
-          <!-- Tile 1: Smart Setup (Setup Component + Setup Set Horizontal) -->
-          <button id="componentSetBtn" class="action-tile action-tile-architecture" onclick="handleSmartSetup()" data-tool-name="Smart Setup" data-tool-desc="Auto-detects Component or Variant Set" title="Auto-detects Component or Variant Set and applies Auto Layout & metric tokens">
-            <div class="tile-icon-box">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/>
-                <line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>
-              </svg>
-            </div>
-            <div class="tile-info">
-              <div class="tile-title-row">
-                <span class="tile-title">Smart Setup</span>
-                <span id="smartSetupModePill" class="smart-setup-pill-toggle" onclick="event.stopPropagation(); toggleSmartSetupSetMode()" title="Przełącz tryb konfiguracji dla Component Set: Full (wraz z wariantami) / Set Only (tylko kontener Setu)">Full</span>
-              </div>
-              <span id="smartSetupTileDesc" class="tile-desc">Auto-detects Component or Variant Set</span>
-            </div>
-          </button>
-
-          <!-- Tile 2: Organize & Library (Move to Library + Arrange Variants) -->
+          <!-- Tile 1: Organize & Library (Move to Library + Arrange Variants) -->
           <button id="btnMoveToComponents" class="action-tile action-tile-architecture" onclick="handleOrganizeAndLibrary()" data-tool-name="Organize & Library" data-tool-desc="Arrange all Variant Sets on page" title="Move to Library page & arrange Variant Sets in grid">
             <div class="tile-icon-box">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
@@ -3658,20 +3788,6 @@
             <div class="tile-info">
               <span class="tile-title">Organize &amp; Library</span>
               <span id="organizeLibraryTileDesc" class="tile-desc">Arrange all Variant Sets on page</span>
-            </div>
-          </button>
-
-          <!-- Tile 3: Component Props -->
-          <button id="btnAutoPropsTile" class="action-tile action-tile-architecture" onclick="handleOpenAutoPropsReview()" data-tool-name="Component Props" data-tool-desc="Configure, clean & 6-group sort" title="Configure, clean & 6-group sort component properties">
-            <div class="tile-icon-box">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="3"/>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-              </svg>
-            </div>
-            <div class="tile-info">
-              <span class="tile-title">Component Props</span>
-              <span id="compPropsTileDesc" class="tile-desc">Configure, clean &amp; 6-group sort</span>
             </div>
           </button>
 
@@ -4376,6 +4492,7 @@
         <span id="auditSummaryStatus" style="font-weight: 700; font-size: 11px;">Gotowy</span>
         <span id="auditSummaryBadgeUnbound" class="audit-badge unbound" style="display: none;">0 Unbound</span>
         <span id="auditSummaryBadgeMissing" class="audit-badge missing" style="display: none;">0 Missing</span>
+        <span id="auditSummaryBadgeForeign" class="audit-badge foreign" style="display: none;">0 Other Lib</span>
       </div>
       <div style="display: flex; gap: 6px; align-items: center;">
         <button id="btnRunAuditExplicit" class="mamf-btn mamf-btn-secondary" onclick="triggerAudit()" style="height: 24px; padding: 0 8px; font-size: 10px;" title="Uruchom audyt dla wybranego zakresu">
@@ -4397,6 +4514,9 @@
       </button>
       <button class="audit-pill" data-filter="missing" onclick="setAuditFilter('missing')">
         <span>⚠️ Missing</span> <span id="filterCountMissing" class="pill-count">(0)</span>
+      </button>
+      <button class="audit-pill" data-filter="foreign" onclick="setAuditFilter('foreign')" title="Zmienne z innej biblioteki lokalnej lub zewnętrznej">
+        <span>🔗 Other Lib</span> <span id="filterCountForeign" class="pill-count">(0)</span>
       </button>
       <button class="audit-pill" data-filter="color" onclick="setAuditFilter('color')">
         <span>🎨 Color</span> <span id="filterCountColor" class="pill-count">(0)</span>
@@ -4431,6 +4551,9 @@
         <span>↩️ Przywróć wszystkie</span>
       </button>
     </div>
+
+    <!-- Trusted Libraries Bar (hidden when empty) -->
+    <div id="auditTrustedLibrariesBar" class="audit-trusted-bar" style="display: none;"></div>
 
     <!-- Issues List -->
     <div id="auditList" class="audit-list">
@@ -5012,6 +5135,7 @@
           const statusText = document.getElementById('auditSummaryStatus');
           const badgeUnbound = document.getElementById('auditSummaryBadgeUnbound');
           const badgeMissing = document.getElementById('auditSummaryBadgeMissing');
+          const badgeForeign = document.getElementById('auditSummaryBadgeForeign');
           const btnSelectAll = document.getElementById('btnSelectAllIssues');
           const badge = document.getElementById('auditIssueBadge');
 
@@ -5019,6 +5143,7 @@
           if (statusText) statusText.textContent = 'Brak zaznaczenia na canvasie';
           if (badgeUnbound) badgeUnbound.style.display = 'none';
           if (badgeMissing) badgeMissing.style.display = 'none';
+          if (badgeForeign) badgeForeign.style.display = 'none';
           if (btnSelectAll) btnSelectAll.style.display = 'none';
 
           if (auditList) {
@@ -5523,6 +5648,17 @@
                 </button>
               </div>
             </div>
+            ${group.matchedTextStyle ? `
+              <div class="font-group-matched-style" style="display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; margin-bottom: 6px; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 6px;">
+                <span style="font-size: 10px; color: #38BDF8; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;">
+                  <span>✨ Matches:</span>
+                  <span style="font-weight: 600; color: #BAE6FD;">${escapeHtml(group.matchedTextStyle.name)}</span>
+                </span>
+                <button type="button" class="btn-bind-text-style" onclick="handleBindTextStyle('${escapeHtml(group.matchedTextStyle.id || '')}', '${escapeHtml(group.matchedTextStyle.key || '')}', ${nodeIdsJson})" style="font-size: 9.5px; font-weight: 600; padding: 2px 7px; background: rgba(56, 189, 248, 0.2); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 4px; color: #38BDF8; cursor: pointer; transition: all 0.15s ease;" title="Przypisz ten styl do warstw">
+                  Bind Style
+                </button>
+              </div>
+            ` : ''}
             <div class="font-group-bottom">
               <div class="font-combobox-wrapper" id="comboWrap_${comboId}">
                 <input
@@ -5881,16 +6017,26 @@
         }
       }
 
-      const smartSetupDesc = document.getElementById('smartSetupTileDesc');
-      if (smartSetupDesc) {
-        if (lastContextSelection.count === 0) {
-          smartSetupDesc.textContent = 'Auto-detects Component or Variant Set';
-        } else if (lastContextSelection.hasComponentSet) {
-          smartSetupDesc.textContent = smartSetupSetMode === 'set-only'
-            ? 'Variant Set: Set Only (Horizontal & Tokens)'
-            : 'Variant Set: Full Setup (Variants & Tokens)';
+      const masterTargetDesc = document.getElementById('masterSetupTargetDesc');
+      if (masterTargetDesc) {
+        const sel = state.selection;
+        if (!sel || !sel.hasSelection || lastContextSelection.count === 0) {
+          masterTargetDesc.textContent = 'Target: Select a Component, Set or Frame';
+          masterTargetDesc.style.color = '';
+        } else if (sel.type === 'COMPONENT_SET') {
+          const vCount = Array.isArray(sel.variants) ? sel.variants.length : 1;
+          masterTargetDesc.textContent = `Target: ${sel.name || 'Component Set'} (${vCount} variant${vCount === 1 ? '' : 's'})`;
+          masterTargetDesc.style.color = '#E9D5FF';
+        } else if (sel.type === 'VARIANT' || sel.type === 'MULTIPLE_VARIANTS') {
+          const vCount = Array.isArray(sel.variants) ? sel.variants.length : lastContextSelection.count;
+          masterTargetDesc.textContent = `Target: ${sel.parentComponentSetName || sel.name || 'Component Set'} (${vCount} variant${vCount === 1 ? '' : 's'})`;
+          masterTargetDesc.style.color = '#E9D5FF';
+        } else if (lastContextSelection.count === 1) {
+          masterTargetDesc.textContent = `Target: ${sel.name || 'Selection'} (${sel.type || 'NODE'})`;
+          masterTargetDesc.style.color = '#34D399';
         } else {
-          smartSetupDesc.textContent = 'Component/Frame: Auto Layout & tokens';
+          masterTargetDesc.textContent = `Target: ${lastContextSelection.count} selected nodes`;
+          masterTargetDesc.style.color = '#34D399';
         }
       }
 
@@ -5927,6 +6073,198 @@
         pluginMessage: {
           type: 'run-smart-setup',
           setMode: smartSetupSetMode
+        }
+      }, '*');
+    }
+
+    let autoBindMode = 'snap';
+    function toggleAutoBindMode() {
+      autoBindMode = autoBindMode === 'exact' ? 'snap' : 'exact';
+      const pill = document.getElementById('autoBindModePill');
+      if (pill) {
+        pill.textContent = autoBindMode === 'exact' ? 'Exact' : 'Snap';
+        pill.classList.toggle('is-snap', autoBindMode === 'snap');
+      }
+    }
+
+    let masterNamingMode = 'fast'; // 'fast' | 'ai'
+    function toggleMasterNamingMode() {
+      masterNamingMode = masterNamingMode === 'fast' ? 'ai' : 'fast';
+      const pill = document.getElementById('namingModePill');
+      if (pill) {
+        pill.textContent = masterNamingMode === 'fast' ? 'Fast TS' : 'AI';
+        pill.classList.toggle('is-set-only', masterNamingMode === 'ai');
+      }
+    }
+
+    function selectMasterPreset(preset) {
+      const chk1 = document.getElementById('chkMasterStep1');
+      const chk2 = document.getElementById('chkMasterStep2');
+      const chk3 = document.getElementById('chkMasterStep3');
+      const chk4 = document.getElementById('chkAutoPropsAndExtract');
+
+      if (preset === 'full') {
+        if (chk1) chk1.checked = true;
+        if (chk2) chk2.checked = true;
+        if (chk3) chk3.checked = true;
+        if (chk4) chk4.checked = true;
+      } else if (preset === 'tokens') {
+        if (chk1) chk1.checked = true;
+        if (chk2) chk2.checked = true;
+        if (chk3) chk3.checked = false;
+        if (chk4) chk4.checked = false;
+      } else if (preset === 'naming') {
+        if (chk1) chk1.checked = false;
+        if (chk2) chk2.checked = false;
+        if (chk3) chk3.checked = true;
+        if (chk4) chk4.checked = true;
+      }
+      syncMasterPipelineStepsUI();
+      toggleAutoPropsSubOptions();
+    }
+
+    function syncMasterPipelineStepsUI() {
+      const s1 = Boolean(document.getElementById('chkMasterStep1')?.checked);
+      const s2 = Boolean(document.getElementById('chkMasterStep2')?.checked);
+      const s3 = Boolean(document.getElementById('chkMasterStep3')?.checked);
+      const s4 = Boolean(document.getElementById('chkAutoPropsAndExtract')?.checked);
+
+      const c1 = document.getElementById('chipStep1Setup');
+      const c2 = document.getElementById('chipStep2Tokens');
+      const c3 = document.getElementById('chipStep3Naming');
+      const c4 = document.getElementById('chipStep4Props');
+      if (c1) c1.classList.toggle('is-checked', s1);
+      if (c2) c2.classList.toggle('is-checked', s2);
+      if (c3) c3.classList.toggle('is-checked', s3);
+      if (c4) c4.classList.toggle('is-checked', s4);
+
+      const activeSteps = [];
+      if (s1) activeSteps.push(1);
+      if (s2) activeSteps.push(2);
+      if (s3) activeSteps.push(3);
+      if (s4) activeSteps.push(4);
+
+      const badge = document.getElementById('masterSetupActiveStepsBadge');
+      if (badge) {
+        if (activeSteps.length === 4) badge.textContent = '1-4';
+        else if (activeSteps.length === 0) badge.textContent = 'None';
+        else badge.textContent = activeSteps.join(',');
+      }
+
+      const pFull = document.getElementById('presetFullPipeline');
+      const pTokens = document.getElementById('presetTokensOnly');
+      const pNaming = document.getElementById('presetNamingPropsOnly');
+
+      const applyPresetStyle = (btn, active) => {
+        if (!btn) return;
+        btn.style.background = active ? 'rgba(168, 85, 247, 0.18)' : '';
+        btn.style.borderColor = active ? 'rgba(168, 85, 247, 0.45)' : '';
+        btn.style.color = active ? '#E9D5FF' : '';
+        btn.style.fontWeight = active ? '600' : '';
+      };
+
+      applyPresetStyle(pFull, s1 && s2 && s3 && s4);
+      applyPresetStyle(pTokens, s1 && s2 && !s3 && !s4);
+      applyPresetStyle(pNaming, !s1 && !s2 && s3 && s4);
+    }
+
+    function handleRunMasterSetup() {
+      if (isAiRenaming) return;
+
+      const s1 = Boolean(document.getElementById('chkMasterStep1')?.checked);
+      const s2 = Boolean(document.getElementById('chkMasterStep2')?.checked);
+      const s3 = Boolean(document.getElementById('chkMasterStep3')?.checked);
+      const s4 = Boolean(document.getElementById('chkAutoPropsAndExtract')?.checked);
+
+      if (!s1 && !s2 && !s3 && !s4) {
+        showToast('Zaznacz przynajmniej jeden krok potoku Master Setup (1-4).', true);
+        return;
+      }
+
+      if (s3 && masterNamingMode === 'ai') {
+        const isGroq = state.provider === 'groq';
+        const hasKey = isGroq ? Boolean(state.groqApiKey) : Boolean(state.apiKey);
+        if (!hasKey) {
+          showModal();
+          showToast('Wprowadź klucz API lub przełącz Krok 3 na tryb Fast TS ⚡', true);
+          return;
+        }
+      }
+
+      const btn = document.getElementById('btnRunMasterSetup');
+      if (btn) {
+        btn.disabled = true;
+        btn.classList.add('loading');
+        const textSpan = document.getElementById('masterSetupBtnText');
+        if (textSpan) textSpan.textContent = '⏳ Running Pipeline...';
+      }
+      isAiRenaming = true;
+
+      const chkIgnore = document.getElementById('chkAutoBindIgnoreFontFamily');
+      const ignoreFontFamily = Boolean(chkIgnore ? chkIgnore.checked : true);
+      const isReviewMode = Boolean(document.getElementById('radAutoPropsReview')?.checked);
+
+      const swapEl = document.getElementById('prop-instance-swap') || document.getElementById('chkAutoPropSwap');
+      const showEl = document.getElementById('prop-instance-show') || document.getElementById('chkAutoPropShow');
+
+      const autoPropsPayload = {
+        enableText: document.getElementById('chkAutoPropText') ? document.getElementById('chkAutoPropText').checked : true,
+        enableTextVisibility: document.getElementById('chkAutoPropTextVisibility') ? document.getElementById('chkAutoPropTextVisibility').checked : false,
+        enableInstanceSwap: swapEl ? swapEl.checked : true,
+        enableInstanceShow: showEl ? showEl.checked : true,
+        enableBoolean: showEl ? showEl.checked : true,
+        enableSlotExtract: document.getElementById('chkAutoPropSlots') ? document.getElementById('chkAutoPropSlots').checked : true,
+        enableNestedInstances: document.getElementById('chkAutoPropNested') ? document.getElementById('chkAutoPropNested').checked : false
+      };
+
+      parent.postMessage({
+        pluginMessage: {
+          type: 'run-master-setup',
+          step1Setup: s1,
+          step1Mode: smartSetupSetMode,
+          step2BindTokens: s2,
+          step2Mode: autoBindMode,
+          ignoreFontFamily,
+          step3Naming: s3,
+          namingMode: masterNamingMode,
+          step4Props: s4,
+          reviewAutoProps: Boolean(s4 && isReviewMode),
+          autoProps: autoPropsPayload
+        }
+      }, '*');
+    }
+
+    function handleAutoBindTokens() {
+      const chkIgnore = document.getElementById('chkAutoBindIgnoreFontFamily');
+      const ignoreFontFamily = Boolean(chkIgnore && chkIgnore.checked);
+      showToast(autoBindMode === 'exact' ? 'Auto-binding tokens & styles (Exact)... ⚡' : 'Auto-binding tokens & styles (Snap)... ⚡', false);
+      parent.postMessage({
+        pluginMessage: {
+          type: 'run-auto-bind-variables',
+          mode: autoBindMode,
+          ignoreFontFamily
+        }
+      }, '*');
+    }
+
+    function handleBindTextStyle(styleId, styleKey, nodeIds) {
+      if ((!styleId && !styleKey) || !nodeIds || nodeIds.length === 0) return;
+      showToast('Przypisywanie stylu tekstowego... ✨', false);
+      parent.postMessage({
+        pluginMessage: {
+          type: 'font-replacer-bind-style',
+          styleId,
+          styleKey,
+          nodeIds
+        }
+      }, '*');
+    }
+
+    function handleSyncLibraryStyles() {
+      showToast('Synchronizacja stylów tekstowych z biblioteki... 📥', false);
+      parent.postMessage({
+        pluginMessage: {
+          type: 'sync-library-text-styles'
         }
       }, '*');
     }
@@ -6853,11 +7191,15 @@
 
       let autoPropsPayload = false;
       if (isAutoEnabled) {
+        const swapEl = document.getElementById('prop-instance-swap') || document.getElementById('chkAutoPropSwap');
+        const showEl = document.getElementById('prop-instance-show') || document.getElementById('chkAutoPropShow');
+
         autoPropsPayload = {
           enableText: document.getElementById('chkAutoPropText') ? document.getElementById('chkAutoPropText').checked : true,
           enableTextVisibility: document.getElementById('chkAutoPropTextVisibility') ? document.getElementById('chkAutoPropTextVisibility').checked : false,
-          enableInstanceSwap: document.getElementById('chkAutoPropSwap') ? document.getElementById('chkAutoPropSwap').checked : true,
-          enableBoolean: document.getElementById('chkAutoPropSwap') ? document.getElementById('chkAutoPropSwap').checked : true,
+          enableInstanceSwap: swapEl ? swapEl.checked : true,
+          enableInstanceShow: showEl ? showEl.checked : true,
+          enableBoolean: showEl ? showEl.checked : true,
           enableSlotExtract: document.getElementById('chkAutoPropSlots') ? document.getElementById('chkAutoPropSlots').checked : true,
           enableNestedInstances: document.getElementById('chkAutoPropNested') ? document.getElementById('chkAutoPropNested').checked : false
         };
@@ -6880,6 +7222,13 @@
         btn.classList.remove('loading');
         const textSpan = document.getElementById('autoNameBtnText');
         if (textSpan) textSpan.textContent = 'Auto-Name (AI)';
+      }
+      const masterBtn = document.getElementById('btnRunMasterSetup');
+      if (masterBtn) {
+        masterBtn.disabled = false;
+        masterBtn.classList.remove('loading');
+        const masterText = document.getElementById('masterSetupBtnText');
+        if (masterText) masterText.textContent = '⚡ Run Master Setup';
       }
     }
 
@@ -7903,6 +8252,7 @@ Do NOT include markdown formatting or extra commentary. Return only the JSON obj
           const statusText = document.getElementById('auditSummaryStatus');
           const badgeUnbound = document.getElementById('auditSummaryBadgeUnbound');
           const badgeMissing = document.getElementById('auditSummaryBadgeMissing');
+          const badgeForeign = document.getElementById('auditSummaryBadgeForeign');
           const btnSelectAll = document.getElementById('btnSelectAllIssues');
           const badge = document.getElementById('auditIssueBadge');
 
@@ -7910,6 +8260,7 @@ Do NOT include markdown formatting or extra commentary. Return only the JSON obj
           if (statusText) statusText.textContent = 'Brak zaznaczenia na canvasie';
           if (badgeUnbound) badgeUnbound.style.display = 'none';
           if (badgeMissing) badgeMissing.style.display = 'none';
+          if (badgeForeign) badgeForeign.style.display = 'none';
           if (btnSelectAll) btnSelectAll.style.display = 'none';
 
           if (auditList) {
@@ -9135,6 +9486,56 @@ Instructions:
       }, '*');
     }
 
+    function handleTrustLibrary(event, key, label, source) {
+      if (event) {
+        event.stopPropagation();
+      }
+      if (!key) return;
+      parent.postMessage({
+        pluginMessage: {
+          type: 'trust-audit-library',
+          key: key,
+          label: label || key,
+          source: source || 'local-other',
+          scope: currentAuditScope
+        }
+      }, '*');
+    }
+
+    function handleUntrustLibrary(key) {
+      if (!key) return;
+      parent.postMessage({
+        pluginMessage: {
+          type: 'untrust-audit-library',
+          key: key,
+          scope: currentAuditScope
+        }
+      }, '*');
+    }
+
+    function renderTrustedLibrariesBar(trustedLibraries) {
+      const bar = document.getElementById('auditTrustedLibrariesBar');
+      if (!bar) return;
+      const list = Array.isArray(trustedLibraries) ? trustedLibraries : [];
+      if (list.length === 0) {
+        bar.style.display = 'none';
+        bar.innerHTML = '';
+        return;
+      }
+      bar.style.display = 'flex';
+      const chips = list.map(lib => {
+        const icon = lib.source === 'remote' ? '🌐' : '📁';
+        const keyAttr = escapeHtml(JSON.stringify(lib.key));
+        return `
+          <span class="audit-trusted-chip" title="${escapeHtml(lib.key)}">
+            <span>${icon} ${escapeHtml(lib.label)}</span>
+            <button type="button" onclick="handleUntrustLibrary(${keyAttr})" title="Przestań ignorować tę bibliotekę w audycie">✕</button>
+          </span>
+        `;
+      }).join('');
+      bar.innerHTML = `<span class="audit-trusted-title">Zaufane (pomijane):</span>${chips}`;
+    }
+
     function handleRestoreAllIgnored() {
       if (!lastAuditResult || !lastAuditResult.issues) return;
       const ignoredIssues = lastAuditResult.issues.filter(i => !!i.isIgnored);
@@ -9172,7 +9573,10 @@ Instructions:
       const statusText = document.getElementById('auditSummaryStatus');
       const badgeUnbound = document.getElementById('auditSummaryBadgeUnbound');
       const badgeMissing = document.getElementById('auditSummaryBadgeMissing');
+      const badgeForeign = document.getElementById('auditSummaryBadgeForeign');
       const btnSelectAll = document.getElementById('btnSelectAllIssues');
+
+      renderTrustedLibrariesBar(data.trustedLibraries || []);
 
       // Update badge on Audit tab (only active issues count)
       if (badge) {
@@ -9196,6 +9600,7 @@ Instructions:
         if (statusText) statusText.textContent = 'No selection on canvas';
         if (badgeUnbound) badgeUnbound.style.display = 'none';
         if (badgeMissing) badgeMissing.style.display = 'none';
+        if (badgeForeign) badgeForeign.style.display = 'none';
         if (btnSelectAll) btnSelectAll.style.display = 'none';
         if (auditList) {
           auditList.innerHTML = `
@@ -9221,6 +9626,7 @@ Instructions:
         }
         if (badgeUnbound) badgeUnbound.style.display = 'none';
         if (badgeMissing) badgeMissing.style.display = 'none';
+        if (badgeForeign) badgeForeign.style.display = 'none';
       } else {
         if (statusText) {
           const totalActiveOccurrences = activeIssues.reduce((acc, cur) => acc + (cur.count || 1), 0);
@@ -9232,6 +9638,7 @@ Instructions:
         }
         const activeUnbound = activeIssues.filter(i => i.issueType === 'unbound').length;
         const activeMissing = activeIssues.filter(i => i.issueType === 'missing').length;
+        const activeForeign = activeIssues.filter(i => i.issueType === 'foreign').length;
 
         if (badgeUnbound) {
           badgeUnbound.textContent = `${activeUnbound} Unbound`;
@@ -9240,6 +9647,10 @@ Instructions:
         if (badgeMissing) {
           badgeMissing.textContent = `${activeMissing} Missing`;
           badgeMissing.style.display = activeMissing > 0 ? 'inline-flex' : 'none';
+        }
+        if (badgeForeign) {
+          badgeForeign.textContent = `${activeForeign} Other Lib`;
+          badgeForeign.style.display = activeForeign > 0 ? 'inline-flex' : 'none';
         }
       }
 
@@ -9273,6 +9684,7 @@ Instructions:
       const countAll = document.getElementById('filterCountAll');
       const countUnbound = document.getElementById('filterCountUnbound');
       const countMissing = document.getElementById('filterCountMissing');
+      const countForeign = document.getElementById('filterCountForeign');
       const countColor = document.getElementById('filterCountColor');
       const countGap = document.getElementById('filterCountGap');
       const countPadding = document.getElementById('filterCountPadding');
@@ -9282,6 +9694,7 @@ Instructions:
       if (countAll) countAll.textContent = `(${pool.length})`;
       if (countUnbound) countUnbound.textContent = `(${pool.filter(i => i.issueType === 'unbound').length})`;
       if (countMissing) countMissing.textContent = `(${pool.filter(i => i.issueType === 'missing').length})`;
+      if (countForeign) countForeign.textContent = `(${pool.filter(i => i.issueType === 'foreign').length})`;
       if (countColor) countColor.textContent = `(${pool.filter(i => i.category === 'color').length})`;
       if (countGap) countGap.textContent = `(${pool.filter(i => i.category === 'gap').length})`;
       if (countPadding) countPadding.textContent = `(${pool.filter(i => i.category === 'padding').length})`;
@@ -9293,6 +9706,8 @@ Instructions:
         filtered = pool.filter(i => i.issueType === 'unbound');
       } else if (currentAuditFilter === 'missing') {
         filtered = pool.filter(i => i.issueType === 'missing');
+      } else if (currentAuditFilter === 'foreign') {
+        filtered = pool.filter(i => i.issueType === 'foreign');
       } else if (currentAuditFilter === 'color') {
         filtered = pool.filter(i => i.category === 'color');
       } else if (currentAuditFilter === 'gap') {
@@ -9357,8 +9772,15 @@ Instructions:
       let html = '';
       filtered.forEach(issue => {
         const isMissing = issue.issueType === 'missing';
-        const badgeClass = issue.isIgnored ? 'ignored' : (isMissing ? 'missing' : 'unbound');
-        const badgeLabel = issue.isIgnored ? '👁️ Ignored' : (isMissing ? '⚠️ Missing' : '⭕ Unbound');
+        const isForeign = issue.issueType === 'foreign';
+        const badgeClass = issue.isIgnored ? 'ignored' : (isMissing ? 'missing' : (isForeign ? 'foreign' : 'unbound'));
+        const badgeLabel = issue.isIgnored
+          ? '👁️ Ignored'
+          : (isMissing
+            ? '⚠️ Missing'
+            : (isForeign
+              ? (issue.foreignSource === 'remote' ? '🌐 External Lib' : '📁 Other Local Lib')
+              : '⭕ Unbound'));
         const layerIcon = getLayerIconSvg(issue.layerType);
         const colorChip = (issue.category === 'color' && typeof issue.value === 'string' && issue.value.startsWith('#'))
           ? `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;border:1px solid rgba(0,0,0,0.15);background-color:${escapeHtml(issue.value)};margin-right:5px;vertical-align:-1px;"></span>`
@@ -9370,6 +9792,10 @@ Instructions:
           : '';
         const nodeIdsAttr = escapeHtml(JSON.stringify(nodeIds));
 
+        const trustBtn = (isForeign && issue.foreignLibraryKey && !issue.isIgnored)
+          ? `<button class="btn-audit-action trust" title="Dodaj tę bibliotekę/kolekcję do zaufanych — nie będzie zgłaszana jako błąd" onclick="handleTrustLibrary(event, ${escapeHtml(JSON.stringify(issue.foreignLibraryKey))}, ${escapeHtml(JSON.stringify(issue.foreignSource === 'remote' ? (issue.libraryName || issue.collectionName || 'External Library') : (issue.collectionName || 'Other Collection')))}, ${escapeHtml(JSON.stringify(issue.foreignSource || 'local-other'))})"><span>✓ Zaufaj bibliotece</span></button>`
+          : '';
+
         html += `
           <div class="audit-issue-card ${issue.isIgnored ? 'is-ignored' : ''}" data-node-ids="${nodeIdsAttr}" data-node-id="${escapeHtml(issue.nodeId)}" title="Click to select ${count > 1 ? count + ' layers' : 'this layer'} on canvas">
             <div class="audit-issue-top">
@@ -9378,8 +9804,9 @@ Instructions:
                 <span class="audit-layer-name">${escapeHtml(issue.nodeName)}</span>
                 ${countBadge}
               </div>
-              <div style="display: flex; align-items: center; gap: 6px;">
+              <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end;">
                 <span class="audit-badge ${badgeClass}">${badgeLabel}</span>
+                ${trustBtn}
                 ${issue.isIgnored ? `
                   <button class="btn-audit-action restore" title="Przywróć ten problem do aktywnych w audytorze" onclick="handleToggleIgnore(event, ${nodeIdsAttr}, '${escapeHtml(issue.category)}', '${escapeHtml(issue.property)}', false)">
                     <span>↩️ Przywróć</span>
@@ -9442,6 +9869,8 @@ Instructions:
         filtered = pool.filter(i => i.issueType === 'unbound');
       } else if (currentAuditFilter === 'missing') {
         filtered = pool.filter(i => i.issueType === 'missing');
+      } else if (currentAuditFilter === 'foreign') {
+        filtered = pool.filter(i => i.issueType === 'foreign');
       } else if (currentAuditFilter === 'color') {
         filtered = pool.filter(i => i.category === 'color');
       } else if (currentAuditFilter === 'gap') {
@@ -9858,6 +10287,23 @@ Instructions:
         handleSmartSwapMatchResult(msg);
       } else if (msg.type === 'smart-swap-complete') {
         handleSmartSwapComplete(msg);
+      } else if (msg.type === 'master-setup-progress') {
+        const masterText = document.getElementById('masterSetupBtnText');
+        if (masterText && msg.label) {
+          masterText.textContent = `⏳ Step ${msg.step || 1}/4...`;
+        }
+        if (msg.label) {
+          showLoadingStatus(msg.label);
+        }
+      } else if (msg.type === 'master-setup-complete') {
+        resetAutoNameButtonState();
+        if (msg.success) {
+          showToast('⚡ Master Setup ukończony! ✨', false, 3500);
+        } else if (msg.error) {
+          showToast(`Błąd Master Setup: ${msg.error}`, true);
+        } else if (toastBanner) {
+          toastBanner.style.display = 'none';
+        }
       } else if (msg.type === 'ai-layers-structure-extracted') {
         if (!msg.success || !msg.payload || msg.payload.length === 0) {
           resetAutoNameButtonState();
@@ -9885,11 +10331,15 @@ Instructions:
 
           let autoPropsPayload = false;
           if (isAutoEnabled) {
+            const swapEl = document.getElementById('prop-instance-swap') || document.getElementById('chkAutoPropSwap');
+            const showEl = document.getElementById('prop-instance-show') || document.getElementById('chkAutoPropShow');
+
             autoPropsPayload = {
               enableText: document.getElementById('chkAutoPropText') ? document.getElementById('chkAutoPropText').checked : true,
               enableTextVisibility: document.getElementById('chkAutoPropTextVisibility') ? document.getElementById('chkAutoPropTextVisibility').checked : false,
-              enableInstanceSwap: document.getElementById('chkAutoPropSwap') ? document.getElementById('chkAutoPropSwap').checked : true,
-              enableBoolean: document.getElementById('chkAutoPropSwap') ? document.getElementById('chkAutoPropSwap').checked : true,
+              enableInstanceSwap: swapEl ? swapEl.checked : true,
+              enableInstanceShow: showEl ? showEl.checked : true,
+              enableBoolean: showEl ? showEl.checked : true,
               enableSlotExtract: document.getElementById('chkAutoPropSlots') ? document.getElementById('chkAutoPropSlots').checked : true,
               enableNestedInstances: document.getElementById('chkAutoPropNested') ? document.getElementById('chkAutoPropNested').checked : false
             };
@@ -10049,6 +10499,21 @@ Instructions:
         }
         const modal = document.getElementById('missingTextStyleModal');
         if (modal) modal.classList.add('active');
+      } else if (msg.type === 'library-styles-cache-count') {
+        const badge = document.getElementById('libraryStylesCacheCountBadge');
+        if (badge) {
+          if (typeof msg.count === 'number' && msg.count > 0) {
+            badge.textContent = `Cached: ${msg.count} styles`;
+            badge.style.color = '#38bdf8';
+            badge.style.borderColor = 'rgba(56, 189, 248, 0.35)';
+            badge.style.background = 'rgba(56, 189, 248, 0.12)';
+          } else {
+            badge.textContent = 'Cache: Empty';
+            badge.style.color = '#a1a1aa';
+            badge.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+            badge.style.background = 'rgba(255, 255, 255, 0.06)';
+          }
+        }
       }
     };
 

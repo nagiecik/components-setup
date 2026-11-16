@@ -1,4 +1,5 @@
 import { isSlotContainer, isSlotLayer } from '../slots/slots';
+import { isSystemOrIgnoredNode } from '../utils/nodes';
 import { checkChildrenHomogeneity, getInstanceBaseName, hasContentAncestorNode } from '../utils/geometry';
 import { sanitizePascalCase, toPascalCase } from '../utils/strings';
 import {
@@ -286,6 +287,9 @@ export function sanitizeLayerNameByContext(rawNewName: string, node: SceneNode, 
 
 export async function sanitizeLayerNames(node: BaseNode, isPascalCaseOnly: boolean = false) {
   if (!node) return;
+  if (isSystemOrIgnoredNode(node as any)) {
+    return;
+  }
 
   // Skip instances of other components completely ("oprócz instancji komponentów")
   if (node.type === 'INSTANCE') {

@@ -1,4 +1,5 @@
 import { loadFontsForTextNode } from '../utils/fonts';
+import { getAllAvailableTextStyles, matchTextStyleForSpec } from '../variables/autoBinder';
 
 export interface ScannedFontSpecGroup {
   specKey: string;
@@ -9,6 +10,7 @@ export interface ScannedFontSpecGroup {
   lineHeight: string;
   nodeIds: string[];
   layerCount: number;
+  matchedTextStyle?: { id?: string; key?: string; name: string } | null;
 }
 
 export interface ScannedFontFamilyGroup {
@@ -219,6 +221,7 @@ function extractSpecsFromTextNode(node: TextNode): ExtractedSegmentSpec[] {
 export async function scanSelectionFonts(includeAvailableFonts: boolean = false): Promise<FontScanResult> {
   const selection = figma.currentPage.selection;
   const textNodes = collectTextNodesRecursive(selection);
+  const availableTextStyles = await getAllAvailableTextStyles();
 
   const specMap = new Map<string, ScannedFontSpecGroup>();
   const familyMap = new Map<string, {
@@ -233,6 +236,18 @@ export async function scanSelectionFonts(includeAvailableFonts: boolean = false)
     for (const sp of nodeSpecs) {
       let existingSpec = specMap.get(sp.specKey);
       if (!existingSpec) {
+        const numSize = parseFloat(sp.size);
+        const numLineHeight = sp.lineHeight.toLowerCase() === 'auto' ? null : parseFloat(sp.lineHeight);
+        const matched = matchTextStyleForSpec(
+          sp.family,
+          sp.style,
+          numSize,
+          numLineHeight,
+          '',
+          availableTextStyles,
+          { mode: 'exact' }
+        );
+
         existingSpec = {
           specKey: sp.specKey,
           familyKey: sp.family,
@@ -242,6 +257,7 @@ export async function scanSelectionFonts(includeAvailableFonts: boolean = false)
           lineHeight: sp.lineHeight,
           nodeIds: [],
           layerCount: 0,
+          matchedTextStyle: matched ? { id: matched.id, key: matched.key, name: matched.name } : null,
         };
         specMap.set(sp.specKey, existingSpec);
       }
