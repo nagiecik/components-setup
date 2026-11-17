@@ -309,6 +309,24 @@ export function smartSetBoundVariable(target, field, variable) {
 }
 
 
+function tryRenameVariable(variable: any, targetName: string, allVariables: any[]): boolean {
+  if (!variable || variable.name === targetName) return false;
+  const hasConflict = allVariables.some(
+    v =>
+      !v.removed &&
+      v.id !== variable.id &&
+      v.variableCollectionId === variable.variableCollectionId &&
+      v.name === targetName
+  );
+  if (hasConflict) return false;
+  try {
+    variable.name = targetName;
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 export function migrateFallbackColorVariables(variables) {
   const renamedMap = new Map();
   if (!variables || !Array.isArray(variables)) return renamedMap;
@@ -321,12 +339,14 @@ export function migrateFallbackColorVariables(variables) {
         if (!leaf.toLowerCase().endsWith('fallback')) {
           const newLeaf = `${toPascalCase(leaf)}Fallback`;
           const newParts = ['Fallback', ...parts.slice(1, -1), newLeaf];
-          v.name = newParts.join('/');
-          renamedMap.set(v.id, oldName);
+          if (tryRenameVariable(v, newParts.join('/'), variables)) {
+            renamedMap.set(v.id, oldName);
+          }
         } else if (parts[0] !== 'Fallback') {
           parts[0] = 'Fallback';
-          v.name = parts.join('/');
-          renamedMap.set(v.id, oldName);
+          if (tryRenameVariable(v, parts.join('/'), variables)) {
+            renamedMap.set(v.id, oldName);
+          }
         }
 
         const currentLeaf = v.name.split('/').pop().toLowerCase();
@@ -366,66 +386,111 @@ export function migrateHighlightVariables(variables: any[]): Map<string, string>
     const foundVar = variables.find(v => !v.removed && v.resolvedType === 'COLOR' && step.patterns.includes(v.name.toLowerCase()));
     if (foundVar && foundVar.name !== step.target) {
       const oldName = foundVar.name;
-      foundVar.name = step.target;
-      renamedMap.set(foundVar.id, oldName);
+      if (tryRenameVariable(foundVar, step.target, variables)) {
+        renamedMap.set(foundVar.id, oldName);
+      }
     }
   }
 
   return renamedMap;
 }
 
+const normLookupCache = new WeakMap<Map<string, any>, Map<string, { mapKey: string; variable: any }>>();
+
+function getNormLookupMap(varsSource: Map<string, any>): Map<string, { mapKey: string; variable: any }> {
+  let normMap = normLookupCache.get(varsSource);
+  if (normMap) return normMap;
+
+  normMap = new Map();
+  for (const [existingKey, existingVar] of varsSource.entries()) {
+    if (!existingVar || (existingVar as any).removed) continue;
+    const sepIdx = existingKey.indexOf(':');
+    const colId = sepIdx >= 0 ? existingKey.slice(0, sepIdx) : existingVar.variableCollectionId;
+    const keyVarName = sepIdx >= 0 ? existingKey.slice(sepIdx + 1) : existingVar.name;
+
+    const varNorm = `${colId}:${normalizePathForMatch(existingVar.name)}`;
+    if (!normMap.has(varNorm)) {
+      normMap.set(varNorm, { mapKey: existingKey, variable: existingVar });
+    }
+    const keyNorm = `${colId}:${normalizePathForMatch(keyVarName)}`;
+    if (!normMap.has(keyNorm)) {
+      normMap.set(keyNorm, { mapKey: existingKey, variable: existingVar });
+    }
+  }
+  normLookupCache.set(varsSource, normMap);
+  return normMap;
+}
+
+function safeRenameInMap(v: any, targetName: string, varsSource: Map<string, any>): void {
+  if (!v || v.name === targetName) return;
+  const targetKey = `${v.variableCollectionId}:${targetName}`;
+  if (varsSource.has(targetKey)) {
+    const existing = varsSource.get(targetKey);
+    if (existing && existing.id !== v.id && !(existing as any).removed) return;
+  }
+  try {
+    v.name = targetName;
+  } catch (e) {
+    // Ignore duplicate name error if another variable in the same collection owns targetName
+  }
+}
+
 export function ensureVariable(name: string, collection: any, type: any, varsSource: any, oldName?: string | string[]): any {
   let v = null;
   const isMap = varsSource instanceof Map;
   const key = `${collection.id}:${name}`;
+  const normMap = isMap ? getNormLookupMap(varsSource) : null;
+  const targetNormKey = `${collection.id}:${normalizePathForMatch(name)}`;
 
   if (isMap) {
     v = varsSource.get(key);
+    if (v && (v as any).removed) {
+      varsSource.delete(key);
+      v = null;
+    }
     if (!v && oldName) {
       const oldNames = Array.isArray(oldName) ? oldName : [oldName];
       for (const on of oldNames) {
         const oldKey = `${collection.id}:${on}`;
-        v = varsSource.get(oldKey);
-        if (v) {
+        const candidate = varsSource.get(oldKey);
+        if (candidate && !(candidate as any).removed) {
+          v = candidate;
           varsSource.delete(oldKey);
-          if (v.name !== name) v.name = name;
+          safeRenameInMap(v, name, varsSource);
           varsSource.set(key, v);
+          if (normMap) {
+            normMap.set(targetNormKey, { mapKey: key, variable: v });
+          }
           break;
         }
       }
     }
-    // Normalized / Case-insensitive search fallback to preserve existing variable connections
-    if (!v) {
-      const targetNorm = normalizePathForMatch(name);
-      for (const [existingKey, existingVar] of varsSource.entries()) {
-        if (existingKey.startsWith(`${collection.id}:`)) {
-          if (normalizePathForMatch(existingVar.name) === targetNorm) {
-            v = existingVar;
-            varsSource.delete(existingKey);
-            if (v.name !== name) v.name = name;
-            varsSource.set(key, v);
-            break;
-          }
-        }
+    // O(1) normalized lookup fallback to preserve existing variable connections
+    if (!v && normMap) {
+      const entry = normMap.get(targetNormKey);
+      if (entry && entry.variable && !(entry.variable as any).removed) {
+        v = entry.variable;
+        varsSource.delete(entry.mapKey);
+        safeRenameInMap(v, name, varsSource);
+        varsSource.set(key, v);
+        normMap.set(targetNormKey, { mapKey: key, variable: v });
       }
     }
-    // Also check if any oldName matches normalized
-    if (!v && oldName) {
+    // O(1) per oldName normalized lookup
+    if (!v && oldName && normMap) {
       const oldNames = Array.isArray(oldName) ? oldName : [oldName];
       for (const on of oldNames) {
-        const oldNorm = normalizePathForMatch(on);
-        for (const [existingKey, existingVar] of varsSource.entries()) {
-          if (existingKey.startsWith(`${collection.id}:`)) {
-            if (normalizePathForMatch(existingVar.name) === oldNorm) {
-              v = existingVar;
-              varsSource.delete(existingKey);
-              if (v.name !== name) v.name = name;
-              varsSource.set(key, v);
-              break;
-            }
-          }
+        const oldNormKey = `${collection.id}:${normalizePathForMatch(on)}`;
+        const entry = normMap.get(oldNormKey);
+        if (entry && entry.variable && !(entry.variable as any).removed) {
+          v = entry.variable;
+          varsSource.delete(entry.mapKey);
+          safeRenameInMap(v, name, varsSource);
+          varsSource.set(key, v);
+          normMap.delete(oldNormKey);
+          normMap.set(targetNormKey, { mapKey: key, variable: v });
+          break;
         }
-        if (v) break;
       }
     }
   } else if (Array.isArray(varsSource)) {
@@ -435,7 +500,9 @@ export function ensureVariable(name: string, collection: any, type: any, varsSou
       for (const on of oldNames) {
         v = varsSource.find(iv => iv.name === on && iv.variableCollectionId === collection.id);
         if (v) {
-          if (v.name !== name) v.name = name;
+          if (v.name !== name) {
+            try { v.name = name; } catch (e) {}
+          }
           break;
         }
       }
@@ -443,8 +510,8 @@ export function ensureVariable(name: string, collection: any, type: any, varsSou
     if (!v) {
       const targetNorm = normalizePathForMatch(name);
       v = varsSource.find(iv => iv.variableCollectionId === collection.id && normalizePathForMatch(iv.name) === targetNorm);
-      if (v) {
-        if (v.name !== name) v.name = name;
+      if (v && v.name !== name) {
+        try { v.name = name; } catch (e) {}
       }
     }
     if (!v && oldName) {
@@ -453,7 +520,9 @@ export function ensureVariable(name: string, collection: any, type: any, varsSou
         const oldNorm = normalizePathForMatch(on);
         v = varsSource.find(iv => iv.variableCollectionId === collection.id && normalizePathForMatch(iv.name) === oldNorm);
         if (v) {
-          if (v.name !== name) v.name = name;
+          if (v.name !== name) {
+            try { v.name = name; } catch (e) {}
+          }
           break;
         }
       }
@@ -462,12 +531,18 @@ export function ensureVariable(name: string, collection: any, type: any, varsSou
 
   if (v && v.resolvedType !== type) {
     v.remove();
-    if (isMap) varsSource.delete(key);
+    if (isMap) {
+      varsSource.delete(key);
+      if (normMap) normMap.delete(targetNormKey);
+    }
     v = null;
   }
   if (!v) {
     v = figma.variables.createVariable(name, collection, type);
-    if (isMap) varsSource.set(key, v);
+    if (isMap) {
+      varsSource.set(key, v);
+      if (normMap) normMap.set(targetNormKey, { mapKey: key, variable: v });
+    }
   }
   return v;
 }

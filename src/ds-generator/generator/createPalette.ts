@@ -196,11 +196,19 @@ export async function handleCreatePalette(msg: any): Promise<void> {
       await figma.clientStorage.setAsync('pluginLayoutMargin2xl', layoutMargin2xl);
       await figma.clientStorage.setAsync('pluginSmPhoneModel', smPhoneModel || '393x852');
       await figma.clientStorage.setAsync('pluginCustomGradients', customGradients || []);
-      await figma.clientStorage.setAsync('pluginCustomColors', customColors || []);
+      // Do not persist custom colors globally across files; remove any legacy entry.
+      try {
+        await figma.clientStorage.deleteAsync('pluginCustomColors');
+      } catch (e) {}
       await figma.clientStorage.setAsync('pluginIncludeMaterialIcons', includeMaterialIcons);
       await figma.clientStorage.setAsync('pluginMaterialIconsFamily', materialIconsFamily);
       await figma.clientStorage.setAsync('pluginMaterialIconsFill', materialIconsFill);
       await figma.clientStorage.setAsync('pluginMaterialIconsWeight', materialIconsWeight);
+
+      const yieldToUi = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0));
+      const cachedFloatVars = Array.isArray(allLocalVars)
+        ? allLocalVars.filter(v => v.resolvedType === 'FLOAT' && !(v as any).removed)
+        : [];
 
       async function resolveMetric(value: any, col?: any, modeId?: any) {
         if (value === null || value === undefined) return null;
@@ -225,9 +233,8 @@ export async function handleCreatePalette(msg: any): Promise<void> {
           }
         }
 
-        if (Array.isArray(allLocalVars)) {
-          const floatVars = allLocalVars.filter(v => v.resolvedType === 'FLOAT' && !(v as any).removed);
-          const match = floatVars.find(v => {
+        if (cachedFloatVars.length > 0) {
+          const match = cachedFloatVars.find(v => {
             if (!v.valuesByMode) return false;
             for (const mId of Object.keys(v.valuesByMode)) {
               const mVal = v.valuesByMode[mId];
@@ -433,6 +440,8 @@ export async function handleCreatePalette(msg: any): Promise<void> {
         }
       }
 
+      await yieldToUi();
+
       // ==========================================
       // KROK 2: Generowanie Kolekcji Kontrolnych (_PaletteControls, _StatesControls, _ShadesControls)
       // ==========================================
@@ -570,6 +579,8 @@ export async function handleCreatePalette(msg: any): Promise<void> {
           }
         }
       }
+
+      await yieldToUi();
 
       // ==========================================
       // KROK 3: Generowanie Schematów (Semantics + Shades)
@@ -1405,6 +1416,8 @@ export async function handleCreatePalette(msg: any): Promise<void> {
         }
       }
 
+      await yieldToUi();
+
       // ==========================================
       // KROK 4: Generowanie _SchemesControls
       // ==========================================
@@ -1478,7 +1491,12 @@ export async function handleCreatePalette(msg: any): Promise<void> {
         "SurfaceBright": "CanvasMax"
       };
 
+      let schemesControlProcessed = 0;
       for (const token of allTokens) {
+        schemesControlProcessed++;
+        if (schemesControlProcessed % 50 === 0) {
+          await yieldToUi();
+        }
         const leafTokenName = token.name.includes('/') ? token.name.split('/').pop() : token.name;
         const groupFolder = getGroupName(token.name);
         const cleanTokenName = leafTokenName.startsWith(`${groupFolder}/`) ? leafTokenName.slice(groupFolder.length + 1) : leafTokenName;
@@ -1537,6 +1555,8 @@ export async function handleCreatePalette(msg: any): Promise<void> {
       if (oldMetricsControlsCol) {
         oldMetricsControlsCol.remove();
       }
+
+      await yieldToUi();
 
       // ==========================================
       // KROK 8: Generowanie Metrics (OPUBLIKOWANE)
@@ -1934,7 +1954,10 @@ export async function handleCreatePalette(msg: any): Promise<void> {
         { name: 'constant/3', oldName: 'constant/three', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 3 } },
         { name: 'constant/4', oldName: 'constant/four', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 4 } },
         { name: 'constant/6', oldName: 'constant/six', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 6 } },
-        { name: 'constant/8', oldName: 'constant/eight', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 8 } }
+        { name: 'constant/8', oldName: 'constant/eight', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 8 } },
+        { name: 'constant/16', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 16 } },
+        { name: 'constant/24', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 24 } },
+        { name: 'constant/32', scope: ['CORNER_RADIUS', 'GAP', 'STROKE_FLOAT', 'WIDTH_HEIGHT'], values: { default: 32 } }
       ];
 
       let constantNoneVar = null;
@@ -2009,6 +2032,8 @@ export async function handleCreatePalette(msg: any): Promise<void> {
       // ==========================================
       const localEffectStyles = await figma.getLocalEffectStylesAsync();
       const localPaintStyles = await figma.getLocalPaintStylesAsync();
+
+      await yieldToUi();
 
       // ==========================================
       // KROK 8.5: Generowanie Stylów Gradientów (PAINT STYLES)
@@ -3589,6 +3614,8 @@ export async function handleCreatePalette(msg: any): Promise<void> {
       layoutGrid = figma.variables.setBoundVariableForLayoutGrid(layoutGrid, 'gutterSize', layoutVarsMap['Gutter']);
 
       mainGridStyle.layoutGrids = [layoutGrid as any];
+
+      await yieldToUi();
 
       // ==========================================
       // FINAL CLEANUP: Global Variable Cleanup & Visibility

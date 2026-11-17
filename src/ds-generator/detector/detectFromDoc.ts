@@ -1,6 +1,7 @@
 // Document typography and color detection
 import { getStepRawValue, stepRawValues, findLocalVarByNormName, migrateFallbackColorVariables } from '../variables/variableHelpers';
 import { rgbToHex, resolveVarToHex } from '../utils/colorMath';
+import { normalizePathForMatch } from '../utils/strings';
 
 export async function detectTypographyFromDocument(): Promise<Record<string, any>> {
   const detected: Record<string, any> = {};
@@ -263,91 +264,231 @@ export async function detectTypographyFromDocument(): Promise<Record<string, any
   return detected;
 }
 
+const CANONICAL_ROLE_BY_NORM: Record<string, string> = {
+  primary: 'primary',
+  secondary: 'secondary',
+  tertiary: 'tertiary',
+  neutral: 'neutral',
+  accessibility: 'accessibility',
+  action: 'action',
+  actiondark: 'actionDark',
+  success: 'success',
+  successdark: 'successDark',
+  warning: 'warning',
+  warningdark: 'warningDark',
+  error: 'error',
+  errordark: 'errorDark',
+};
+
 export async function detectColorsFromDocument(): Promise<Record<string, any>> {
-  const detected = {};
-  const customColors = [];
+  const detected: Record<string, any> = {};
+  const customColors: Array<{ name: string; color: string }> = [];
   const collections = await figma.variables.getLocalVariableCollectionsAsync();
   const allLocalVars = await figma.variables.getLocalVariablesAsync();
   migrateFallbackColorVariables(allLocalVars);
 
-  // Try using control collections ("_PaletteControls", "_StatesControls", "_ShadesControls")
-  const controlCols = collections.filter(c =>
-    c.name === "_PaletteControls" || c.name === "_paletteControls" ||
-    c.name === "_StatesControls" || c.name === "_statesControls" ||
-    c.name === "_ShadesControls" || c.name === "_shadesControls"
+  // Track all normalized palette group names that belong to standard (possibly user-renamed) roles
+  // so they are never misclassified as custom colors.
+  const standardPaletteNorms = new Set<string>(Object.keys(CANONICAL_ROLE_BY_NORM));
+
+  const registerStandardAliasName = (name?: string | null) => {
+    if (!name || typeof name !== 'string') return;
+    const norm = normalizePathForMatch(name);
+    if (norm) standardPaletteNorms.add(norm);
+  };
+
+  const paletteCol = collections.find(
+    c => c.name === "_Palettes" || c.name === "_palettes" || c.name === "Palettes" || c.name === "palettes"
   );
-  for (const controlsCol of controlCols) {
+
+  const inspectControlCollection = async (controlsCol: VariableCollection, expectedRoles: string[]) => {
     const nameVar = findLocalVarByNormName(allLocalVars, controlsCol.id, "name");
     const colorVar = findLocalVarByNormName(allLocalVars, controlsCol.id, "50");
-    
-    if (nameVar && colorVar) {
-      const expectedRoles = ['primary', 'secondary', 'tertiary', 'neutral', 'accessibility', 'action', 'success', 'warning', 'error', 'errorDark'];
-      const modes = controlsCol.modes;
-      for (let i = 0; i < modes.length; i++) {
-        const modeId = modes[i].modeId;
-        const customName = nameVar.valuesByMode[modeId];
-        const colorValue: any = colorVar.valuesByMode[modeId];
-        
-        let hexColor = null;
-        if (colorValue) {
-          if (colorValue.type === 'VARIABLE_ALIAS') {
-            const aliasedVar = allLocalVars.find(v => v.id === colorValue.id);
-            if (aliasedVar) {
-              const paletteCol = collections.find(c => c.name === "_Palettes" || c.name === "_palettes" || c.name === "Palettes" || c.name === "palettes");
-              if (paletteCol) {
-                const defaultModeId = paletteCol.modes[0].modeId;
-                const resolvedColor: any = aliasedVar.valuesByMode[defaultModeId];
-                if (resolvedColor && typeof resolvedColor === 'object') {
-                  hexColor = rgbToHex(resolvedColor.r, resolvedColor.g, resolvedColor.b);
-                }
+    if (!colorVar && !nameVar) return;
+
+    type ModeEntry = {
+      modeName: string;
+      customName: string;
+      hexColor: string | null;
+      aliasedGroupName: string | null;
+    };
+
+    const entries: ModeEntry[] = [];
+    for (const mode of controlsCol.modes) {
+      const modeId = mode.modeId;
+      const rawName = nameVar ? nameVar.valuesByMode[modeId] : undefined;
+      const customName = typeof rawName === 'string' && rawName.trim() ? rawName.trim() : (mode.name || '').trim();
+
+      let hexColor: string | null = null;
+      let aliasedGroupName: string | null = null;
+      const colorValue: any = colorVar ? colorVar.valuesByMode[modeId] : undefined;
+
+      if (colorValue) {
+        if (colorValue.type === 'VARIABLE_ALIAS') {
+          const aliasedVar = allLocalVars.find(v => v.id === colorValue.id);
+          if (aliasedVar) {
+            if (aliasedVar.name.includes('/')) {
+              aliasedGroupName = aliasedVar.name.substring(0, aliasedVar.name.lastIndexOf('/'));
+            }
+            if (paletteCol && paletteCol.modes.length > 0) {
+              const resolvedColor: any = aliasedVar.valuesByMode[paletteCol.modes[0].modeId];
+              if (resolvedColor && typeof resolvedColor === 'object' && 'r' in resolvedColor) {
+                hexColor = rgbToHex(resolvedColor.r, resolvedColor.g, resolvedColor.b);
               }
             }
-          } else if (typeof colorValue === 'object') {
-            hexColor = rgbToHex(colorValue.r, colorValue.g, colorValue.b);
+            if (!hexColor) {
+              hexColor = await resolveVarToHex(aliasedVar, allLocalVars, collections);
+            }
           }
+        } else if (typeof colorValue === 'object' && 'r' in colorValue) {
+          hexColor = rgbToHex(colorValue.r, colorValue.g, colorValue.b);
         }
+      }
 
-        if (customName && hexColor) {
-          const matchedRole = expectedRoles.find(r => r === customName || r.toLowerCase() === customName.toLowerCase());
-          if (matchedRole) {
-            detected[matchedRole] = { name: customName, color: hexColor };
-          }
+      entries.push({
+        modeName: (mode.name || '').trim(),
+        customName,
+        hexColor,
+        aliasedGroupName,
+      });
+    }
+
+    const assignedRoles: Array<string | null> = new Array(entries.length).fill(null);
+    const usedRoles = new Set<string>();
+
+    // Pass 1: exact normalized match against role keys
+    for (let i = 0; i < entries.length; i++) {
+      const candidates = [entries[i].customName, entries[i].modeName, entries[i].aliasedGroupName];
+      for (const cand of candidates) {
+        if (!cand) continue;
+        const matched = expectedRoles.find(
+          r => !usedRoles.has(r) && normalizePathForMatch(r) === normalizePathForMatch(cand)
+        );
+        if (matched) {
+          assignedRoles[i] = matched;
+          usedRoles.add(matched);
+          break;
+        }
+      }
+    }
+
+    // Pass 2: positional fallback for user-renamed standard roles (e.g. primary -> "Brand")
+    for (let i = 0; i < entries.length; i++) {
+      if (assignedRoles[i]) continue;
+      const entry = entries[i];
+      const wantsDark = normalizePathForMatch(entry.customName || entry.modeName).endsWith('dark');
+
+      let fallbackRole: string | undefined;
+      if (i < expectedRoles.length && !usedRoles.has(expectedRoles[i])) {
+        const positionalRole = expectedRoles[i];
+        const positionalIsDark = positionalRole.endsWith('Dark');
+        if (positionalIsDark === wantsDark || entries.length === expectedRoles.length) {
+          fallbackRole = positionalRole;
+        }
+      }
+      if (!fallbackRole) {
+        fallbackRole = expectedRoles.find(r => !usedRoles.has(r) && r.endsWith('Dark') === wantsDark)
+          || expectedRoles.find(r => !usedRoles.has(r));
+      }
+
+      if (fallbackRole) {
+        assignedRoles[i] = fallbackRole;
+        usedRoles.add(fallbackRole);
+      }
+    }
+
+    for (let i = 0; i < entries.length; i++) {
+      const role = assignedRoles[i];
+      const entry = entries[i];
+      if (!role) continue;
+      registerStandardAliasName(role);
+      registerStandardAliasName(entry.customName);
+      registerStandardAliasName(entry.modeName);
+      registerStandardAliasName(entry.aliasedGroupName);
+
+      if (entry.customName && entry.hexColor) {
+        detected[role] = { name: entry.customName, color: entry.hexColor };
+      }
+    }
+  };
+
+  // 1. Inspect _PaletteControls & _StatesControls first so custom-named standard roles are mapped accurately
+  const paletteControlCols = collections.filter(
+    c => c.name === "_PaletteControls" || c.name === "_paletteControls" || normalizePathForMatch(c.name) === "palettecontrols"
+  );
+  for (const col of paletteControlCols) {
+    await inspectControlCollection(
+      col,
+      ['primary', 'secondary', 'tertiary', 'neutral', 'accessibility'],
+    );
+  }
+
+  const statesControlCols = collections.filter(
+    c => c.name === "_StatesControls" || c.name === "_statesControls" || normalizePathForMatch(c.name) === "statescontrols"
+  );
+  for (const col of statesControlCols) {
+    await inspectControlCollection(
+      col,
+      ['action', 'actionDark', 'success', 'successDark', 'warning', 'warningDark', 'error', 'errorDark'],
+    );
+  }
+
+  // 2. If control collections are missing, inspect Schemes ("Default/Surface") to detect renamed neutral palette
+  const schemesCol = collections.find(
+    c => c.name === "Schemes" || c.name === "schemes" || normalizePathForMatch(c.name) === "schemes"
+  );
+  if (schemesCol) {
+    const schemeVars = allLocalVars.filter(v => v.variableCollectionId === schemesCol.id);
+    const lightMode = schemesCol.modes.find(m => m.name === "Light" || m.name === "light");
+    if (lightMode && !detected.neutral) {
+      const surfaceVar = schemeVars.find(v => {
+        const norm = normalizePathForMatch(v.name);
+        return norm === 'default/surface' || norm === 'default/onsurface' || norm === 'default/surfacebackground';
+      });
+      const val: any = surfaceVar?.valuesByMode?.[lightMode.modeId];
+      if (val && val.type === 'VARIABLE_ALIAS') {
+        const aliasedVar = allLocalVars.find(v => v.id === val.id);
+        if (aliasedVar && aliasedVar.name.includes('/')) {
+          const groupName = aliasedVar.name.substring(0, aliasedVar.name.lastIndexOf('/'));
+          registerStandardAliasName(groupName);
         }
       }
     }
   }
 
-  // Fallback to "_Palettes" or "palettes" collection directly
-  const paletteCol = collections.find(c => c.name === "_Palettes" || c.name === "_palettes" || c.name === "Palettes" || c.name === "palettes");
-  if (paletteCol) {
+  // 3. Scan "_Palettes" collection directly for missing standard roles and genuine custom colors
+  if (paletteCol && paletteCol.modes.length > 0) {
     const paletteVars = allLocalVars.filter(v => v.variableCollectionId === paletteCol.id);
     const defaultModeId = paletteCol.modes[0].modeId;
-    
+    const seenCustomNorms = new Set<string>();
+
     for (const v of paletteVars) {
-      if (v.name.endsWith("/50")) {
-        const customName = v.name.substring(0, v.name.length - 3);
-        const colorValue: any = v.valuesByMode[defaultModeId];
-        if (colorValue && typeof colorValue === 'object') {
-          const hexColor = rgbToHex(colorValue.r, colorValue.g, colorValue.b);
-          const lowerName = customName.toLowerCase();
-          const expectedRoles = ['primary', 'secondary', 'tertiary', 'neutral', 'accessibility', 'action', 'success', 'warning', 'error', 'errordark', 'actiondark', 'successdark', 'warningdark'];
-          let matchedRole = expectedRoles.find(r => r === lowerName || lowerName.includes(r));
-          if (matchedRole) {
-            if (!detected[matchedRole]) {
-              detected[matchedRole] = { name: customName, color: hexColor };
-            }
-          } else if (!lowerName.startsWith('shades')) {
-            if (!customColors.some(c => c.name.toLowerCase() === customName.toLowerCase())) {
-              customColors.push({ name: customName, color: hexColor });
-            }
-          }
+      if (!v.name.endsWith("/50")) continue;
+      const customName = v.name.substring(0, v.name.length - 3);
+      const normName = normalizePathForMatch(customName);
+      const lowerName = customName.toLowerCase();
+      if (!normName || lowerName.startsWith('shades')) continue;
+
+      const colorValue: any = v.valuesByMode[defaultModeId];
+      if (!colorValue || typeof colorValue !== 'object' || !('r' in colorValue)) continue;
+      const hexColor = rgbToHex(colorValue.r, colorValue.g, colorValue.b);
+
+      if (standardPaletteNorms.has(normName)) {
+        const canonicalRole = CANONICAL_ROLE_BY_NORM[normName];
+        if (canonicalRole && !detected[canonicalRole]) {
+          detected[canonicalRole] = { name: customName, color: hexColor };
         }
+        continue;
+      }
+
+      if (!seenCustomNorms.has(normName)) {
+        seenCustomNorms.add(normName);
+        customColors.push({ name: customName, color: hexColor });
       }
     }
   }
 
-  // Final fallback to schemes collection
-  const schemesCol = collections.find(c => c.name === "Schemes" || c.name === "schemes");
+  // 4. Final fallback to Schemes collection for standard roles if still undetected
   if (schemesCol) {
     const schemeVars = allLocalVars.filter(v => v.variableCollectionId === schemesCol.id);
     const lightMode = schemesCol.modes.find(m => m.name === "Light" || m.name === "light");
@@ -355,33 +496,37 @@ export async function detectColorsFromDocument(): Promise<Record<string, any>> {
       const modeId = lightMode.modeId;
       const expectedRoles = ['primary', 'secondary', 'tertiary', 'neutral', 'action', 'success', 'warning', 'error'];
       for (const role of expectedRoles) {
-        if (!detected[role]) {
-          for (const v of schemeVars) {
-            const lowerName = v.name.toLowerCase();
-            if (lowerName === role || lowerName.includes(role)) {
-              const colorValue: any = v.valuesByMode[modeId];
-              let hexColor = null;
-              if (colorValue) {
-                if (colorValue.type === 'VARIABLE_ALIAS') {
-                  const aliasedVar = allLocalVars.find(varInst => varInst.id === colorValue.id);
-                  if (aliasedVar) {
-                    hexColor = await resolveVarToHex(aliasedVar, allLocalVars, collections);
-                  }
-                } else if (typeof colorValue === 'object') {
-                  hexColor = rgbToHex(colorValue.r, colorValue.g, colorValue.b);
-                }
+        if (detected[role]) continue;
+        for (const v of schemeVars) {
+          const leafName = v.name.includes('/') ? v.name.split('/').pop()! : v.name;
+          const normLeaf = normalizePathForMatch(leafName);
+          if (normLeaf !== role && normLeaf !== `${role}default`) continue;
+
+          const colorValue: any = v.valuesByMode[modeId];
+          let hexColor: string | null = null;
+          if (colorValue) {
+            if (colorValue.type === 'VARIABLE_ALIAS') {
+              const aliasedVar = allLocalVars.find(varInst => varInst.id === colorValue.id);
+              if (aliasedVar) {
+                hexColor = await resolveVarToHex(aliasedVar, allLocalVars, collections);
               }
-              if (hexColor) {
-                detected[role] = { name: v.name, color: hexColor };
-              }
+            } else if (typeof colorValue === 'object' && 'r' in colorValue) {
+              hexColor = rgbToHex(colorValue.r, colorValue.g, colorValue.b);
             }
+          }
+          if (hexColor) {
+            const cleanName = leafName.endsWith('Default') && role !== 'primary'
+              ? leafName.slice(0, -'Default'.length)
+              : leafName;
+            detected[role] = { name: cleanName || role, color: hexColor };
+            break;
           }
         }
       }
     }
   }
 
-  (detected as any)._customColors = customColors;
+  detected._customColors = customColors;
   return detected;
 }
 

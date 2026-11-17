@@ -31,7 +31,9 @@ export async function initDsGeneratorUI(): Promise<void> {
     const savedHeadersStyles = await figma.clientStorage.getAsync('pluginHeadersStyles');
     const savedBodyStyles = await figma.clientStorage.getAsync('pluginBodyStyles');
     const savedCustomGradients = await figma.clientStorage.getAsync('pluginCustomGradients');
-    const savedCustomColors = await figma.clientStorage.getAsync('pluginCustomColors');
+    try {
+      await figma.clientStorage.deleteAsync('pluginCustomColors');
+    } catch (e) {}
 
     const savedIncludeMaterialIcons = await figma.clientStorage.getAsync('pluginIncludeMaterialIcons');
     const savedMaterialIconsFamily = await figma.clientStorage.getAsync('pluginMaterialIconsFamily');
@@ -53,9 +55,14 @@ export async function initDsGeneratorUI(): Promise<void> {
     }
 
     const detectedSeeds = await detectColorsFromDocument();
+    const detectedCustomColors = Array.isArray((detectedSeeds as any)._customColors)
+      ? (detectedSeeds as any)._customColors
+      : [];
     const seeds: Record<string, any> = Object.assign({}, savedSettings);
     for (const [role, data] of Object.entries(detectedSeeds)) {
-      seeds[role] = data;
+      if (role !== '_customColors') {
+        seeds[role] = data;
+      }
     }
 
     const detectedTypo = await detectTypographyFromDocument();
@@ -118,7 +125,7 @@ export async function initDsGeneratorUI(): Promise<void> {
       layoutMargin2xl: detectedTypo.layoutMargin2xl !== undefined ? detectedTypo.layoutMargin2xl : (savedLayoutMargin2xl !== undefined ? savedLayoutMargin2xl : null),
       smPhoneModel: detectedTypo.smPhoneModel || savedSmPhoneModel || '393x852',
       customGradients: savedCustomGradients || [],
-      customColors: (savedCustomColors && savedCustomColors.length > 0) ? savedCustomColors : (detectedSeeds._customColors || []),
+      customColors: detectedCustomColors,
       includeMaterialIcons: detectedTypo.includeMaterialIcons !== undefined ? detectedTypo.includeMaterialIcons : (savedIncludeMaterialIcons !== undefined ? savedIncludeMaterialIcons : true),
       materialIconsFamily: detectedTypo.materialIconsFamily || savedMaterialIconsFamily || 'Material Symbols Rounded',
       materialIconsFill: detectedTypo.materialIconsFill !== undefined ? detectedTypo.materialIconsFill : (savedMaterialIconsFill !== undefined ? savedMaterialIconsFill : 0),
