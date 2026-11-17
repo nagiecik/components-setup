@@ -730,6 +730,80 @@
       color: #bae6fd;
     }
 
+    .organize-tile-card {
+      flex-direction: column;
+      align-items: stretch;
+      padding: 0;
+      gap: 0;
+      cursor: default;
+    }
+
+    .organize-tile-trigger {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px 8px;
+      background: transparent;
+      border: none;
+      color: inherit;
+      font-family: inherit;
+      text-align: left;
+      cursor: pointer;
+      width: 100%;
+      box-sizing: border-box;
+      outline: none;
+    }
+
+    .organize-tile-trigger:focus-visible {
+      box-shadow: inset 0 0 0 1.5px rgba(56, 189, 248, 0.7);
+      border-radius: 7px 7px 0 0;
+    }
+
+    .organize-layout-bar {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      padding: 4px 8px 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(0, 0, 0, 0.18);
+    }
+
+    .organize-layout-btn {
+      flex: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 3px 6px;
+      border-radius: 4px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: #8E8E93;
+      font-family: inherit;
+      font-size: 9.5px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .organize-layout-btn:hover {
+      color: #E4E4E7;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .organize-layout-btn.active {
+      background: rgba(14, 165, 233, 0.2);
+      border-color: rgba(14, 165, 233, 0.4);
+      color: #7dd3fc;
+      font-weight: 600;
+    }
+
+    .organize-layout-btn:focus-visible {
+      outline: 1.5px solid rgba(56, 189, 248, 0.8);
+      outline-offset: 1px;
+    }
+
     /* Section 3: Naming & Typography Variant (Warm Amber / Golden Orange) */
     .action-tile-typography {
       background: linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(249, 115, 22, 0.04) 100%), #262629;
@@ -1524,6 +1598,230 @@
 
     .font-replacer-drawer.open {
       display: flex;
+    }
+
+    /* Multi-Page Background & Title Case Drawer */
+    .page-bg-drawer {
+      background: var(--figma-color-bg-secondary, #18181B);
+      padding: 12px 14px;
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      animation: slideDown 0.2s ease;
+      box-sizing: border-box;
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+    }
+
+    .page-bg-drawer.open {
+      display: flex;
+    }
+
+    .page-bg-card {
+      background: #141417;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .page-bg-picker-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .page-bg-color-input {
+      width: 38px;
+      height: 32px;
+      padding: 2px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background: #262629;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .page-bg-hex-input {
+      flex: 1;
+      height: 32px;
+      padding: 0 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: #1F1F23;
+      color: #F4F4F5;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      outline: none;
+      box-sizing: border-box;
+    }
+
+    .page-bg-hex-input:focus {
+      border-color: #38BDF8;
+    }
+
+    .page-bg-swatches {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .page-bg-swatch {
+      width: 22px;
+      height: 22px;
+      border-radius: 5px;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      cursor: pointer;
+      padding: 0;
+      transition: transform 0.12s ease, border-color 0.12s ease;
+    }
+
+    .page-bg-swatch:hover {
+      transform: scale(1.08);
+      border-color: #38BDF8;
+    }
+
+    .page-bg-actions-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .page-bg-primary-btn {
+      flex: 1;
+      height: 32px;
+      padding: 0 12px;
+      border-radius: 6px;
+      border: 1px solid rgba(56, 189, 248, 0.45);
+      background: #0EA5E9;
+      color: #082F49;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+
+    .page-bg-primary-btn:hover {
+      background: #38BDF8;
+    }
+
+    .page-bg-secondary-btn {
+      height: 32px;
+      padding: 0 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: #262629;
+      color: #E4E4E7;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s ease;
+    }
+
+    .page-bg-secondary-btn:hover {
+      background: #323236;
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+
+    .page-bg-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow-y: auto;
+      min-height: 0;
+    }
+
+    .page-bg-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 7px;
+      background: #141417;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .page-bg-item-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .page-bg-item-dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      flex-shrink: 0;
+    }
+
+    .page-bg-item-names {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .page-bg-item-name {
+      font-size: 11px;
+      font-weight: 600;
+      color: #F4F4F5;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .page-bg-item-rename {
+      font-size: 10px;
+      color: #FBBF24;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .page-bg-item-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .page-bg-hex-pill {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 10px;
+      color: #A1A1AA;
+      background: rgba(255, 255, 255, 0.05);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .page-bg-current-pill {
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #7DD3FC;
+      background: rgba(14, 165, 233, 0.16);
+      border: 1px solid rgba(14, 165, 233, 0.3);
+      padding: 1px 5px;
+      border-radius: 4px;
     }
 
     .font-replacer-header {
@@ -2966,6 +3264,53 @@
       width: fit-content;
     }
 
+    /* Audit Auto-Fix Post-Scan Banner */
+    .audit-autofix-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 7px 12px;
+      background: rgba(13, 153, 255, 0.08);
+      border-bottom: 1px solid var(--figma-color-border);
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    .audit-autofix-info {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      min-width: 140px;
+      flex: 1;
+    }
+
+    .audit-autofix-title {
+      font-size: 10.5px;
+      font-weight: 700;
+      color: var(--figma-color-text);
+    }
+
+    .audit-autofix-desc {
+      font-size: 9.5px;
+      color: var(--figma-color-text-secondary);
+      line-height: 1.3;
+    }
+
+    .audit-autofix-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .audit-autofix-btn {
+      height: 24px !important;
+      padding: 0 9px !important;
+      font-size: 10px !important;
+      font-weight: 600 !important;
+    }
+
     /* Audit Subtabs Bar (Active vs Ignored) */
     .audit-subtabs-bar {
       display: flex;
@@ -3778,18 +4123,28 @@
         <div class="launcher-section-header">🧩 Component Architecture</div>
         <div class="bento-grid">
           <!-- Tile 1: Organize & Library (Move to Library + Arrange Variants) -->
-          <button id="btnMoveToComponents" class="action-tile action-tile-architecture" onclick="handleOrganizeAndLibrary()" data-tool-name="Organize & Library" data-tool-desc="Arrange all Variant Sets on page" title="Move to Library page & arrange Variant Sets in grid">
-            <div class="tile-icon-box">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-                <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
-              </svg>
+          <div class="action-tile action-tile-architecture organize-tile-card" data-tool-name="Organize & Library" data-tool-desc="Arrange all Variant Sets on page">
+            <button type="button" id="btnMoveToComponents" class="organize-tile-trigger" onclick="handleOrganizeAndLibrary()" title="Move to Library page & arrange Variant Sets in grid">
+              <div class="tile-icon-box">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                  <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+                </svg>
+              </div>
+              <div class="tile-info">
+                <span class="tile-title">Organize &amp; Library</span>
+                <span id="organizeLibraryTileDesc" class="tile-desc">Arrange all Variant Sets on page</span>
+              </div>
+            </button>
+            <div class="organize-layout-bar" role="group" aria-label="Organize layout direction">
+              <button type="button" id="btnOrganizeLayoutCols" class="organize-layout-btn active" data-layout="columns" aria-pressed="true" onclick="setOrganizeLayoutMode('columns')" title="W grupie: jeden pod drugim | Kolejna grupa: obok">
+                <span>↓ Cols →</span>
+              </button>
+              <button type="button" id="btnOrganizeLayoutRows" class="organize-layout-btn" data-layout="rows" aria-pressed="false" onclick="setOrganizeLayoutMode('rows')" title="W grupie: jeden obok drugiego | Kolejna grupa: pod spodem">
+                <span>→ Rows ↓</span>
+              </button>
             </div>
-            <div class="tile-info">
-              <span class="tile-title">Organize &amp; Library</span>
-              <span id="organizeLibraryTileDesc" class="tile-desc">Arrange all Variant Sets on page</span>
-            </div>
-          </button>
+          </div>
 
           <!-- Tile 4: Smart Swap (Replace with Instance) -->
           <button id="btnSmartSwap" class="action-tile action-tile-architecture" onclick="handleSmartSwapTileClick()" data-tool-name="Smart Swap" data-tool-desc="Frame/Instance to Instance" title="Smart Swap: Podmień ramkę lub instancję na docelową instancję/komponent z zachowaniem 100% nadpisań">
@@ -3804,6 +4159,19 @@
             <div class="tile-info">
               <span class="tile-title">Smart Swap</span>
               <span id="smartSwapTileDesc" class="tile-desc">Frame/Instance to Instance</span>
+            </div>
+          </button>
+
+          <!-- Tile 5: Multi-Page Background & Title Case -->
+          <button id="btnMultiPageBg" class="action-tile action-tile-architecture" onclick="openSubview('page-background')" data-tool-name="Multi-Page Background & Title Case" data-tool-desc="Set canvas hex for all pages & normalize names" title="Multi-Page Background Color Picker & Page Name Title Case" style="grid-column: span 2;">
+            <div class="tile-icon-box">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
+              </svg>
+            </div>
+            <div class="tile-info">
+              <span class="tile-title">Multi-Page Background</span>
+              <span class="tile-desc">Set canvas hex for all pages &amp; Title Case page names</span>
             </div>
           </button>
         </div>
@@ -4484,6 +4852,58 @@
     </div>
   </div>
 
+  <!-- Multi-Page Background & Title Case Drawer -->
+  <div id="pageBgDrawer" class="page-bg-drawer">
+    <div class="font-replacer-header">
+      <div class="font-replacer-title">
+        <span>🎨</span>
+        <span>Multi-Page Background</span>
+        <span id="pageBgCountBadge" class="selection-info-badge">0 pages</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <button type="button" class="font-replacer-rescan-btn" onclick="refreshPageBackgroundScan()" title="Scan all pages again">
+          <span>🔄</span> Rescan
+        </button>
+        <button class="btn-icon-tiny" onclick="closeCurrentSubview()" title="Close Multi-Page Background">✕</button>
+      </div>
+    </div>
+
+    <div class="page-bg-card">
+      <div class="page-bg-picker-row">
+        <input type="color" id="pageBgColorPicker" class="page-bg-color-input" value="#1A1A1A" aria-label="Page background color picker" oninput="handlePageBgPickerChange(this.value)" />
+        <input type="text" id="pageBgHexInput" class="page-bg-hex-input" value="#1A1A1A" maxlength="7" placeholder="#1A1A1A" aria-label="Page background hex" oninput="handlePageBgHexInput(this.value)" />
+        <button type="button" class="page-bg-secondary-btn" onclick="useCurrentPageBgHex()" title="Copy background color from current page">
+          <span>Use Current</span>
+        </button>
+      </div>
+
+      <div class="page-bg-swatches" aria-label="Color presets">
+        <button type="button" class="page-bg-swatch" style="background: #1A1A1A;" onclick="selectPageBgPreset('#1A1A1A')" title="#1A1A1A"></button>
+        <button type="button" class="page-bg-swatch" style="background: #1E1E1E;" onclick="selectPageBgPreset('#1E1E1E')" title="#1E1E1E (Figma Dark)"></button>
+        <button type="button" class="page-bg-swatch" style="background: #121214;" onclick="selectPageBgPreset('#121214')" title="#121214"></button>
+        <button type="button" class="page-bg-swatch" style="background: #2C2C2E;" onclick="selectPageBgPreset('#2C2C2E')" title="#2C2C2E"></button>
+        <button type="button" class="page-bg-swatch" style="background: #F5F5F5;" onclick="selectPageBgPreset('#F5F5F5')" title="#F5F5F5"></button>
+        <button type="button" class="page-bg-swatch" style="background: #FFFFFF;" onclick="selectPageBgPreset('#FFFFFF')" title="#FFFFFF"></button>
+      </div>
+
+      <label class="text-case-checkbox-label" title="Also scan all page names and convert any non-Title Case names">
+        <input type="checkbox" id="chkPageBgTitleCase" class="sync-checkbox" checked />
+        <span>Also normalize all page names to Title Case</span>
+      </label>
+
+      <div class="page-bg-actions-row">
+        <button type="button" class="page-bg-primary-btn" onclick="applyMultiPageBackground()">
+          <span>🎨 Apply to All Pages</span>
+        </button>
+        <button type="button" class="page-bg-secondary-btn" onclick="applyPageTitleCaseOnly()" title="Only rename pages to Title Case without changing background color">
+          <span>🔤 Title Case Only</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="pageBgList" class="page-bg-list"></div>
+  </div>
+
   <!-- Token Audit View Container -->
   <div id="auditContainer" class="content-container audit-container" style="display: none;">
     <!-- Summary Header Box -->
@@ -4533,6 +4953,22 @@
       <button class="audit-pill" data-filter="stroke" onclick="setAuditFilter('stroke')">
         <span>Stroke</span> <span id="filterCountStroke" class="pill-count">(0)</span>
       </button>
+    </div>
+
+    <!-- Post-Scan Auto-Fix Banner -->
+    <div id="auditAutoFixBanner" class="audit-autofix-banner" style="display: none;">
+      <div class="audit-autofix-info">
+        <span class="audit-autofix-title">⚡ Samodzielna naprawa wg Metrics &amp; Scopes</span>
+        <span id="auditAutoFixDesc" class="audit-autofix-desc">Odepnij błędne/obce zmienne i przypisz najlepiej pasujące tokeny zgodnie ze Scope.</span>
+      </div>
+      <div class="audit-autofix-actions">
+        <button type="button" id="btnAuditAutoFixExact" class="mamf-btn mamf-btn-secondary audit-autofix-btn" onclick="handleAuditAutoFix('exact')" title="Odepnij niepoprawne zmienne i przypisz tylko dokładne dopasowania z Metrics/Schemes zgodnie ze Scope">
+          <span>🎯 Tylko dokładne</span>
+        </button>
+        <button type="button" id="btnAuditAutoFixSnap" class="mamf-btn mamf-btn-primary audit-autofix-btn" onclick="handleAuditAutoFix('snap')" title="Odepnij niepoprawne zmienne i przypisz dokładne lub najbliższe zbliżone tokeny z Metrics/Schemes zgodnie ze Scope">
+          <span>⚡ Dopnij + zbliżone</span>
+        </button>
+      </div>
     </div>
 
     <!-- Audit Subtabs Bar: Active vs Ignored -->
@@ -4840,7 +5276,8 @@
       modelsList: [],
       selection: null,
       isConnected: false,
-      isGenerating: false
+      isGenerating: false,
+      organizeLayoutMode: 'columns'
     };
 
     // DOM Elements
@@ -4891,6 +5328,7 @@
         const isTextCaseOpen = typeof textCaseDrawer !== 'undefined' && textCaseDrawer && textCaseDrawer.classList.contains('open');
         const isSmartSwapOpen = typeof smartSwapDrawer !== 'undefined' && smartSwapDrawer && smartSwapDrawer.classList.contains('open');
         const isFontReplacerOpen = typeof fontReplacerDrawer !== 'undefined' && fontReplacerDrawer && fontReplacerDrawer.classList.contains('open');
+        const isPageBgOpen = typeof pageBgDrawer !== 'undefined' && pageBgDrawer && pageBgDrawer.classList.contains('open');
         const syncModal = document.getElementById('syncComponentsModal');
         const isSyncModalOpen = syncModal && syncModal.classList.contains('active');
         const connectModalEl = document.getElementById('connectModal');
@@ -4899,7 +5337,7 @@
         const isMissingModalOpen = missingModal && missingModal.classList.contains('active');
 
         // Manage body background class to eliminate any color cutoff
-        const anyDrawerOpen = isGeneratorOpen || isAiOpen || isRetextifierOpen || isTextCaseOpen || isSmartSwapOpen || isFontReplacerOpen;
+        const anyDrawerOpen = isGeneratorOpen || isAiOpen || isRetextifierOpen || isTextCaseOpen || isSmartSwapOpen || isFontReplacerOpen || isPageBgOpen;
         if (anyDrawerOpen) {
           document.body.classList.add('has-drawer-open');
         } else {
@@ -4939,6 +5377,9 @@
         } else if (isFontReplacerOpen) {
           targetWidth = 640;
           targetHeight = 820;
+        } else if (isPageBgOpen) {
+          targetWidth = 640;
+          targetHeight = 760;
         } else {
           // Command Launcher Dashboard
           targetWidth = 640;
@@ -4965,6 +5406,7 @@
       if (typeof textCaseDrawer !== 'undefined' && textCaseDrawer) { textCaseDrawer.classList.remove('open'); if (btnTextCase) btnTextCase.classList.remove('active'); }
       if (typeof smartSwapDrawer !== 'undefined' && smartSwapDrawer) { smartSwapDrawer.classList.remove('open'); if (btnSmartSwap) btnSmartSwap.classList.remove('active'); }
       if (typeof fontReplacerDrawer !== 'undefined' && fontReplacerDrawer) { fontReplacerDrawer.classList.remove('open'); if (btnFontReplacer) btnFontReplacer.classList.remove('active'); }
+      if (typeof pageBgDrawer !== 'undefined' && pageBgDrawer) { pageBgDrawer.classList.remove('open'); if (btnMultiPageBg) btnMultiPageBg.classList.remove('active'); }
 
       if (viewName === 'variables' || viewName === 'audit') {
         if (stickyHeader) stickyHeader.style.display = 'none';
@@ -5009,6 +5451,12 @@
         if (stickyIcon) stickyIcon.textContent = '🔤';
         if (stickyText) stickyText.textContent = 'Font Replacer';
         initFontReplacerView();
+      } else if (viewName === 'page-background') {
+        if (pageBgDrawer) pageBgDrawer.classList.add('open');
+        if (btnMultiPageBg) btnMultiPageBg.classList.add('active');
+        if (stickyIcon) stickyIcon.textContent = '🎨';
+        if (stickyText) stickyText.textContent = 'Multi-Page Background';
+        initPageBackgroundView();
       }
 
       updateWindowSize();
@@ -5024,6 +5472,7 @@
       if (typeof textCaseDrawer !== 'undefined' && textCaseDrawer) { textCaseDrawer.classList.remove('open'); if (btnTextCase) btnTextCase.classList.remove('active'); }
       if (typeof smartSwapDrawer !== 'undefined' && smartSwapDrawer) { smartSwapDrawer.classList.remove('open'); if (btnSmartSwap) btnSmartSwap.classList.remove('active'); }
       if (typeof fontReplacerDrawer !== 'undefined' && fontReplacerDrawer) { fontReplacerDrawer.classList.remove('open'); if (btnFontReplacer) btnFontReplacer.classList.remove('active'); }
+      if (typeof pageBgDrawer !== 'undefined' && pageBgDrawer) { pageBgDrawer.classList.remove('open'); if (btnMultiPageBg) btnMultiPageBg.classList.remove('active'); }
 
       closeVariablesView();
 
@@ -5072,6 +5521,10 @@
       if (typeof fontReplacerDrawer !== 'undefined' && fontReplacerDrawer && fontReplacerDrawer.classList.contains('open')) {
         fontReplacerDrawer.classList.remove('open');
         if (typeof btnFontReplacer !== 'undefined' && btnFontReplacer) btnFontReplacer.classList.remove('active');
+      }
+      if (typeof pageBgDrawer !== 'undefined' && pageBgDrawer && pageBgDrawer.classList.contains('open')) {
+        pageBgDrawer.classList.remove('open');
+        if (typeof btnMultiPageBg !== 'undefined' && btnMultiPageBg) btnMultiPageBg.classList.remove('active');
       }
 
       if (stickyHeader) stickyHeader.style.display = 'none';
@@ -5379,6 +5832,168 @@
 
       const config = TEXT_CASE_CONFIGS[validCase];
       showToast(`Konwertowano na ${config ? config.label : validCase} 🔤`, false);
+    }
+
+    // ==========================================
+    // MULTI-PAGE BACKGROUND & TITLE CASE LOGIC
+    // ==========================================
+    const btnMultiPageBg = document.getElementById('btnMultiPageBg');
+    const pageBgDrawer = document.getElementById('pageBgDrawer');
+    let pageBgCurrentHex = '#1E1E1E';
+    let pageBgHasUserEditedHex = false;
+
+    function normalizeUiHex(rawHex) {
+      const clean = (rawHex || '').trim().replace(/^#/, '');
+      if (/^[0-9a-fA-F]{3}$/.test(clean)) {
+        return '#' + clean.split('').map(c => c + c).join('').toUpperCase();
+      }
+      if (/^[0-9a-fA-F]{6}$/.test(clean)) {
+        return '#' + clean.toUpperCase();
+      }
+      return null;
+    }
+
+    function setPageBgInputs(hex) {
+      const normalized = normalizeUiHex(hex);
+      if (!normalized) return;
+      const picker = document.getElementById('pageBgColorPicker');
+      const hexInput = document.getElementById('pageBgHexInput');
+      if (picker) picker.value = normalized;
+      if (hexInput) hexInput.value = normalized;
+    }
+
+    function initPageBackgroundView() {
+      pageBgHasUserEditedHex = false;
+      refreshPageBackgroundScan();
+    }
+
+    function refreshPageBackgroundScan() {
+      parent.postMessage({ pluginMessage: { type: 'scan-pages-background' } }, '*');
+    }
+
+    function handlePageBgPickerChange(val) {
+      pageBgHasUserEditedHex = true;
+      setPageBgInputs(val);
+    }
+
+    function handlePageBgHexInput(val) {
+      pageBgHasUserEditedHex = true;
+      const normalized = normalizeUiHex(val);
+      if (normalized) {
+        const picker = document.getElementById('pageBgColorPicker');
+        if (picker) picker.value = normalized;
+      }
+    }
+
+    function selectPageBgPreset(hex) {
+      pageBgHasUserEditedHex = true;
+      setPageBgInputs(hex);
+    }
+
+    function useCurrentPageBgHex() {
+      pageBgHasUserEditedHex = true;
+      setPageBgInputs(pageBgCurrentHex || '#1E1E1E');
+    }
+
+    function applyMultiPageBackground() {
+      const hexInput = document.getElementById('pageBgHexInput');
+      const chkTitleCase = document.getElementById('chkPageBgTitleCase');
+      const normalized = normalizeUiHex(hexInput ? hexInput.value : '');
+      if (!normalized) {
+        showToast('Wpisz poprawny kolor HEX, np. #1A1A1A.', true);
+        return;
+      }
+      setPageBgInputs(normalized);
+      parent.postMessage({
+        pluginMessage: {
+          type: 'apply-pages-background',
+          hex: normalized,
+          applyBackground: true,
+          applyTitleCase: Boolean(chkTitleCase && chkTitleCase.checked)
+        }
+      }, '*');
+    }
+
+    function applyPageTitleCaseOnly() {
+      parent.postMessage({
+        pluginMessage: {
+          type: 'apply-pages-background',
+          applyBackground: false,
+          applyTitleCase: true
+        }
+      }, '*');
+    }
+
+    function renderPageBgList(pages) {
+      const listEl = document.getElementById('pageBgList');
+      const badgeEl = document.getElementById('pageBgCountBadge');
+      if (!listEl) return;
+
+      const items = Array.isArray(pages) ? pages : [];
+      const renameCount = items.filter(p => p.needsTitleCase).length;
+      if (badgeEl) {
+        badgeEl.textContent = renameCount > 0
+          ? `${items.length} pages · ${renameCount} to Title Case`
+          : `${items.length} pages`;
+      }
+
+      listEl.innerHTML = '';
+      if (items.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'padding: 16px; text-align: center; color: #71717A; font-size: 11px;';
+        empty.textContent = 'No pages found.';
+        listEl.appendChild(empty);
+        return;
+      }
+
+      for (const page of items) {
+        const row = document.createElement('div');
+        row.className = 'page-bg-item';
+
+        const left = document.createElement('div');
+        left.className = 'page-bg-item-left';
+
+        const dot = document.createElement('span');
+        dot.className = 'page-bg-item-dot';
+        dot.style.background = page.backgroundHex || 'transparent';
+
+        const names = document.createElement('div');
+        names.className = 'page-bg-item-names';
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'page-bg-item-name';
+        nameEl.textContent = page.name;
+        names.appendChild(nameEl);
+
+        if (page.needsTitleCase) {
+          const renameEl = document.createElement('span');
+          renameEl.className = 'page-bg-item-rename';
+          renameEl.textContent = `→ ${page.suggestedTitleCaseName}`;
+          names.appendChild(renameEl);
+        }
+
+        left.appendChild(dot);
+        left.appendChild(names);
+
+        const meta = document.createElement('div');
+        meta.className = 'page-bg-item-meta';
+
+        if (page.isCurrent) {
+          const curPill = document.createElement('span');
+          curPill.className = 'page-bg-current-pill';
+          curPill.textContent = 'Current';
+          meta.appendChild(curPill);
+        }
+
+        const hexPill = document.createElement('span');
+        hexPill.className = 'page-bg-hex-pill';
+        hexPill.textContent = page.backgroundHex || 'None';
+        meta.appendChild(hexPill);
+
+        row.appendChild(left);
+        row.appendChild(meta);
+        listEl.appendChild(row);
+      }
     }
 
     // ==========================================
@@ -6269,15 +6884,42 @@
       }, '*');
     }
 
+    function setOrganizeLayoutMode(mode, persist = true) {
+      const normalized = mode === 'rows' ? 'rows' : 'columns';
+      state.organizeLayoutMode = normalized;
+
+      const colsBtn = document.getElementById('btnOrganizeLayoutCols');
+      const rowsBtn = document.getElementById('btnOrganizeLayoutRows');
+      if (colsBtn) {
+        const isCols = normalized === 'columns';
+        colsBtn.classList.toggle('active', isCols);
+        colsBtn.setAttribute('aria-pressed', String(isCols));
+      }
+      if (rowsBtn) {
+        const isRows = normalized === 'rows';
+        rowsBtn.classList.toggle('active', isRows);
+        rowsBtn.setAttribute('aria-pressed', String(isRows));
+      }
+
+      if (persist) {
+        parent.postMessage({ pluginMessage: { type: 'set-organize-layout-mode', mode: normalized } }, '*');
+      }
+    }
+
     function handleOrganizeAndLibrary() {
       if (lastContextSelection.count === 0) {
         showToast('Arranging all Variant Sets on page... 📐', false);
       } else if (!lastContextSelection.isOnLibraryPage) {
-        showToast('Moving to "    🔷 Components" page & arranging... 🚀', false);
+        showToast('Moving to Library page & arranging... 🚀', false);
       } else {
         showToast('Arranging selected Variants in grid... 📐', false);
       }
-      parent.postMessage({ pluginMessage: { type: 'organize-and-library' } }, '*');
+      parent.postMessage({
+        pluginMessage: {
+          type: 'organize-and-library',
+          layoutMode: state.organizeLayoutMode
+        }
+      }, '*');
     }
 
     function handleSmartSwapTileClick() {
@@ -9536,6 +10178,36 @@ Instructions:
       bar.innerHTML = `<span class="audit-trusted-title">Zaufane (pomijane):</span>${chips}`;
     }
 
+    function getActiveFilteredAuditIssues() {
+      if (!lastAuditResult || !Array.isArray(lastAuditResult.issues)) return [];
+      const activePool = lastAuditResult.issues.filter(i => !i.isIgnored);
+      if (currentAuditFilter === 'unbound') return activePool.filter(i => i.issueType === 'unbound');
+      if (currentAuditFilter === 'missing') return activePool.filter(i => i.issueType === 'missing');
+      if (currentAuditFilter === 'foreign') return activePool.filter(i => i.issueType === 'foreign');
+      if (currentAuditFilter === 'color') return activePool.filter(i => i.category === 'color');
+      if (currentAuditFilter === 'gap') return activePool.filter(i => i.category === 'gap');
+      if (currentAuditFilter === 'padding') return activePool.filter(i => i.category === 'padding');
+      if (currentAuditFilter === 'radius') return activePool.filter(i => i.category === 'radius');
+      if (currentAuditFilter === 'stroke') return activePool.filter(i => i.category === 'stroke');
+      return activePool;
+    }
+
+    function handleAuditAutoFix(mode) {
+      const targetIssues = getActiveFilteredAuditIssues();
+      if (targetIssues.length === 0) return;
+      const nodeIds = Array.from(new Set(targetIssues.flatMap(i => (i.nodeIds && i.nodeIds.length > 0) ? i.nodeIds : [i.nodeId])));
+      if (nodeIds.length === 0) return;
+      parent.postMessage({
+        pluginMessage: {
+          type: 'audit-auto-fix',
+          mode: mode === 'exact' ? 'exact' : 'snap',
+          filter: currentAuditFilter || 'all',
+          scope: currentAuditScope,
+          nodeIds: nodeIds
+        }
+      }, '*');
+    }
+
     function handleRestoreAllIgnored() {
       if (!lastAuditResult || !lastAuditResult.issues) return;
       const ignoredIssues = lastAuditResult.issues.filter(i => !!i.isIgnored);
@@ -9575,6 +10247,7 @@ Instructions:
       const badgeMissing = document.getElementById('auditSummaryBadgeMissing');
       const badgeForeign = document.getElementById('auditSummaryBadgeForeign');
       const btnSelectAll = document.getElementById('btnSelectAllIssues');
+      const autoFixBanner = document.getElementById('auditAutoFixBanner');
 
       renderTrustedLibrariesBar(data.trustedLibraries || []);
 
@@ -9602,6 +10275,7 @@ Instructions:
         if (badgeMissing) badgeMissing.style.display = 'none';
         if (badgeForeign) badgeForeign.style.display = 'none';
         if (btnSelectAll) btnSelectAll.style.display = 'none';
+        if (autoFixBanner) autoFixBanner.style.display = 'none';
         if (auditList) {
           auditList.innerHTML = `
             <div class="empty-state">
@@ -9720,10 +10394,22 @@ Instructions:
         filtered = pool.filter(i => i.category === 'stroke');
       }
 
+      const totalUniqueNodes = new Set(filtered.flatMap(i => (i.nodeIds && i.nodeIds.length > 0) ? i.nodeIds : [i.nodeId])).size;
+
       if (btnSelectAll) {
-        const totalUniqueNodes = new Set(filtered.flatMap(i => (i.nodeIds && i.nodeIds.length > 0) ? i.nodeIds : [i.nodeId])).size;
         btnSelectAll.style.display = totalUniqueNodes > 0 ? 'inline-flex' : 'none';
         btnSelectAll.innerHTML = `<span>${currentAuditSubtab === 'ignored' ? 'Select All Ignored' : 'Select All'} (${totalUniqueNodes})</span>`;
+      }
+
+      const autoFixBanner = document.getElementById('auditAutoFixBanner');
+      const autoFixDesc = document.getElementById('auditAutoFixDesc');
+      if (autoFixBanner) {
+        const showBanner = currentAuditSubtab === 'active' && filtered.length > 0 && totalUniqueNodes > 0;
+        autoFixBanner.style.display = showBanner ? 'flex' : 'none';
+        if (showBanner && autoFixDesc) {
+          const filterSuffix = currentAuditFilter && currentAuditFilter !== 'all' ? ` · filtr: ${currentAuditFilter}` : '';
+          autoFixDesc.textContent = `Odepnij błędne/obce zmienne i przypisz tokeny Metrics/Schemes wg Scopes (${totalUniqueNodes} ${totalUniqueNodes === 1 ? 'warstwa' : 'warstw'}${filterSuffix}).`;
+        }
       }
 
       if (pool.length === 0) {
@@ -9779,7 +10465,9 @@ Instructions:
           : (isMissing
             ? '⚠️ Missing'
             : (isForeign
-              ? (issue.foreignSource === 'remote' ? '🌐 External Lib' : '📁 Other Local Lib')
+              ? (issue.foreignSource === 'remote-unlinked'
+                ? '🔌 Unpublished / Unlinked'
+                : (issue.foreignSource === 'remote' ? '🌐 External Lib' : '📁 Other Local Lib'))
               : '⭕ Unbound'));
         const layerIcon = getLayerIconSvg(issue.layerType);
         const colorChip = (issue.category === 'color' && typeof issue.value === 'string' && issue.value.startsWith('#'))
@@ -10232,6 +10920,7 @@ Instructions:
         state.groqModel = (msg.groqModel && !msg.groqModel.includes('llama-3.3-70b-versatile')) ? msg.groqModel : 'openai/gpt-oss-120b';
         state.apiKey = msg.apiKey || '';
         state.selectedModel = (msg.selectedModel && !msg.selectedModel.includes('2.0') && !msg.selectedModel.includes('2.5') && !msg.selectedModel.includes('8b') && !msg.selectedModel.includes('high') && !msg.selectedModel.includes('pro') && !msg.selectedModel.includes('preview')) ? msg.selectedModel : 'models/gemini-3.5-flash-lite';
+        setOrganizeLayoutMode(msg.organizeLayoutMode === 'rows' ? 'rows' : 'columns', false);
 
         if (groqApiKeyInput) groqApiKeyInput.value = state.groqApiKey;
         if (apiKeyInput) apiKeyInput.value = state.apiKey;
@@ -10499,6 +11188,25 @@ Instructions:
         }
         const modal = document.getElementById('missingTextStyleModal');
         if (modal) modal.classList.add('active');
+      } else if (msg.type === 'page-background-scan') {
+        pageBgCurrentHex = msg.currentPageHex || '#1E1E1E';
+        if (!pageBgHasUserEditedHex && msg.currentPageHex) {
+          setPageBgInputs(msg.currentPageHex);
+        }
+        renderPageBgList(msg.pages || []);
+      } else if (msg.type === 'page-background-applied') {
+        pageBgCurrentHex = msg.currentPageHex || pageBgCurrentHex;
+        renderPageBgList(msg.pages || []);
+        const summaryParts = [];
+        if (msg.appliedHex) {
+          summaryParts.push(`${msg.appliedHex} (${msg.updatedBackgroundCount} pages)`);
+        }
+        if (typeof msg.renamedPagesCount === 'number' && msg.renamedPagesCount > 0) {
+          summaryParts.push(`${msg.renamedPagesCount} renamed to Title Case`);
+        }
+        if (summaryParts.length > 0) {
+          showToast(`🎨 ${summaryParts.join(' · ')}`, false);
+        }
       } else if (msg.type === 'library-styles-cache-count') {
         const badge = document.getElementById('libraryStylesCacheCountBadge');
         if (badge) {

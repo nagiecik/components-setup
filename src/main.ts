@@ -25,10 +25,17 @@ import {
 } from './components/setup';
 import {
   isLibraryComponentsPage,
+  isLibraryScreensPage,
   getOrCreateTargetPage,
   moveSelectedToComponentsPage,
-  organizeElementsOnCanvas
+  organizeElementsOnCanvas,
+  OrganizeLayoutMode,
+  setOrganizeLayoutMode
 } from './components/canvas';
+import {
+  applyMultiPageBackgroundAndTitleCase,
+  scanAllPagesSummary
+} from './components/pages';
 import { handleGenerateComponent, handleGeneratePreset } from './generator/presets';
 import { handleConvertCase } from './casing/casing';
 import {
@@ -52,6 +59,7 @@ import { cleanRebuildComponentProperties } from './properties/rebuilder';
 import { reorderComponentSetVariants } from './components/canvas';
 import { ensureTemporaryMetricsCollection, preloadBoundVariablesForRoots } from './variables/variables';
 import {
+  runAuditAutoFix,
   runSmartTokenAutoBinder,
   syncLibraryTextStylesToCache,
   getLibraryStylesCacheCount,
@@ -151,7 +159,8 @@ async function sendSmartSwapSelectionToUI() {
   const selection = figma.currentPage.selection;
   const items = selection.map(n => ({ id: n.id, name: n.name, type: n.type }));
   const nodeTypes = selection.map(n => n.type);
-  const isOnLibraryPage = isLibraryComponentsPage(figma.currentPage);
+  const isOnLibraryPage =
+    isLibraryComponentsPage(figma.currentPage) || isLibraryScreensPage(figma.currentPage);
   const hasComponentSet = hasComponentSetInSelection(selection);
   const syncTargetName = resolveSyncTargetName(selection);
 
@@ -828,6 +837,17 @@ const handleUiMessage = async (msg: any) => {
     await scanDocument(msg.scope || 'page');
   } else if (msg.type === 'audit-tokens') {
     await runAuditTokens(msg.scope || 'selection');
+  } else if (msg.type === 'audit-auto-fix') {
+    const scope: 'selection' | 'page' = msg.scope === 'page' ? 'page' : 'selection';
+    const nodeIds: string[] = Array.isArray(msg.nodeIds) ? msg.nodeIds : [];
+    await runAuditAutoFix(nodeIds, {
+      mode: msg.mode === 'exact' ? 'exact' : 'snap',
+      filter: msg.filter || 'all',
+      detachUnmatchedForeign: true,
+      notify: true,
+    });
+    await runAuditTokens(scope);
+    return;
   } else if (msg.type === 'run-master-setup') {
     await runMasterSetup(msg);
     return;
@@ -1026,19 +1046,68 @@ const handleUiMessage = async (msg: any) => {
     }
   } else if (msg.type === 'resize-window') {
     figma.ui.resize(640, 1024);
+  } else if (msg.type === 'set-organize-layout-mode') {
+    const mode: OrganizeLayoutMode = msg.mode === 'rows' ? 'rows' : 'columns';
+    await setOrganizeLayoutMode(mode);
   } else if (msg.type === 'move-to-components-page') {
-    await moveSelectedToComponentsPage();
+    const layoutMode: OrganizeLayoutMode | undefined =
+      msg.layoutMode === 'rows' || msg.layoutMode === 'columns' ? msg.layoutMode : undefined;
+    await moveSelectedToComponentsPage(layoutMode);
     sendSmartSwapSelectionToUI();
   } else if (msg.type === 'organize-and-library') {
+    const layoutMode: OrganizeLayoutMode | undefined =
+      msg.layoutMode === 'rows' || msg.layoutMode === 'columns' ? msg.layoutMode : undefined;
+    if (layoutMode) {
+      await setOrganizeLayoutMode(layoutMode);
+    }
     const selection = figma.currentPage.selection;
+    const isOnLibrary =
+      isLibraryComponentsPage(figma.currentPage) || isLibraryScreensPage(figma.currentPage);
     if (selection.length === 0) {
-      await organizeElementsOnCanvas(true);
-    } else if (!isLibraryComponentsPage(figma.currentPage)) {
-      await moveSelectedToComponentsPage();
+      await organizeElementsOnCanvas(true, figma.currentPage, layoutMode);
+    } else if (!isOnLibrary) {
+      await moveSelectedToComponentsPage(layoutMode);
     } else {
-      await organizeElementsOnCanvas(false);
+      await organizeElementsOnCanvas(false, figma.currentPage, layoutMode);
     }
     sendSmartSwapSelectionToUI();
+  } else if (msg.type === 'scan-pages-background') {
+    const scan = await scanAllPagesSummary();
+    figma.ui.postMessage({
+      type: 'page-background-scan',
+      pages: scan.pages,
+      currentPageHex: scan.currentPageHex,
+    });
+  } else if (msg.type === 'apply-pages-background') {
+    const applyBackground = msg.applyBackground !== false;
+    const applyTitleCase = msg.applyTitleCase !== false;
+    const result = await applyMultiPageBackgroundAndTitleCase({
+      hex: msg.hex,
+      applyBackground,
+      applyTitleCase,
+    });
+    if (result) {
+      const parts: string[] = [];
+      if (applyBackground && result.appliedHex) {
+        parts.push(`background ${result.appliedHex} on ${result.updatedBackgroundCount} page${result.updatedBackgroundCount === 1 ? '' : 's'}`);
+      }
+      if (applyTitleCase) {
+        parts.push(
+          result.renamedPagesCount > 0
+            ? `${result.renamedPagesCount} page${result.renamedPagesCount === 1 ? '' : 's'} renamed to Title Case`
+            : 'all page names already Title Case'
+        );
+      }
+      figma.notify(`Updated ${parts.join(' · ')}! 🎨`);
+      figma.ui.postMessage({
+        type: 'page-background-applied',
+        pages: result.pages,
+        currentPageHex: result.currentPageHex,
+        updatedBackgroundCount: result.updatedBackgroundCount,
+        renamedPagesCount: result.renamedPagesCount,
+        appliedHex: result.appliedHex,
+      });
+    }
   } else if (msg.type === 'get-selection') {
     sendSelectionToUI();
     sendSmartSwapSelectionToUI();

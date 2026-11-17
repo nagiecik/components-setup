@@ -4,6 +4,13 @@ import {
 } from './variables';
 import { ResolvedVariable } from '../types/variables';
 import { loadFontsForTextNode } from '../utils/fonts';
+import {
+  createAppleDetectionCaches,
+  createAuditVariableContext,
+  isInsideOfficialAppleSubtree,
+  LibraryCollectionInfo,
+} from '../audit/inspector';
+import { getNodeIgnoredAuditKeys } from '../audit/registry';
 
 export interface AutoBinderOptions {
   mode: 'exact' | 'snap';
@@ -12,6 +19,13 @@ export interface AutoBinderOptions {
   forceRebind?: boolean;
   setupContainers?: boolean;
   bindTokens?: boolean;
+}
+
+export interface AuditAutoFixOptions {
+  mode: 'exact' | 'snap';
+  filter?: string;
+  detachUnmatchedForeign?: boolean;
+  notify?: boolean;
 }
 
 interface ResolvedColor {
@@ -50,6 +64,9 @@ interface PrecomputedMetric {
   lowerName: string;
   scopes: VariableScope[];
   value: number;
+  isLocal: boolean;
+  collectionName: string;
+  isMetricsCollection: boolean;
 }
 
 interface PrecomputedColor {
@@ -58,11 +75,16 @@ interface PrecomputedColor {
   lowerName: string;
   scopes: VariableScope[];
   color: ResolvedColor;
+  isLocal: boolean;
+  collectionName: string;
+  isSchemesCollection: boolean;
 }
 
 // Global session caches to prevent re-querying Figma / teamLibrary APIs on repeated runs
 let sessionVariablesLoaded = false;
 const sessionAllColsMap = new Map<string, VariableCollection>();
+const sessionLibraryInfoByKey = new Map<string, LibraryCollectionInfo>();
+const sessionLocalColIds = new Set<string>();
 const sessionAllVarsMap = new Map<string, Variable>();
 export const CACHED_VARIABLES_MAP = sessionAllVarsMap;
 export let CACHED_TEXT_STYLES: IndexedTextStyle[] = [];
@@ -79,6 +101,8 @@ export function invalidateAutoBinderSessionCache(): void {
   sessionPrecomputedColors = null;
   CACHED_TEXT_STYLES = [];
   sessionAllColsMap.clear();
+  sessionLibraryInfoByKey.clear();
+  sessionLocalColIds.clear();
   sessionAllVarsMap.clear();
 }
 
@@ -513,6 +537,8 @@ export async function preloadAutoBinderCaches(
     sessionPrecomputedMetrics = null;
     sessionPrecomputedColors = null;
     sessionAllColsMap.clear();
+    sessionLibraryInfoByKey.clear();
+    sessionLocalColIds.clear();
     sessionAllVarsMap.clear();
 
     try {
@@ -521,7 +547,10 @@ export async function preloadAutoBinderCaches(
 
     try {
       const localCols = await figma.variables.getLocalVariableCollectionsAsync();
-      for (const c of localCols) sessionAllColsMap.set(c.id, c);
+      for (const c of localCols) {
+        sessionAllColsMap.set(c.id, c);
+        sessionLocalColIds.add(c.id);
+      }
     } catch (e) {}
 
     try {
@@ -539,6 +568,12 @@ export async function preloadAutoBinderCaches(
     try {
       const libraryCollections = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
       for (const libCol of libraryCollections) {
+        if (libCol.key) {
+          sessionLibraryInfoByKey.set(libCol.key, {
+            name: libCol.name || 'Remote Collection',
+            libraryName: libCol.libraryName || 'External Library',
+          });
+        }
         if (libCol.name.trim().startsWith('_')) continue;
         sessionAllColsMap.set(libCol.key, libCol as any);
         try {
@@ -652,7 +687,11 @@ export async function preloadAutoBinderCaches(
 
         const col = sessionAllColsMap.get(v.variableCollectionId);
         const colName = col ? col.name.trim() : '';
-        if (colName.startsWith('_')) return;
+        const isMetricsCollection = /^(metrics|_metrics)$/i.test(colName);
+        if (colName.startsWith('_') && !isMetricsCollection) return;
+
+        const isLocal = !(v as any).remote && sessionLocalColIds.has(v.variableCollectionId);
+        const isSchemesCollection = /^schemes$/i.test(colName);
 
         if (v.resolvedType === 'FLOAT') {
           const val = await resolveVarValue(v);
@@ -663,6 +702,9 @@ export async function preloadAutoBinderCaches(
               lowerName: v.name.toLowerCase(),
               scopes: v.scopes,
               value: val,
+              isLocal,
+              collectionName: colName,
+              isMetricsCollection,
             });
           }
         } else if (v.resolvedType === 'COLOR') {
@@ -674,6 +716,9 @@ export async function preloadAutoBinderCaches(
               lowerName: v.name.toLowerCase(),
               scopes: v.scopes,
               color: colVal as ResolvedColor,
+              isLocal,
+              collectionName: colName,
+              isSchemesCollection,
             });
           }
         }
@@ -795,12 +840,15 @@ export async function runSmartTokenAutoBinder(
 
   // --- TRAVERSAL OF SELECTION WITH UI YIELD ---
   let processedCount = 0;
+  const smartAppleCaches = createAppleDetectionCaches();
 
   for (const node of allNodesToProcess) {
     processedCount++;
     if (allNodesToProcess.length > 30 && processedCount % 25 === 0) {
       await new Promise((r) => setTimeout(r, 0));
     }
+
+    const isAppleNode = await isInsideOfficialAppleSubtree(node, sessionLibraryInfoByKey, smartAppleCaches);
 
     // Inline Container Setup during Single Tree Walk when setupContainers === true
     if (options.setupContainers) {
@@ -1028,6 +1076,7 @@ export async function runSmartTokenAutoBinder(
     }
 
     // --- B. BIND COLORS (schemes) ---
+    if (!isAppleNode) {
     const ancestorRole = getAncestorContainerRole(node);
 
     if ('fills' in node && Array.isArray((node as any).fills) && (node as any).fills.length > 0) {
@@ -1205,6 +1254,7 @@ export async function runSmartTokenAutoBinder(
         }
       } catch (err) {}
     }
+    }
 
     // --- C. BIND TEXT STYLES (ENTIRE STYLE ONLY - NO SINGLE-VARIABLE FALLBACK!) ---
     if (node.type === 'TEXT') {
@@ -1362,4 +1412,699 @@ export async function runSmartTokenAutoBinder(
     colorsBound: colorsBoundCount,
     textStylesBound: textStylesBoundCount,
   };
+}
+
+type MetricSemanticField = 'paddingX' | 'paddingY' | 'gap' | 'radius' | 'stroke' | 'size' | 'opacity' | 'typography';
+
+function isNodeControlCandidate(node: SceneNode): boolean {
+  const nameLower = (node.name || '').toLowerCase();
+  if (
+    nameLower.includes('button') ||
+    nameLower.includes('input') ||
+    nameLower.includes('control') ||
+    nameLower.includes('tag') ||
+    nameLower.includes('badge') ||
+    nameLower.includes('chip') ||
+    nameLower.includes('tab') ||
+    nameLower.includes('toggle') ||
+    nameLower.includes('switch') ||
+    nameLower.includes('checkbox') ||
+    nameLower.includes('radio')
+  ) {
+    return true;
+  }
+  return (
+    'height' in node &&
+    'width' in node &&
+    (node as any).height > 0 &&
+    (node as any).height <= 56 &&
+    (node as any).width > 0 &&
+    (node as any).width <= 320
+  );
+}
+
+function getAncestorColorRole(node: SceneNode): 'primary' | 'primaryContainer' | 'surface' | 'background' | null {
+  let curr: BaseNode | null = node.parent;
+  while (curr && curr.type !== 'PAGE') {
+    const boundFillVar = (curr as any).boundVariables?.fills?.[0];
+    if (boundFillVar) {
+      const varObj = sessionAllVarsMap.get(boundFillVar.id);
+      if (varObj) {
+        const vName = varObj.name.toLowerCase();
+        if (vName.includes('primarycontainer')) return 'primaryContainer';
+        if (vName.includes('primary')) return 'primary';
+        if (vName.includes('surface')) return 'surface';
+        if (vName.includes('background')) return 'background';
+      }
+    }
+    curr = curr.parent;
+  }
+  return null;
+}
+
+function findBestMetricToken(
+  rawValue: number,
+  allowedScopes: VariableScope[],
+  semanticField: MetricSemanticField,
+  options: {
+    mode: 'exact' | 'snap';
+    isControl: boolean;
+    allowedIds?: Set<string>;
+    hintName?: string;
+  },
+  precomputedMetrics: PrecomputedMetric[]
+): PrecomputedMetric | null {
+  const candidates = precomputedMetrics.filter((m) => {
+    if (options.allowedIds && !options.allowedIds.has(m.variable.id)) return false;
+    return checkScopeMatch(m.scopes, allowedScopes);
+  });
+
+  const hintLower = (options.hintName || '').toLowerCase();
+  const maxSnapDiff = Math.min(24, Math.max(8, rawValue * 0.45));
+
+  let bestToken: PrecomputedMetric | null = null;
+  let bestScore = -Infinity;
+  let minDiff = Infinity;
+
+  for (const item of candidates) {
+    const vName = item.lowerName;
+
+    if (rawValue > 0) {
+      if (semanticField === 'paddingX' || semanticField === 'paddingY') {
+        if (vName.includes('/gap/') || vName.startsWith('gap/') || vName.includes('gap')) continue;
+      } else if (semanticField === 'gap') {
+        if (
+          vName.includes('inset') ||
+          vName.includes('inline') ||
+          vName.includes('block') ||
+          vName.includes('padding')
+        ) {
+          continue;
+        }
+      } else if (semanticField === 'stroke') {
+        if (vName.includes('gap') || vName.includes('padding') || vName.includes('radius')) continue;
+      }
+    }
+
+    const diff = Math.abs(item.value - rawValue);
+    if (options.mode === 'exact') {
+      if (diff > 0.5) continue;
+    } else if (diff > maxSnapDiff) {
+      continue;
+    }
+
+    // Prioritize exact Metrics values, then closest scoped Metrics tokens
+    let score = diff <= 0.05 ? 1200 : diff <= 0.5 ? 900 - diff * 50 : 300 - diff * 25;
+    if (item.isMetricsCollection) score += 400;
+    if (item.isLocal) score += 200;
+
+    if (rawValue === 0) {
+      if (
+        vName === 'constant/none' ||
+        vName.endsWith('/constant/none') ||
+        vName === 'none' ||
+        vName.endsWith('/none') ||
+        vName.includes('none') ||
+        vName.includes('zero')
+      ) {
+        score += 500;
+      }
+    }
+
+    if (semanticField === 'paddingX') {
+      if (options.isControl) {
+        if (vName.startsWith('space/interactive/inline/')) score += 60;
+        else if (vName.includes('padding/buttonx') || vName.includes('padding/inputx')) score += 45;
+        else if (vName.startsWith('layout/')) score += 35;
+        else if (vName.startsWith('space/inset/')) score += 10;
+      } else {
+        if (vName.startsWith('space/inset/')) score += 60;
+        else if (vName.includes('padding/card')) score += 45;
+        else if (vName.startsWith('layout/')) score += 35;
+        else if (vName.startsWith('space/interactive/inline/')) score += 10;
+      }
+    } else if (semanticField === 'paddingY') {
+      if (options.isControl) {
+        if (vName.startsWith('space/interactive/block/')) score += 60;
+        else if (vName.includes('padding/buttony') || vName.includes('padding/inputy')) score += 45;
+        else if (vName.startsWith('layout/')) score += 35;
+        else if (vName.startsWith('space/inset/')) score += 10;
+      } else {
+        if (vName.startsWith('space/inset/')) score += 60;
+        else if (vName.includes('padding/card')) score += 45;
+        else if (vName.startsWith('layout/')) score += 35;
+        else if (vName.startsWith('space/interactive/block/')) score += 10;
+      }
+    } else if (semanticField === 'gap') {
+      if (
+        vName.startsWith('space/gap/component/') ||
+        vName.startsWith('space/gap/layout/') ||
+        vName.startsWith('gap/') ||
+        vName.startsWith('layout/') ||
+        vName.includes('/gap/') ||
+        vName.includes('extrasmall')
+      ) {
+        score += 65;
+      }
+    } else if (semanticField === 'radius') {
+      if (options.isControl) {
+        if (vName.startsWith('radius/interactive/') || vName.startsWith('radius/special/')) score += 60;
+        else if (vName.startsWith('radius/container/')) score += 10;
+      } else {
+        if (vName.startsWith('radius/container/')) score += 60;
+        else if (vName.startsWith('radius/interactive/')) score += 10;
+      }
+    } else if (semanticField === 'stroke') {
+      if (vName.startsWith('border/') || vName.startsWith('constant/1')) score += 60;
+    }
+
+    if (hintLower) {
+      const hintLeaf = hintLower.split('/').pop() || '';
+      if (hintLeaf && vName.endsWith(hintLeaf)) score += 25;
+    }
+
+    if (score > bestScore || (score === bestScore && diff < minDiff)) {
+      bestScore = score;
+      minDiff = diff;
+      bestToken = item;
+    }
+  }
+
+  return bestToken;
+}
+
+function findBestColorToken(
+  pr: number,
+  pg: number,
+  pb: number,
+  pa: number,
+  requiredScope: VariableScope,
+  nodeType: NodeType,
+  ancestorRole: 'primary' | 'primaryContainer' | 'surface' | 'background' | null,
+  options: {
+    mode: 'exact' | 'snap';
+    allowedIds?: Set<string>;
+    hintName?: string;
+  },
+  precomputedColors: PrecomputedColor[]
+): PrecomputedColor | null {
+  const candidates = precomputedColors.filter((c) => {
+    if (options.allowedIds && !options.allowedIds.has(c.variable.id)) return false;
+    if (!c.scopes || c.scopes.length === 0) return false;
+    if (requiredScope === 'STROKE_COLOR') {
+      return c.scopes.includes('ALL_SCOPES') || c.scopes.includes('STROKE_COLOR');
+    }
+    if (requiredScope === 'EFFECT_COLOR') {
+      return c.scopes.includes('ALL_SCOPES') || c.scopes.includes('EFFECT_COLOR');
+    }
+    return c.scopes.includes('ALL_SCOPES') || c.scopes.includes('ALL_FILLS') || c.scopes.includes(requiredScope);
+  });
+
+  const maxDist = options.mode === 'exact' ? 0.015 : 0.14;
+  const hintLower = (options.hintName || '').toLowerCase();
+
+  let bestToken: PrecomputedColor | null = null;
+  let bestScore = -Infinity;
+  let bestDist = Infinity;
+
+  for (const item of candidates) {
+    const resolved = item.color;
+    const dist = Math.sqrt(
+      Math.pow(pr - resolved.r, 2) +
+      Math.pow(pg - resolved.g, 2) +
+      Math.pow(pb - resolved.b, 2) +
+      Math.pow(pa - resolved.a, 2)
+    );
+    if (dist > maxDist) continue;
+
+    let score = dist <= 0.015 ? 1000 - dist * 500 : 300 - dist * 400;
+    if (item.isSchemesCollection) score += 300;
+    if (item.isLocal) score += 200;
+
+    const vName = item.lowerName;
+    if (requiredScope === 'STROKE_COLOR') {
+      if (vName.includes('outline')) score += 35;
+      if (vName.includes('border')) score += 25;
+    } else if (nodeType === 'TEXT') {
+      if (vName.includes('onprimary') && !vName.includes('container') && ancestorRole === 'primary') score += 50;
+      else if (vName.includes('onprimarycontainer') && ancestorRole === 'primaryContainer') score += 50;
+      else if ((vName.includes('onsurface') || vName.includes('onbackground')) && (ancestorRole === 'surface' || ancestorRole === 'background' || !ancestorRole)) score += 40;
+      if (vName.startsWith('on') || vName.includes('/on')) score += 20;
+    } else if (nodeType === 'FRAME' || nodeType === 'COMPONENT' || nodeType === 'COMPONENT_SET' || nodeType === 'INSTANCE') {
+      if (vName.startsWith('on') || vName.includes('/on')) score -= 50;
+      if (vName.includes('surface')) score += 15;
+      if (vName.includes('primary')) score += 10;
+    }
+
+    if (hintLower) {
+      const hintLeaf = hintLower.split('/').pop() || '';
+      if (hintLeaf && vName.endsWith(hintLeaf)) score += 20;
+    }
+
+    if (score > bestScore || (score === bestScore && dist < bestDist)) {
+      bestScore = score;
+      bestDist = dist;
+      bestToken = item;
+    }
+  }
+
+  return bestToken;
+}
+
+export async function runAuditAutoFix(
+  nodeIds: string[],
+  options: AuditAutoFixOptions = { mode: 'snap', filter: 'all', detachUnmatchedForeign: true, notify: true }
+): Promise<{ detachedCount: number; reboundCount: number; boundCount: number }> {
+  const uniqueIds = Array.from(new Set((nodeIds || []).filter((id) => typeof id === 'string' && id.length > 0)));
+  if (uniqueIds.length === 0) {
+    if (options.notify !== false) {
+      figma.notify('Brak warstw do automatycznej naprawy w bieżącym widoku audytu.', { error: true });
+    }
+    return { detachedCount: 0, reboundCount: 0, boundCount: 0 };
+  }
+
+  const targetNodes: SceneNode[] = [];
+  for (const id of uniqueIds) {
+    try {
+      const node = await figma.getNodeByIdAsync(id);
+      if (node && !(node as any).removed && node.type !== 'PAGE' && node.type !== 'DOCUMENT') {
+        targetNodes.push(node as SceneNode);
+      }
+    } catch (e) {}
+  }
+
+  if (targetNodes.length === 0) {
+    if (options.notify !== false) {
+      figma.notify('Nie znaleziono docelowych warstw na płótnie.', { error: true });
+    }
+    return { detachedCount: 0, reboundCount: 0, boundCount: 0 };
+  }
+
+  const auditCtx = await createAuditVariableContext(targetNodes);
+  const { precomputedMetrics, precomputedColors } = await preloadAutoBinderCaches(true, targetNodes[0]);
+
+  // Keep only variables from allowed local collections or trusted external libraries
+  const allowedIds = new Set<string>();
+  const checkedVarIds = new Set<string>();
+  const registerAllowedBatch = async (items: Array<{ variable: Variable }>) => {
+    await Promise.all(
+      items.map(async (item) => {
+        if (!item?.variable || checkedVarIds.has(item.variable.id)) return;
+        checkedVarIds.add(item.variable.id);
+        if (await auditCtx.isAllowedCandidateVariable(item.variable)) {
+          allowedIds.add(item.variable.id);
+        }
+      })
+    );
+  };
+  await registerAllowedBatch(precomputedMetrics);
+  await registerAllowedBatch(precomputedColors);
+
+  const filter = options.filter || 'all';
+  const detachUnmatched = options.detachUnmatchedForeign !== false;
+  const matchesFilter = (category: 'gap' | 'padding' | 'radius' | 'stroke' | 'color', issueType: 'unbound' | 'missing' | 'foreign'): boolean => {
+    if (filter === 'all') return true;
+    if (filter === 'unbound' || filter === 'missing' || filter === 'foreign') {
+      return issueType === filter;
+    }
+    return category === filter;
+  };
+
+  const appleCaches = createAppleDetectionCaches();
+
+  let detachedCount = 0;
+  let reboundCount = 0;
+  let boundCount = 0;
+
+  for (let idx = 0; idx < targetNodes.length; idx++) {
+    if (idx > 0 && idx % 20 === 0) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    const node = targetNodes[idx];
+    const ignoredSet = getNodeIgnoredAuditKeys(node);
+    const isIgnoredProp = (category: string, prop: string) =>
+      ignoredSet.has('*') || ignoredSet.has(`${category}:*`) || ignoredSet.has(`${category}:${prop}`);
+
+    const isAppleNode = await isInsideOfficialAppleSubtree(node, auditCtx.libraryInfoByKey, appleCaches);
+    const boundVars = (node as any).boundVariables || {};
+    const isControl = isNodeControlCandidate(node);
+    const ancestorRole = getAncestorColorRole(node);
+
+    const processNumericField = async (
+      prop: string,
+      rawValue: number,
+      allowedScopes: VariableScope[],
+      semanticField: MetricSemanticField,
+      category: 'gap' | 'padding' | 'radius' | 'stroke'
+    ) => {
+      if (isIgnoredProp(category, prop)) return;
+      const existingAlias = boundVars[prop];
+      if (existingAlias && existingAlias.type === 'VARIABLE_ALIAS' && existingAlias.id) {
+        const status = await auditCtx.checkVariableStatus(existingAlias.id, node);
+        if (!status.isMissing && !status.isForeign) return;
+        const issueKind: 'missing' | 'foreign' = status.isMissing ? 'missing' : 'foreign';
+        if (!matchesFilter(category, issueKind)) return;
+
+        const bestToken = findBestMetricToken(
+          rawValue,
+          allowedScopes,
+          semanticField,
+          { mode: options.mode, isControl, allowedIds, hintName: status.name },
+          precomputedMetrics
+        );
+
+        if (bestToken) {
+          try {
+            (node as any).setBoundVariable(prop as VariableBindableNodeField, bestToken.variable);
+            reboundCount++;
+            return;
+          } catch (e) {}
+        }
+        if (detachUnmatched) {
+          try {
+            (node as any).setBoundVariable(prop as VariableBindableNodeField, null);
+            detachedCount++;
+          } catch (e) {}
+        }
+        return;
+      }
+
+      if (!matchesFilter(category, 'unbound')) return;
+      const bestToken = findBestMetricToken(
+        rawValue,
+        allowedScopes,
+        semanticField,
+        { mode: options.mode, isControl, allowedIds },
+        precomputedMetrics
+      );
+      if (bestToken) {
+        try {
+          (node as any).setBoundVariable(prop as VariableBindableNodeField, bestToken.variable);
+          boundCount++;
+        } catch (e) {}
+      }
+    };
+
+    // 1. Gap & Padding
+    if (node.type !== 'COMPONENT_SET' && 'layoutMode' in node && (node as FrameNode).layoutMode !== 'NONE') {
+      const frame = node as FrameNode;
+      if (typeof frame.paddingLeft === 'number' && frame.paddingLeft >= 0) {
+        await processNumericField('paddingLeft', frame.paddingLeft, ['GAP', 'WIDTH_HEIGHT'], 'paddingX', 'padding');
+      }
+      if (typeof frame.paddingRight === 'number' && frame.paddingRight >= 0) {
+        await processNumericField('paddingRight', frame.paddingRight, ['GAP', 'WIDTH_HEIGHT'], 'paddingX', 'padding');
+      }
+      if (typeof frame.paddingTop === 'number' && frame.paddingTop >= 0) {
+        await processNumericField('paddingTop', frame.paddingTop, ['GAP', 'WIDTH_HEIGHT'], 'paddingY', 'padding');
+      }
+      if (typeof frame.paddingBottom === 'number' && frame.paddingBottom >= 0) {
+        await processNumericField('paddingBottom', frame.paddingBottom, ['GAP', 'WIDTH_HEIGHT'], 'paddingY', 'padding');
+      }
+      if (frame.primaryAxisAlignItems !== 'SPACE_BETWEEN' && typeof frame.itemSpacing === 'number' && frame.itemSpacing >= 0) {
+        await processNumericField('itemSpacing', frame.itemSpacing, ['GAP', 'WIDTH_HEIGHT'], 'gap', 'gap');
+      }
+      if ((frame as any).counterAxisAlignContent !== 'SPACE_BETWEEN' && 'layoutWrap' in frame && frame.layoutWrap === 'WRAP' && typeof frame.counterAxisSpacing === 'number') {
+        await processNumericField('counterAxisSpacing', frame.counterAxisSpacing, ['GAP', 'WIDTH_HEIGHT'], 'gap', 'gap');
+      }
+    }
+
+    // 2. Corner Radius
+    if (node.type !== 'COMPONENT_SET' && 'cornerRadius' in node) {
+      const rNode = node as any;
+      if (typeof rNode.cornerRadius === 'number' && rNode.cornerRadius >= 0) {
+        const hasPerCornerBinding = Boolean(boundVars.topLeftRadius || boundVars.topRightRadius || boundVars.bottomLeftRadius || boundVars.bottomRightRadius);
+        if (hasPerCornerBinding) {
+          await processNumericField('topLeftRadius', rNode.cornerRadius, ['CORNER_RADIUS'], 'radius', 'radius');
+          await processNumericField('topRightRadius', rNode.cornerRadius, ['CORNER_RADIUS'], 'radius', 'radius');
+          await processNumericField('bottomLeftRadius', rNode.cornerRadius, ['CORNER_RADIUS'], 'radius', 'radius');
+          await processNumericField('bottomRightRadius', rNode.cornerRadius, ['CORNER_RADIUS'], 'radius', 'radius');
+        } else {
+          await processNumericField('cornerRadius', rNode.cornerRadius, ['CORNER_RADIUS'], 'radius', 'radius');
+        }
+      } else {
+        if (typeof rNode.topLeftRadius === 'number' && rNode.topLeftRadius >= 0) {
+          await processNumericField('topLeftRadius', rNode.topLeftRadius, ['CORNER_RADIUS'], 'radius', 'radius');
+        }
+        if (typeof rNode.topRightRadius === 'number' && rNode.topRightRadius >= 0) {
+          await processNumericField('topRightRadius', rNode.topRightRadius, ['CORNER_RADIUS'], 'radius', 'radius');
+        }
+        if (typeof rNode.bottomLeftRadius === 'number' && rNode.bottomLeftRadius >= 0) {
+          await processNumericField('bottomLeftRadius', rNode.bottomLeftRadius, ['CORNER_RADIUS'], 'radius', 'radius');
+        }
+        if (typeof rNode.bottomRightRadius === 'number' && rNode.bottomRightRadius >= 0) {
+          await processNumericField('bottomRightRadius', rNode.bottomRightRadius, ['CORNER_RADIUS'], 'radius', 'radius');
+        }
+      }
+    }
+
+    // 3. Stroke Weight
+    if (node.type !== 'COMPONENT_SET' && 'strokes' in node && Array.isArray((node as any).strokes) && (node as any).strokes.length > 0) {
+      const sNode = node as any;
+      if (typeof sNode.strokeWeight === 'number' && sNode.strokeWeight > 0) {
+        await processNumericField('strokeWeight', sNode.strokeWeight, ['STROKE_FLOAT'], 'stroke', 'stroke');
+      }
+    }
+
+    // 4. Colors (Fills, Strokes, Effects & Styles)
+    const processColorPaints = async (field: 'fills' | 'strokes', styleField: 'fillStyleId' | 'strokeStyleId', requiredScope: VariableScope) => {
+      if (isIgnoredProp('color', field) || !(field in node) || !Array.isArray((node as any)[field])) return;
+
+      // Detach missing or foreign paint style if needed so paints can be rebound
+      const styleId = (node as any)[styleField];
+      if (typeof styleId === 'string' && styleId.length > 0) {
+        try {
+          const style = await figma.getStyleByIdAsync(styleId);
+          let hasBadStyleBinding = !style;
+          if (style && 'paints' in style && Array.isArray((style as any).paints)) {
+            for (const sp of (style as any).paints) {
+              const spBinding = sp?.boundVariables?.color;
+              if (spBinding && spBinding.type === 'VARIABLE_ALIAS' && spBinding.id) {
+                const st = await auditCtx.checkVariableStatus(spBinding.id, node);
+                if (st.isMissing || st.isForeign) {
+                  hasBadStyleBinding = true;
+                  break;
+                }
+              }
+            }
+          }
+          if (hasBadStyleBinding && matchesFilter('color', !style ? 'missing' : 'foreign')) {
+            if (typeof (node as any)[`set${field === 'fills' ? 'Fill' : 'Stroke'}StyleIdAsync`] === 'function') {
+              await (node as any)[`set${field === 'fills' ? 'Fill' : 'Stroke'}StyleIdAsync`]('');
+            } else {
+              (node as any)[styleField] = '';
+            }
+            detachedCount++;
+          }
+        } catch (e) {}
+      }
+
+      try {
+        const paints = (node as any)[field] as readonly Paint[];
+        if (!Array.isArray(paints) || paints.length === 0) return;
+        let modified = false;
+        const nextPaints = JSON.parse(JSON.stringify(paints)) as Paint[];
+
+        for (let i = 0; i < paints.length; i++) {
+          const paint = paints[i];
+          if (!paint || paint.type !== 'SOLID' || paint.visible === false) continue;
+          const pr = paint.color.r;
+          const pg = paint.color.g;
+          const pb = paint.color.b;
+          const pa = paint.opacity !== undefined ? paint.opacity : 1;
+
+          const existingBinding = paint.boundVariables?.color;
+          if (existingBinding && existingBinding.type === 'VARIABLE_ALIAS' && existingBinding.id) {
+            const status = await auditCtx.checkVariableStatus(existingBinding.id, node);
+            if (!status.isMissing && !status.isForeign) continue;
+            const issueKind: 'missing' | 'foreign' = status.isMissing ? 'missing' : 'foreign';
+            if (!matchesFilter('color', issueKind)) continue;
+
+            const bestColor = findBestColorToken(
+              pr, pg, pb, pa,
+              requiredScope,
+              node.type,
+              ancestorRole,
+              { mode: options.mode, allowedIds, hintName: status.name },
+              precomputedColors
+            );
+
+            if (bestColor) {
+              nextPaints[i] = figma.variables.setBoundVariableForPaint(nextPaints[i] as SolidPaint, 'color', bestColor.variable);
+              modified = true;
+              reboundCount++;
+            } else if (detachUnmatched) {
+              nextPaints[i] = figma.variables.setBoundVariableForPaint(nextPaints[i] as SolidPaint, 'color', null);
+              modified = true;
+              detachedCount++;
+            }
+          } else if (matchesFilter('color', 'unbound')) {
+            const bestColor = findBestColorToken(
+              pr, pg, pb, pa,
+              requiredScope,
+              node.type,
+              ancestorRole,
+              { mode: options.mode, allowedIds },
+              precomputedColors
+            );
+            if (bestColor) {
+              nextPaints[i] = figma.variables.setBoundVariableForPaint(nextPaints[i] as SolidPaint, 'color', bestColor.variable);
+              modified = true;
+              boundCount++;
+            }
+          }
+        }
+
+        if (modified) {
+          (node as any)[field] = nextPaints;
+        }
+      } catch (e) {}
+    };
+
+    if (!isAppleNode && node.type !== 'COMPONENT_SET') {
+      const fillScope: VariableScope =
+        node.type === 'FRAME' || node.type === 'COMPONENT' || node.type === 'INSTANCE'
+          ? 'FRAME_FILL'
+          : node.type === 'TEXT'
+          ? 'TEXT_FILL'
+          : 'SHAPE_FILL';
+      await processColorPaints('fills', 'fillStyleId', fillScope);
+      await processColorPaints('strokes', 'strokeStyleId', 'STROKE_COLOR');
+
+      // Shadow effect colors
+      if (!isIgnoredProp('color', 'effects') && 'effects' in node && Array.isArray((node as any).effects)) {
+        try {
+          const effects = (node as any).effects as readonly Effect[];
+          let effModified = false;
+          const nextEffects = JSON.parse(JSON.stringify(effects)) as Effect[];
+          for (let eIdx = 0; eIdx < effects.length; eIdx++) {
+            const eff = effects[eIdx];
+            if (!eff || eff.visible === false || (eff.type !== 'DROP_SHADOW' && eff.type !== 'INNER_SHADOW')) continue;
+            const effBinding = (eff as any).boundVariables?.color;
+            if (effBinding && effBinding.type === 'VARIABLE_ALIAS' && effBinding.id) {
+              const status = await auditCtx.checkVariableStatus(effBinding.id, node);
+              if (!status.isMissing && !status.isForeign) continue;
+              const issueKind: 'missing' | 'foreign' = status.isMissing ? 'missing' : 'foreign';
+              if (!matchesFilter('color', issueKind)) continue;
+
+              const ea = eff.color.a !== undefined ? eff.color.a : 1;
+              const bestColor = findBestColorToken(
+                eff.color.r, eff.color.g, eff.color.b, ea,
+                'EFFECT_COLOR',
+                node.type,
+                ancestorRole,
+                { mode: options.mode, allowedIds, hintName: status.name },
+                precomputedColors
+              );
+              if (bestColor && typeof figma.variables.setBoundVariableForEffect === 'function') {
+                nextEffects[eIdx] = figma.variables.setBoundVariableForEffect(nextEffects[eIdx] as DropShadowEffect, 'color', bestColor.variable);
+                effModified = true;
+                reboundCount++;
+              } else if (detachUnmatched && typeof figma.variables.setBoundVariableForEffect === 'function') {
+                nextEffects[eIdx] = figma.variables.setBoundVariableForEffect(nextEffects[eIdx] as DropShadowEffect, 'color', null);
+                effModified = true;
+                detachedCount++;
+              }
+            }
+          }
+          if (effModified) {
+            (node as any).effects = nextEffects;
+          }
+        } catch (e) {}
+      }
+    }
+
+    // 5. Remaining invalid/foreign boundVariables (e.g. width, height, min/max, opacity, individual stroke weights, typography props)
+    const handledKeys = new Set([
+      'paddingLeft', 'paddingRight', 'paddingTop', 'paddingBottom',
+      'itemSpacing', 'counterAxisSpacing',
+      'cornerRadius', 'topLeftRadius', 'topRightRadius', 'bottomLeftRadius', 'bottomRightRadius',
+      'strokeWeight', 'fills', 'strokes', 'effects'
+    ]);
+
+    for (const [bKey, bVal] of Object.entries((node as any).boundVariables || {})) {
+      if (handledKeys.has(bKey) || !bVal || Array.isArray(bVal)) continue;
+      if (typeof bVal !== 'object' || (bVal as any).type !== 'VARIABLE_ALIAS' || !(bVal as any).id) continue;
+
+      const cat: 'gap' | 'padding' | 'radius' | 'color' | 'stroke' = bKey.includes('radius')
+        ? 'radius'
+        : bKey.includes('spacing') || bKey.includes('gap')
+        ? 'gap'
+        : bKey.includes('padding')
+        ? 'padding'
+        : bKey.toLowerCase().includes('weight') || bKey.toLowerCase().includes('width') || bKey === 'strokeWeight'
+        ? 'stroke'
+        : 'color';
+
+      if ((isAppleNode && cat === 'color') || isIgnoredProp(cat, bKey)) continue;
+      const status = await auditCtx.checkVariableStatus((bVal as any).id, node);
+      if (!status.isMissing && !status.isForeign) continue;
+      const issueKind: 'missing' | 'foreign' = status.isMissing ? 'missing' : 'foreign';
+      if (!matchesFilter(cat, issueKind)) continue;
+
+      if (node.type === 'TEXT') {
+        try { await loadFontsForTextNode(node as TextNode); } catch (e) {}
+      }
+
+      const numericVal = typeof (node as any)[bKey] === 'number' ? (node as any)[bKey] : null;
+      let rebound = false;
+      if (numericVal !== null) {
+        const scopes: VariableScope[] =
+          bKey === 'opacity'
+            ? ['OPACITY']
+            : bKey === 'fontSize'
+            ? ['FONT_SIZE']
+            : bKey === 'lineHeight'
+            ? ['LINE_HEIGHT']
+            : bKey === 'letterSpacing'
+            ? ['LETTER_SPACING']
+            : bKey.toLowerCase().includes('weight')
+            ? ['STROKE_FLOAT']
+            : ['WIDTH_HEIGHT'];
+        const semanticField: MetricSemanticField =
+          bKey === 'opacity'
+            ? 'opacity'
+            : bKey.toLowerCase().includes('weight')
+            ? 'stroke'
+            : /^(fontSize|lineHeight|letterSpacing|paragraphSpacing|paragraphIndent)$/.test(bKey)
+            ? 'typography'
+            : 'size';
+
+        const bestToken = findBestMetricToken(
+          numericVal,
+          scopes,
+          semanticField,
+          { mode: options.mode, isControl, allowedIds, hintName: status.name },
+          precomputedMetrics
+        );
+        if (bestToken) {
+          try {
+            (node as any).setBoundVariable(bKey as VariableBindableNodeField, bestToken.variable);
+            reboundCount++;
+            rebound = true;
+          } catch (e) {}
+        }
+      }
+
+      if (!rebound && detachUnmatched) {
+        try {
+          (node as any).setBoundVariable(bKey as VariableBindableNodeField, null);
+          detachedCount++;
+        } catch (e) {}
+      }
+    }
+  }
+
+  if (options.notify !== false) {
+    const totalAssigned = reboundCount + boundCount;
+    if (totalAssigned === 0 && detachedCount === 0) {
+      figma.notify('Brak pasujących zmiennych w kolekcji Metrics/Schemes do przepisania w ramach obecnego filtra.');
+    } else {
+      figma.notify(
+        `Audyt Auto-Fix: odpięto ${detachedCount}, podmieniono ${reboundCount}, dopięto ${boundCount} zmiennych (Metrics/Schemes wg Scopes). ✨`
+      );
+    }
+  }
+
+  return { detachedCount, reboundCount, boundCount };
 }

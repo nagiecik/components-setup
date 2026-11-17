@@ -206,6 +206,8 @@ export async function sendInitialData() {
     await figma.clientStorage.setAsync('gemini_selected_model', selectedModel);
   }
   const promptTone = (await figma.clientStorage.getAsync('gemini_prompt_tone')) || 'balanced';
+  const organizeLayoutModeRaw = await figma.clientStorage.getAsync('organize_layout_mode');
+  const organizeLayoutMode = organizeLayoutModeRaw === 'rows' ? 'rows' : 'columns';
 
   figma.ui.postMessage({
     type: 'init-data',
@@ -215,6 +217,7 @@ export async function sendInitialData() {
     apiKey,
     selectedModel,
     promptTone,
+    organizeLayoutMode,
     selection: await getSelectionData(),
     textLayers: scanDeepTextLayers(),
   });

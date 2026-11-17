@@ -718,8 +718,416 @@
     }
     return false;
   }
+  var STANDARD_DS_COLLECTION_NAMES = /* @__PURE__ */ new Set([
+    "schemes",
+    "metrics",
+    "_metrics",
+    "layout",
+    "typography",
+    "accessibility",
+    "palettes",
+    "_palettes",
+    "schemes controls",
+    "typography controls",
+    "variables"
+  ]);
+  var CORE_DS_COLLECTION_NAMES = /* @__PURE__ */ new Set([
+    "schemes",
+    "metrics",
+    "_metrics",
+    "layout",
+    "typography",
+    "accessibility"
+  ]);
+  async function createAuditVariableContext(seedNodes = []) {
+    const trustedLibraries = getTrustedAuditLibraries();
+    const trustedLibraryKeys = new Set(trustedLibraries.map((t) => t.key));
+    const hasTrustedRemoteLibrary = trustedLibraries.some(
+      (t) => t.source === "remote" || typeof t.key === "string" && t.key.startsWith("remote:")
+    );
+    let availableLibraryCollectionKeys = null;
+    const libraryInfoByKey = /* @__PURE__ */ new Map();
+    try {
+      if (figma.teamLibrary && typeof figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync === "function") {
+        const libs = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
+        if (Array.isArray(libs)) {
+          availableLibraryCollectionKeys = new Set(libs.map((l) => l.key));
+          for (const l of libs) {
+            if (l && l.key) {
+              libraryInfoByKey.set(l.key, {
+                name: l.name || "Remote Collection",
+                libraryName: l.libraryName || "External Library"
+              });
+            }
+          }
+        }
+      }
+    } catch (e) {
+      availableLibraryCollectionKeys = null;
+    }
+    let localCollections = [];
+    try {
+      localCollections = await figma.variables.getLocalVariableCollectionsAsync();
+    } catch (e) {
+      localCollections = [];
+    }
+    const localCollectionIds = new Set(localCollections.map((c) => c.id));
+    const allowedLocalCollectionIds = /* @__PURE__ */ new Set();
+    const hasCoreLocalDsCollection = localCollections.some(
+      (c) => CORE_DS_COLLECTION_NAMES.has((c.name || "").trim().toLowerCase())
+    );
+    if (hasCoreLocalDsCollection) {
+      for (const c of localCollections) {
+        if (STANDARD_DS_COLLECTION_NAMES.has((c.name || "").trim().toLowerCase())) {
+          allowedLocalCollectionIds.add(c.id);
+        }
+      }
+    } else if (localCollections.length === 1) {
+      allowedLocalCollectionIds.add(localCollections[0].id);
+    }
+    if (allowedLocalCollectionIds.size === 0 && localCollections.length > 1) {
+      const localUsageCounts = /* @__PURE__ */ new Map();
+      const localVarColMap = /* @__PURE__ */ new Map();
+      try {
+        const localVars = await figma.variables.getLocalVariablesAsync();
+        for (const lv of localVars) {
+          localVarColMap.set(lv.id, lv.variableCollectionId);
+        }
+        const scanBoundMap = /* @__PURE__ */ new Map();
+        const unusedNumSet = /* @__PURE__ */ new Set();
+        for (const n of seedNodes) {
+          if (n.boundVariables) {
+            extractVariableAliases(n.boundVariables, scanBoundMap, unusedNumSet);
+          }
+        }
+        for (const vId of scanBoundMap.keys()) {
+          const cid = localVarColMap.get(vId);
+          if (cid) {
+            localUsageCounts.set(cid, (localUsageCounts.get(cid) || 0) + 1);
+          }
+        }
+      } catch (e) {
+      }
+      let primaryColId = localCollections[0].id;
+      let maxCount = -1;
+      for (const c of localCollections) {
+        const count = localUsageCounts.get(c.id) || 0;
+        if (count > maxCount) {
+          maxCount = count;
+          primaryColId = c.id;
+        }
+      }
+      allowedLocalCollectionIds.add(primaryColId);
+    }
+    const varStatusCache = /* @__PURE__ */ new Map();
+    const collectionCache = /* @__PURE__ */ new Map();
+    async function getCollectionCached(colId) {
+      if (collectionCache.has(colId)) return collectionCache.get(colId);
+      let collection = null;
+      try {
+        collection = await figma.variables.getVariableCollectionByIdAsync(colId);
+      } catch (e) {
+        collection = null;
+      }
+      collectionCache.set(colId, collection);
+      return collection;
+    }
+    async function checkVariableStatus(varId, consumerNode) {
+      if (!varId || typeof varId !== "string") {
+        return { variable: null, isMissing: true, isForeign: false, name: "Unknown" };
+      }
+      if (varStatusCache.has(varId)) {
+        const cached = varStatusCache.get(varId);
+        if (cached.isMissing || cached.foreignSource === "remote-unlinked") return cached;
+        if (cached.variable && consumerNode && typeof cached.variable.resolveForConsumer === "function") {
+          try {
+            const resolved = cached.variable.resolveForConsumer(consumerNode);
+            if (!resolved || resolved.value === void 0 || resolved.value === null) {
+              return { variable: cached.variable, isMissing: true, isForeign: false, name: cached.name };
+            }
+          } catch (e) {
+            return { variable: cached.variable, isMissing: true, isForeign: false, name: cached.name };
+          }
+        }
+        return cached;
+      }
+      try {
+        let variable = null;
+        try {
+          variable = await figma.variables.getVariableByIdAsync(varId);
+        } catch (e) {
+          variable = null;
+        }
+        if (!variable) {
+          const res2 = { variable: null, isMissing: true, isForeign: false, name: `Missing Variable (${varId})` };
+          varStatusCache.set(varId, res2);
+          return res2;
+        }
+        const collection = await getCollectionCached(variable.variableCollectionId);
+        if (!collection) {
+          if (variable.remote) {
+            const res3 = {
+              variable,
+              isMissing: false,
+              isForeign: true,
+              foreignSource: "remote-unlinked",
+              collectionName: "Unpublished / External File",
+              libraryName: "Unpublished / Unlinked File",
+              name: variable.name
+            };
+            varStatusCache.set(varId, res3);
+            return res3;
+          }
+          const res2 = { variable, isMissing: true, isForeign: false, name: variable.name };
+          varStatusCache.set(varId, res2);
+          return res2;
+        }
+        const isRemoteOrigin = Boolean(
+          collection.remote || variable.remote || !localCollectionIds.has(collection.id)
+        );
+        const isSubscribedRemote = Boolean(
+          isRemoteOrigin && collection.remote && availableLibraryCollectionKeys && collection.key && availableLibraryCollectionKeys.has(collection.key)
+        );
+        const isUnlinkedRemote = isRemoteOrigin && !isSubscribedRemote;
+        const isPrivateUnderscoreCollection = (collection.name || "").trim().startsWith("_");
+        const isTrustedPrivateRemoteCollection = isUnlinkedRemote && isPrivateUnderscoreCollection && hasTrustedRemoteLibrary;
+        if (isUnlinkedRemote && !isTrustedPrivateRemoteCollection) {
+          const collectionName2 = collection.name || "External Collection";
+          const res2 = {
+            variable,
+            isMissing: false,
+            isForeign: true,
+            foreignSource: "remote-unlinked",
+            collectionName: collectionName2,
+            libraryName: "Unpublished / Unlinked File",
+            name: variable.name
+          };
+          varStatusCache.set(varId, res2);
+          return res2;
+        }
+        if (collection && collection.variableIds && Array.isArray(collection.variableIds) && !collection.variableIds.includes(variable.id)) {
+          const res2 = { variable, isMissing: true, isForeign: false, name: variable.name };
+          varStatusCache.set(varId, res2);
+          return res2;
+        }
+        let isForeign = false;
+        let foreignSource;
+        let foreignLibraryKey;
+        let collectionName = collection.name || void 0;
+        let libraryName;
+        if (isTrustedPrivateRemoteCollection) {
+          isForeign = false;
+        } else if (isRemoteOrigin) {
+          foreignSource = "remote";
+          const libMeta = collection.key ? libraryInfoByKey.get(collection.key) : void 0;
+          libraryName = (libMeta == null ? void 0 : libMeta.libraryName) || "External Library";
+          collectionName = collection.name || (libMeta == null ? void 0 : libMeta.name) || "Remote Collection";
+          foreignLibraryKey = `remote:${(libraryName || collectionName || "External Library").trim()}`;
+          isForeign = !trustedLibraryKeys.has(foreignLibraryKey);
+        } else if (allowedLocalCollectionIds.size > 0 && !allowedLocalCollectionIds.has(collection.id)) {
+          foreignSource = "local-other";
+          collectionName = collection.name || "Other Collection";
+          foreignLibraryKey = `local:${collectionName.trim()}`;
+          isForeign = !trustedLibraryKeys.has(foreignLibraryKey);
+        }
+        if (consumerNode && typeof variable.resolveForConsumer === "function") {
+          try {
+            const resolved = variable.resolveForConsumer(consumerNode);
+            if (!resolved || resolved.value === void 0 || resolved.value === null) {
+              const res2 = { variable, isMissing: true, isForeign: false, name: variable.name };
+              varStatusCache.set(varId, res2);
+              return res2;
+            }
+          } catch (e) {
+            const res2 = { variable, isMissing: true, isForeign: false, name: variable.name };
+            varStatusCache.set(varId, res2);
+            return res2;
+          }
+        }
+        const { isMissing } = await resolveVariableValueAndStatus(variable);
+        const res = {
+          variable,
+          isMissing,
+          isForeign: isMissing ? false : isForeign,
+          foreignSource: isMissing ? void 0 : foreignSource,
+          foreignLibraryKey: isMissing ? void 0 : foreignLibraryKey,
+          collectionName,
+          libraryName,
+          name: variable.name
+        };
+        varStatusCache.set(varId, res);
+        return res;
+      } catch (err) {
+        const res = { variable: null, isMissing: true, isForeign: false, name: `Missing (${varId})` };
+        varStatusCache.set(varId, res);
+        return res;
+      }
+    }
+    async function isAllowedCandidateVariable(variable) {
+      if (!variable || !variable.variableCollectionId) return false;
+      const collection = await getCollectionCached(variable.variableCollectionId);
+      if (!collection) return false;
+      const isRemoteOrigin = Boolean(
+        collection.remote || variable.remote || !localCollectionIds.has(collection.id)
+      );
+      if (isRemoteOrigin) {
+        if (!collection.remote || !availableLibraryCollectionKeys || !collection.key || !availableLibraryCollectionKeys.has(collection.key)) {
+          return false;
+        }
+        const libMeta = libraryInfoByKey.get(collection.key);
+        const libraryName = (libMeta == null ? void 0 : libMeta.libraryName) || "External Library";
+        const collectionName = collection.name || (libMeta == null ? void 0 : libMeta.name) || "Remote Collection";
+        const key = `remote:${(libraryName || collectionName || "External Library").trim()}`;
+        return trustedLibraryKeys.has(key);
+      }
+      if (allowedLocalCollectionIds.size === 0 || allowedLocalCollectionIds.has(collection.id)) {
+        return true;
+      }
+      const localKey = `local:${(collection.name || "Other Collection").trim()}`;
+      return trustedLibraryKeys.has(localKey);
+    }
+    return {
+      trustedLibraries,
+      trustedLibraryKeys,
+      localCollectionIds,
+      allowedLocalCollectionIds,
+      libraryInfoByKey,
+      checkVariableStatus,
+      isAllowedCandidateVariable
+    };
+  }
+  var APPLE_LIBRARY_NAME_REGEX = /\b(?:apple(?:\s+design(?:\s+resources)?)?|ios(?:\s*(?:and|&|\+)\s*ipados)?\s*\d+|ipados\s*\d+|macos\s*\d+|watchos\s*\d+|visionos\s*\d+|tvos\s*\d+)\b/i;
+  var APPLE_DOC_URL_REGEX = /(?:developer\.apple\.com|apple\.com\/design|\bapple\s+design\s+resources\b|\bios\s+and\s+ipados\b)/i;
+  var APPLE_EXPLICIT_COMPONENT_NAME_REGEX = /^(?:status\s*bar\s*[-–/]\s*(?:iphone|ipad)|iphone\s*[-–/]\s*status\s*bar|dynamic\s*island|home\s*indicator(?:\s*[-–/]\s*(?:iphone|ipad))?|tab\s*bar\s*[-–/]\s*(?:iphone|ipad)|navigation\s*bar\s*[-–/]\s*(?:iphone|ipad)|keyboard\s*[-–/]\s*(?:iphone|ipad)|bezel\s*[-–/]\s*(?:iphone|ipad)|iphone\s*\d{2}\b)/i;
+  var APPLE_SYSTEM_STYLE_PREFIX_REGEX = /^(?:labels|fills|separators|backgrounds|system\s+colors|vibrancy|materials|ios|apple)\s*\//i;
+  function createAppleDetectionCaches() {
+    return {
+      instanceCache: /* @__PURE__ */ new Map(),
+      subtreeCache: /* @__PURE__ */ new Map(),
+      varLibCache: /* @__PURE__ */ new Map()
+    };
+  }
+  async function isAppleBoundVariableId(varId, libraryInfoByKey, varLibCache) {
+    if (!varId) return false;
+    if (varLibCache == null ? void 0 : varLibCache.has(varId)) return varLibCache.get(varId);
+    let matched = false;
+    try {
+      const variable = await figma.variables.getVariableByIdAsync(varId);
+      if (variable == null ? void 0 : variable.variableCollectionId) {
+        const col = await figma.variables.getVariableCollectionByIdAsync(variable.variableCollectionId);
+        if (col) {
+          const libInfo = libraryInfoByKey == null ? void 0 : libraryInfoByKey.get(col.key);
+          const candidates = [libInfo == null ? void 0 : libInfo.libraryName, libInfo == null ? void 0 : libInfo.name, col.name].filter(Boolean);
+          if (candidates.some((name) => APPLE_LIBRARY_NAME_REGEX.test(name))) {
+            matched = true;
+          }
+        }
+      }
+    } catch (e) {
+    }
+    varLibCache == null ? void 0 : varLibCache.set(varId, matched);
+    return matched;
+  }
+  async function hasAppleLibrarySignalsOnNodeTree(root, libraryInfoByKey, caches, depth = 0) {
+    if (!root || depth > 2) return false;
+    const aliases = extractVariableAliases(root.boundVariables);
+    for (const aliasId of aliases) {
+      if (await isAppleBoundVariableId(aliasId, libraryInfoByKey, caches == null ? void 0 : caches.varLibCache)) {
+        return true;
+      }
+    }
+    for (const styleProp of ["fillStyleId", "strokeStyleId", "textStyleId", "effectStyleId"]) {
+      const sid = root[styleProp];
+      if (typeof sid === "string" && sid.length > 0) {
+        try {
+          const style = await figma.getStyleByIdAsync(sid);
+          if (style) {
+            if (APPLE_LIBRARY_NAME_REGEX.test(style.name || "")) return true;
+            if (style.remote && APPLE_SYSTEM_STYLE_PREFIX_REGEX.test(style.name || "")) return true;
+          }
+        } catch (e) {
+        }
+      }
+    }
+    if ("children" in root && Array.isArray(root.children) && depth < 2) {
+      const children = root.children;
+      const limit = Math.min(children.length, 16);
+      for (let i = 0; i < limit; i++) {
+        if (await hasAppleLibrarySignalsOnNodeTree(children[i], libraryInfoByKey, caches, depth + 1)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  async function isOfficialAppleInstance(node, libraryInfoByKey, caches) {
+    if (!node || node.type !== "INSTANCE") return false;
+    if (caches == null ? void 0 : caches.instanceCache.has(node.id)) {
+      return caches.instanceCache.get(node.id);
+    }
+    let isApple = false;
+    try {
+      const inst = node;
+      let comp = null;
+      try {
+        comp = typeof inst.getMainComponentAsync === "function" ? await inst.getMainComponentAsync() : inst.mainComponent;
+      } catch (e) {
+        comp = inst.mainComponent;
+      }
+      const parentSet = (comp == null ? void 0 : comp.parent) && comp.parent.type === "COMPONENT_SET" ? comp.parent : null;
+      const textSignals = [
+        inst.name || "",
+        (comp == null ? void 0 : comp.name) || "",
+        (parentSet == null ? void 0 : parentSet.name) || "",
+        (comp == null ? void 0 : comp.description) || "",
+        (parentSet == null ? void 0 : parentSet.description) || ""
+      ];
+      const docLinks = [
+        ...(comp == null ? void 0 : comp.documentationLinks) || [],
+        ...(parentSet == null ? void 0 : parentSet.documentationLinks) || []
+      ];
+      for (const link of docLinks) {
+        if ((link == null ? void 0 : link.uri) && APPLE_DOC_URL_REGEX.test(String(link.uri))) {
+          isApple = true;
+          break;
+        }
+      }
+      if (!isApple) {
+        if (textSignals.some((t) => APPLE_LIBRARY_NAME_REGEX.test(t) || APPLE_DOC_URL_REGEX.test(t))) {
+          isApple = true;
+        } else if (APPLE_EXPLICIT_COMPONENT_NAME_REGEX.test(inst.name || "") || APPLE_EXPLICIT_COMPONENT_NAME_REGEX.test((comp == null ? void 0 : comp.name) || "") || APPLE_EXPLICIT_COMPONENT_NAME_REGEX.test((parentSet == null ? void 0 : parentSet.name) || "")) {
+          isApple = true;
+        }
+      }
+      if (!isApple && (!comp || comp.remote || (parentSet == null ? void 0 : parentSet.remote))) {
+        isApple = await hasAppleLibrarySignalsOnNodeTree(inst, libraryInfoByKey, caches, 0);
+      }
+    } catch (e) {
+      isApple = false;
+    }
+    caches == null ? void 0 : caches.instanceCache.set(node.id, isApple);
+    return isApple;
+  }
+  async function isInsideOfficialAppleSubtree(node, libraryInfoByKey, caches) {
+    if (!node) return false;
+    if (caches == null ? void 0 : caches.subtreeCache.has(node.id)) {
+      return caches.subtreeCache.get(node.id);
+    }
+    let curr = node;
+    while (curr && curr.type !== "PAGE" && curr.type !== "DOCUMENT") {
+      if (curr.type === "INSTANCE") {
+        if (await isOfficialAppleInstance(curr, libraryInfoByKey, caches)) {
+          caches == null ? void 0 : caches.subtreeCache.set(node.id, true);
+          return true;
+        }
+      }
+      curr = curr.parent;
+    }
+    caches == null ? void 0 : caches.subtreeCache.set(node.id, false);
+    return false;
+  }
   async function runAuditTokens(scope = "selection") {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
     try {
       let getNodeBoundVariables = function(node) {
         try {
@@ -739,7 +1147,6 @@
         }
       };
       const trustedLibraries = getTrustedAuditLibraries();
-      const trustedLibraryKeys = new Set(trustedLibraries.map((t) => t.key));
       let targetRoots = [];
       if (scope === "selection") {
         targetRoots = figma.currentPage.selection || [];
@@ -826,220 +1233,32 @@
         remoteSubtreeCache.set(node.id, false);
         return false;
       }
-      let availableLibraryCollectionKeys = null;
-      const libraryInfoByKey = /* @__PURE__ */ new Map();
-      try {
-        if (figma.teamLibrary && typeof figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync === "function") {
-          const libs = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
-          if (Array.isArray(libs)) {
-            availableLibraryCollectionKeys = new Set(libs.map((l) => l.key));
-            for (const l of libs) {
-              if (l && l.key) {
-                libraryInfoByKey.set(l.key, {
-                  name: l.name || "Remote Collection",
-                  libraryName: l.libraryName || "External Library"
-                });
-              }
-            }
-          }
-        }
-      } catch (e) {
-        availableLibraryCollectionKeys = null;
-      }
-      let localCollections = [];
-      try {
-        localCollections = await figma.variables.getLocalVariableCollectionsAsync();
-      } catch (e) {
-        localCollections = [];
-      }
-      const STANDARD_DS_COLLECTION_NAMES = /* @__PURE__ */ new Set([
-        "schemes",
-        "metrics",
-        "_metrics",
-        "layout",
-        "typography",
-        "accessibility",
-        "palettes",
-        "_palettes",
-        "schemes controls",
-        "typography controls",
-        "variables"
-      ]);
-      const CORE_DS_COLLECTION_NAMES = /* @__PURE__ */ new Set([
-        "schemes",
-        "metrics",
-        "_metrics",
-        "layout",
-        "typography",
-        "accessibility"
-      ]);
-      const allowedLocalCollectionIds = /* @__PURE__ */ new Set();
-      const hasCoreLocalDsCollection = localCollections.some(
-        (c) => CORE_DS_COLLECTION_NAMES.has((c.name || "").trim().toLowerCase())
-      );
-      if (hasCoreLocalDsCollection) {
-        for (const c of localCollections) {
-          if (STANDARD_DS_COLLECTION_NAMES.has((c.name || "").trim().toLowerCase())) {
-            allowedLocalCollectionIds.add(c.id);
-          }
-        }
-      } else if (localCollections.length === 1) {
-        allowedLocalCollectionIds.add(localCollections[0].id);
-      }
-      async function collectNodes(nodes) {
+      const remoteSubtreeNodeIds = /* @__PURE__ */ new Set();
+      async function collectNodes(nodes, inRemoteSubtree = false) {
         if (!nodes) return;
         for (const node of nodes) {
           if (!node || visitedIds.has(node.id)) continue;
           visitedIds.add(node.id);
-          if (await isRemoteInstance(node) || await isInsideRemoteSubtree(node)) {
-            continue;
+          const nodeInRemoteSubtree = inRemoteSubtree || await isRemoteInstance(node) || await isInsideRemoteSubtree(node);
+          if (nodeInRemoteSubtree) {
+            remoteSubtreeNodeIds.add(node.id);
           }
           allNodes.push(node);
           if ("children" in node && node.children && node.children.length > 0) {
             try {
-              await collectNodes(node.children);
+              await collectNodes(node.children, nodeInRemoteSubtree);
             } catch (e) {
             }
           }
         }
       }
       await collectNodes(targetRoots);
-      if (allowedLocalCollectionIds.size === 0 && localCollections.length > 1) {
-        const localUsageCounts = /* @__PURE__ */ new Map();
-        const localVarColMap = /* @__PURE__ */ new Map();
-        try {
-          const localVars = await figma.variables.getLocalVariablesAsync();
-          for (const lv of localVars) {
-            localVarColMap.set(lv.id, lv.variableCollectionId);
-          }
-          const scanBoundMap = /* @__PURE__ */ new Map();
-          const unusedNumSet = /* @__PURE__ */ new Set();
-          for (const n of allNodes) {
-            if (n.boundVariables) {
-              extractVariableAliases(n.boundVariables, scanBoundMap, unusedNumSet);
-            }
-          }
-          for (const vId of scanBoundMap.keys()) {
-            const cid = localVarColMap.get(vId);
-            if (cid) {
-              localUsageCounts.set(cid, (localUsageCounts.get(cid) || 0) + 1);
-            }
-          }
-        } catch (e) {
-        }
-        let primaryColId = localCollections[0].id;
-        let maxCount = -1;
-        for (const c of localCollections) {
-          const count = localUsageCounts.get(c.id) || 0;
-          if (count > maxCount) {
-            maxCount = count;
-            primaryColId = c.id;
-          }
-        }
-        allowedLocalCollectionIds.add(primaryColId);
-      }
-      const varStatusCache = /* @__PURE__ */ new Map();
-      async function checkVariableStatus(varId, consumerNode) {
-        if (!varId || typeof varId !== "string") {
-          return { variable: null, isMissing: true, isForeign: false, name: "Unknown" };
-        }
-        if (varStatusCache.has(varId)) {
-          const cached = varStatusCache.get(varId);
-          if (cached.isMissing) return cached;
-          if (cached.variable && consumerNode && typeof cached.variable.resolveForConsumer === "function") {
-            try {
-              const resolved = cached.variable.resolveForConsumer(consumerNode);
-              if (!resolved || resolved.value === void 0 || resolved.value === null) {
-                return { variable: cached.variable, isMissing: true, isForeign: false, name: cached.name };
-              }
-            } catch (e) {
-              return { variable: cached.variable, isMissing: true, isForeign: false, name: cached.name };
-            }
-          }
-          return cached;
-        }
-        try {
-          let variable = null;
-          try {
-            variable = await figma.variables.getVariableByIdAsync(varId);
-          } catch (e) {
-            variable = null;
-          }
-          if (!variable) {
-            const res2 = { variable: null, isMissing: true, isForeign: false, name: `Missing Variable (${varId})` };
-            varStatusCache.set(varId, res2);
-            return res2;
-          }
-          let collection = null;
-          try {
-            collection = await figma.variables.getVariableCollectionByIdAsync(variable.variableCollectionId);
-          } catch (e) {
-            collection = null;
-          }
-          if (!collection) {
-            const res2 = { variable, isMissing: true, isForeign: false, name: variable.name };
-            varStatusCache.set(varId, res2);
-            return res2;
-          }
-          if (collection && collection.variableIds && Array.isArray(collection.variableIds) && !collection.variableIds.includes(variable.id)) {
-            const res2 = { variable, isMissing: true, isForeign: false, name: variable.name };
-            varStatusCache.set(varId, res2);
-            return res2;
-          }
-          if (collection && collection.remote && availableLibraryCollectionKeys && !availableLibraryCollectionKeys.has(collection.key)) {
-            const res2 = { variable, isMissing: true, isForeign: false, name: variable.name };
-            varStatusCache.set(varId, res2);
-            return res2;
-          }
-          let isForeign = false;
-          let foreignSource;
-          let foreignLibraryKey;
-          let collectionName = collection.name || void 0;
-          let libraryName;
-          if (collection.remote || variable.remote) {
-            foreignSource = "remote";
-            const libMeta = collection.key ? libraryInfoByKey.get(collection.key) : void 0;
-            libraryName = (libMeta == null ? void 0 : libMeta.libraryName) || "External Library";
-            collectionName = collection.name || (libMeta == null ? void 0 : libMeta.name) || "Remote Collection";
-            foreignLibraryKey = `remote:${(libraryName || collectionName || "External Library").trim()}`;
-            isForeign = !trustedLibraryKeys.has(foreignLibraryKey);
-          } else if (allowedLocalCollectionIds.size > 0 && !allowedLocalCollectionIds.has(collection.id)) {
-            foreignSource = "local-other";
-            collectionName = collection.name || "Other Collection";
-            foreignLibraryKey = `local:${collectionName.trim()}`;
-            isForeign = !trustedLibraryKeys.has(foreignLibraryKey);
-          }
-          if (consumerNode && typeof variable.resolveForConsumer === "function") {
-            try {
-              const resolved = variable.resolveForConsumer(consumerNode);
-              if (!resolved || resolved.value === void 0 || resolved.value === null) {
-                const res2 = { variable, isMissing: true, isForeign: false, name: variable.name };
-                varStatusCache.set(varId, res2);
-                return res2;
-              }
-            } catch (e) {
-              const res2 = { variable, isMissing: true, isForeign: false, name: variable.name };
-              varStatusCache.set(varId, res2);
-              return res2;
-            }
-          }
-          const { isMissing } = await resolveVariableValueAndStatus(variable);
-          const res = {
-            variable,
-            isMissing,
-            isForeign: isMissing ? false : isForeign,
-            foreignSource: isMissing ? void 0 : foreignSource,
-            foreignLibraryKey: isMissing ? void 0 : foreignLibraryKey,
-            collectionName,
-            libraryName,
-            name: variable.name
-          };
-          varStatusCache.set(varId, res);
-          return res;
-        } catch (err) {
-          const res = { variable: null, isMissing: true, isForeign: false, name: `Missing (${varId})` };
-          varStatusCache.set(varId, res);
-          return res;
+      const { checkVariableStatus, libraryInfoByKey } = await createAuditVariableContext(allNodes);
+      const appleSubtreeNodeIds = /* @__PURE__ */ new Set();
+      const appleCaches = createAppleDetectionCaches();
+      for (const node of allNodes) {
+        if (await isInsideOfficialAppleSubtree(node, libraryInfoByKey, appleCaches)) {
+          appleSubtreeNodeIds.add(node.id);
         }
       }
       const issues = [];
@@ -1052,6 +1271,7 @@
         return false;
       };
       const reportBoundVariableIssue = (vStatus, opts) => {
+        if (appleSubtreeNodeIds.has(opts.nodeId) && opts.category === "color") return false;
         if (!vStatus.isMissing && !vStatus.isForeign) return false;
         if (markReported(opts.nodeId, `var:${opts.varId}`)) return false;
         if (vStatus.isMissing) {
@@ -1074,7 +1294,7 @@
           });
           return true;
         }
-        const sourceLabel = vStatus.foreignSource === "remote" ? `${vStatus.libraryName || "External Library"}${vStatus.collectionName ? ` \xB7 ${vStatus.collectionName}` : ""}` : `Local: ${vStatus.collectionName || "Other Collection"}`;
+        const sourceLabel = vStatus.foreignSource === "remote-unlinked" ? `Unpublished / Unlinked${vStatus.collectionName ? ` \xB7 ${vStatus.collectionName}` : ""}` : vStatus.foreignSource === "remote" ? `${vStatus.libraryName || "External Library"}${vStatus.collectionName ? ` \xB7 ${vStatus.collectionName}` : ""}` : `Local: ${vStatus.collectionName || "Other Collection"}`;
         issues.push({
           id: `issue_${++issueCounter}`,
           nodeId: opts.nodeId,
@@ -1094,7 +1314,7 @@
           foreignLibraryKey: vStatus.foreignLibraryKey,
           collectionName: vStatus.collectionName,
           libraryName: vStatus.libraryName,
-          suggestion: vStatus.foreignSource === "remote" ? `External library variable ("${vStatus.libraryName || vStatus.collectionName}") \u2014 replace with a local Design System token` : `Variable from another local collection ("${vStatus.collectionName}") \u2014 replace with a token from the active Design System`
+          suggestion: vStatus.foreignSource === "remote-unlinked" ? `Variable from unpublished or unlinked file ("${vStatus.collectionName || "External File"}") \u2014 replace with a local Design System token` : vStatus.foreignSource === "remote" ? `External library variable ("${vStatus.libraryName || vStatus.collectionName}") \u2014 replace with a local Design System token` : `Variable from another local collection ("${vStatus.collectionName}") \u2014 replace with a token from the active Design System`
         });
         return true;
       };
@@ -1102,7 +1322,7 @@
       for (const node of allNodes) {
         try {
           if (!node || node.type === "PAGE" || node.type === "DOCUMENT") continue;
-          if (await isRemoteInstance(node) || await isInsideRemoteSubtree(node)) continue;
+          const isAppleNode = appleSubtreeNodeIds.has(node.id);
           nodeIgnoredMap.set(node.id, getNodeIgnoredAuditKeys(node));
           const boundVars = getNodeBoundVariables(node);
           const nodeType = node.type;
@@ -1452,210 +1672,64 @@
             }
           }
           if (node.type !== "COMPONENT_SET") {
-            if (typeof node.fillStyleId === "string" && node.fillStyleId.length > 0) {
-              const styleId = node.fillStyleId;
-              try {
-                const style = await figma.getStyleByIdAsync(styleId);
-                if (!style) {
-                  if (!markReported(node.id, `style:${styleId}`)) {
-                    issues.push({
-                      id: `issue_${++issueCounter}`,
-                      nodeId: node.id,
-                      nodeName,
-                      layerType: nodeType,
-                      layerTypeName,
-                      category: "color",
-                      categoryLabel: "Color",
-                      property: "fills",
-                      propertyLabel: "Fill Style",
-                      issueType: "missing",
-                      value: "#888888",
-                      formattedValue: `Missing Style (${styleId})`,
-                      suggestion: "Reassign to a valid Color Style or Variable"
-                    });
-                  }
-                } else if (style.type === "PAINT") {
-                  const isGrad = isGradientColorStyle(style);
-                  if (!isGrad && !markReported(node.id, `style:${styleId}`)) {
-                    let hex = "#888888";
-                    let tokenMatch = "";
+            if (!isAppleNode) {
+              if (typeof node.fillStyleId === "string" && node.fillStyleId.length > 0) {
+                const styleId = node.fillStyleId;
+                try {
+                  const style = await figma.getStyleByIdAsync(styleId);
+                  if (!style) {
+                    if (!markReported(node.id, `style:${styleId}`)) {
+                      issues.push({
+                        id: `issue_${++issueCounter}`,
+                        nodeId: node.id,
+                        nodeName,
+                        layerType: nodeType,
+                        layerTypeName,
+                        category: "color",
+                        categoryLabel: "Color",
+                        property: "fills",
+                        propertyLabel: "Fill Style",
+                        issueType: "missing",
+                        value: "#888888",
+                        formattedValue: `Missing Style (${styleId})`,
+                        suggestion: "Reassign to a valid Color Style or Variable"
+                      });
+                    }
+                  } else if (style.type === "PAINT") {
+                    const isGrad = isGradientColorStyle(style);
+                    if (!isGrad && !markReported(node.id, `style:${styleId}`)) {
+                      let hex = "#888888";
+                      let tokenMatch = "";
+                      if ("paints" in style && Array.isArray(style.paints)) {
+                        const solidPaint = style.paints.find((p) => p && p.visible !== false && p.type === "SOLID");
+                        if (solidPaint) {
+                          hex = rgbToHex(solidPaint.color.r, solidPaint.color.g, solidPaint.color.b);
+                          tokenMatch = dsRegistry.matchColor(hex, node.type === "TEXT", false);
+                        }
+                      }
+                      const isArbitrary = !tokenMatch || tokenMatch.startsWith("[");
+                      issues.push({
+                        id: `issue_${++issueCounter}`,
+                        nodeId: node.id,
+                        nodeName,
+                        layerType: nodeType,
+                        layerTypeName,
+                        category: "color",
+                        categoryLabel: "Color",
+                        property: "fills",
+                        propertyLabel: "Fill Style",
+                        issueType: "unbound",
+                        value: hex,
+                        formattedValue: `Style: ${style.name}`,
+                        suggestion: isArbitrary ? `Legacy Color Style "${style.name}" \u2014 bind directly to Color variable` : `Legacy Color Style "${style.name}" \u2014 matches token: ${tokenMatch} (${hex})`
+                      });
+                    }
                     if ("paints" in style && Array.isArray(style.paints)) {
-                      const solidPaint = style.paints.find((p) => p && p.visible !== false && p.type === "SOLID");
-                      if (solidPaint) {
-                        hex = rgbToHex(solidPaint.color.r, solidPaint.color.g, solidPaint.color.b);
-                        tokenMatch = dsRegistry.matchColor(hex, node.type === "TEXT", false);
-                      }
-                    }
-                    const isArbitrary = !tokenMatch || tokenMatch.startsWith("[");
-                    issues.push({
-                      id: `issue_${++issueCounter}`,
-                      nodeId: node.id,
-                      nodeName,
-                      layerType: nodeType,
-                      layerTypeName,
-                      category: "color",
-                      categoryLabel: "Color",
-                      property: "fills",
-                      propertyLabel: "Fill Style",
-                      issueType: "unbound",
-                      value: hex,
-                      formattedValue: `Style: ${style.name}`,
-                      suggestion: isArbitrary ? `Legacy Color Style "${style.name}" \u2014 bind directly to Color variable` : `Legacy Color Style "${style.name}" \u2014 matches token: ${tokenMatch} (${hex})`
-                    });
-                  }
-                  if ("paints" in style && Array.isArray(style.paints)) {
-                    for (const sp of style.paints) {
-                      const spBinding = (_a = sp.boundVariables) == null ? void 0 : _a.color;
-                      if (spBinding && spBinding.type === "VARIABLE_ALIAS" && spBinding.id) {
-                        const vStatus = await checkVariableStatus(spBinding.id, node);
-                        reportBoundVariableIssue(vStatus, {
-                          nodeId: node.id,
-                          nodeName,
-                          layerType: nodeType,
-                          layerTypeName,
-                          category: "color",
-                          categoryLabel: "Color",
-                          property: "fills",
-                          propertyLabel: `Style "${style.name}"`,
-                          value: sp.type === "SOLID" ? rgbToHex(sp.color.r, sp.color.g, sp.color.b) : "#888888",
-                          varId: spBinding.id,
-                          missingSuggestion: "Reassign to a valid Color variable",
-                          styleName: style.name
-                        });
-                      }
-                    }
-                  }
-                }
-              } catch (e) {
-              }
-            }
-            if ("fills" in node && Array.isArray(node.fills)) {
-              const fills = node.fills;
-              const boundFills = boundVars.fills;
-              for (let i = 0; i < fills.length; i++) {
-                const paint = fills[i];
-                if (!paint || paint.visible === false) continue;
-                const propLabel = fills.length > 1 ? `Fill (${i + 1})` : "Fill";
-                const boundFill = Array.isArray(boundFills) ? boundFills[i] : boundFills && typeof boundFills === "object" ? boundFills[i] || boundFills[String(i)] : void 0;
-                const colorBinding = ((_b = paint.boundVariables) == null ? void 0 : _b.color) || boundFill;
-                if (colorBinding && colorBinding.type === "VARIABLE_ALIAS" && colorBinding.id) {
-                  const vStatus = await checkVariableStatus(colorBinding.id, node);
-                  const valHex = paint.type === "SOLID" ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : "#888888";
-                  reportBoundVariableIssue(vStatus, {
-                    nodeId: node.id,
-                    nodeName,
-                    layerType: nodeType,
-                    layerTypeName,
-                    category: "color",
-                    categoryLabel: "Color",
-                    property: "fills",
-                    propertyLabel: propLabel,
-                    value: valHex,
-                    varId: colorBinding.id,
-                    missingSuggestion: "Reassign to a valid Color variable"
-                  });
-                } else if (paint.type === "SOLID") {
-                  const hasStyle = typeof node.fillStyleId === "string" && node.fillStyleId.length > 0;
-                  if (!hasStyle) {
-                    const hex = rgbToHex(paint.color.r, paint.color.g, paint.color.b);
-                    const opacityStr = typeof paint.opacity === "number" && paint.opacity < 1 ? ` (${Math.round(paint.opacity * 100)}%)` : "";
-                    const isText = node.type === "TEXT";
-                    const tokenMatch = dsRegistry.matchColor(hex, isText, false);
-                    const isArbitrary = tokenMatch.startsWith("[");
-                    issues.push({
-                      id: `issue_${++issueCounter}`,
-                      nodeId: node.id,
-                      nodeName,
-                      layerType: nodeType,
-                      layerTypeName,
-                      category: "color",
-                      categoryLabel: "Color",
-                      property: "fills",
-                      propertyLabel: propLabel,
-                      issueType: "unbound",
-                      value: hex,
-                      formattedValue: `${hex}${opacityStr}`,
-                      suggestion: isArbitrary ? "Arbitrary color \u2014 bind to Color variable" : `Matches token: ${tokenMatch} (${hex})`
-                    });
-                  }
-                } else if (paint.type === "GRADIENT_LINEAR" || paint.type === "GRADIENT_RADIAL" || paint.type === "GRADIENT_ANGULAR" || paint.type === "GRADIENT_DIAMOND") {
-                  if (Array.isArray(paint.gradientStops)) {
-                    for (let sIdx = 0; sIdx < paint.gradientStops.length; sIdx++) {
-                      const stop = paint.gradientStops[sIdx];
-                      const stopBinding = (_c = stop.boundVariables) == null ? void 0 : _c.color;
-                      if (stopBinding && stopBinding.type === "VARIABLE_ALIAS" && stopBinding.id) {
-                        const vStatus = await checkVariableStatus(stopBinding.id, node);
-                        reportBoundVariableIssue(vStatus, {
-                          nodeId: node.id,
-                          nodeName,
-                          layerType: nodeType,
-                          layerTypeName,
-                          category: "color",
-                          categoryLabel: "Color",
-                          property: "fills",
-                          propertyLabel: `${propLabel} Stop (${sIdx + 1})`,
-                          value: rgbToHex(stop.color.r, stop.color.g, stop.color.b),
-                          varId: stopBinding.id,
-                          missingSuggestion: "Reassign to a valid Color variable"
-                        });
-                      }
-                    }
-                  }
-                }
-                const paintOpBinding = (_d = paint.boundVariables) == null ? void 0 : _d.opacity;
-                if (paintOpBinding && paintOpBinding.type === "VARIABLE_ALIAS" && paintOpBinding.id) {
-                  const vStatus = await checkVariableStatus(paintOpBinding.id, node);
-                  reportBoundVariableIssue(vStatus, {
-                    nodeId: node.id,
-                    nodeName,
-                    layerType: nodeType,
-                    layerTypeName,
-                    category: "color",
-                    categoryLabel: "Color",
-                    property: "fills",
-                    propertyLabel: `${propLabel} Opacity`,
-                    value: (_e = paint.opacity) != null ? _e : 1,
-                    varId: paintOpBinding.id,
-                    missingSuggestion: "Reassign to a valid Number variable"
-                  });
-                }
-              }
-            } else if (node.type === "TEXT" && node.fills === figma.mixed) {
-              try {
-                const textNode = node;
-                const segments = textNode.getStyledTextSegments(["fills", "boundVariables", "fillStyleId"]);
-                for (let sIdx = 0; sIdx < segments.length; sIdx++) {
-                  const seg = segments[sIdx];
-                  if (Array.isArray(seg.fills)) {
-                    for (let pIdx = 0; pIdx < seg.fills.length; pIdx++) {
-                      const paint = seg.fills[pIdx];
-                      if (!paint || paint.visible === false) continue;
-                      const colorBinding = ((_f = paint.boundVariables) == null ? void 0 : _f.color) || ((_h = (_g = seg.boundVariables) == null ? void 0 : _g.fills) == null ? void 0 : _h[pIdx]);
-                      const segLabel = segments.length > 1 ? `Text Segment (${sIdx + 1})` : "Text Fill";
-                      if (colorBinding && colorBinding.type === "VARIABLE_ALIAS" && colorBinding.id) {
-                        const vStatus = await checkVariableStatus(colorBinding.id, node);
-                        reportBoundVariableIssue(vStatus, {
-                          nodeId: node.id,
-                          nodeName,
-                          layerType: nodeType,
-                          layerTypeName,
-                          category: "color",
-                          categoryLabel: "Color",
-                          property: "fills",
-                          propertyLabel: segLabel,
-                          value: paint.type === "SOLID" ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : "#888888",
-                          varId: colorBinding.id,
-                          missingSuggestion: "Reassign to a valid Color variable"
-                        });
-                      } else if (paint.type === "SOLID") {
-                        const hasSegStyle = typeof seg.fillStyleId === "string" && seg.fillStyleId.length > 0;
-                        if (!hasSegStyle) {
-                          const hex = rgbToHex(paint.color.r, paint.color.g, paint.color.b);
-                          const opacityStr = typeof paint.opacity === "number" && paint.opacity < 1 ? ` (${Math.round(paint.opacity * 100)}%)` : "";
-                          const tokenMatch = dsRegistry.matchColor(hex, true, false);
-                          const isArbitrary = tokenMatch.startsWith("[");
-                          issues.push({
-                            id: `issue_${++issueCounter}`,
+                      for (const sp of style.paints) {
+                        const spBinding = (_a = sp.boundVariables) == null ? void 0 : _a.color;
+                        if (spBinding && spBinding.type === "VARIABLE_ALIAS" && spBinding.id) {
+                          const vStatus = await checkVariableStatus(spBinding.id, node);
+                          reportBoundVariableIssue(vStatus, {
                             nodeId: node.id,
                             nodeName,
                             layerType: nodeType,
@@ -1663,138 +1737,28 @@
                             category: "color",
                             categoryLabel: "Color",
                             property: "fills",
-                            propertyLabel: segLabel,
-                            issueType: "unbound",
-                            value: hex,
-                            formattedValue: `${hex}${opacityStr}`,
-                            suggestion: isArbitrary ? "Arbitrary color \u2014 bind to Color variable" : `Matches token: ${tokenMatch} (${hex})`
+                            propertyLabel: `Style "${style.name}"`,
+                            value: sp.type === "SOLID" ? rgbToHex(sp.color.r, sp.color.g, sp.color.b) : "#888888",
+                            varId: spBinding.id,
+                            missingSuggestion: "Reassign to a valid Color variable",
+                            styleName: style.name
                           });
-                        } else {
-                          const segStyleId = seg.fillStyleId;
-                          if (!markReported(node.id, `segstyle:${segStyleId}`)) {
-                            try {
-                              const segStyle = await figma.getStyleByIdAsync(segStyleId);
-                              const styleName = segStyle ? segStyle.name : segStyleId;
-                              const isGrad = isGradientColorStyle(segStyle);
-                              if (!isGrad) {
-                                const hex = rgbToHex(paint.color.r, paint.color.g, paint.color.b);
-                                const tokenMatch = dsRegistry.matchColor(hex, true, false);
-                                const isArbitrary = tokenMatch.startsWith("[");
-                                issues.push({
-                                  id: `issue_${++issueCounter}`,
-                                  nodeId: node.id,
-                                  nodeName,
-                                  layerType: nodeType,
-                                  layerTypeName,
-                                  category: "color",
-                                  categoryLabel: "Color",
-                                  property: "fills",
-                                  propertyLabel: segLabel,
-                                  issueType: "unbound",
-                                  value: hex,
-                                  formattedValue: `Style: ${styleName}`,
-                                  suggestion: isArbitrary ? `Legacy Color Style "${styleName}" \u2014 bind directly to Color variable` : `Legacy Color Style "${styleName}" \u2014 matches token: ${tokenMatch} (${hex})`
-                                });
-                              }
-                            } catch (e) {
-                            }
-                          }
                         }
                       }
                     }
                   }
+                } catch (e) {
                 }
-              } catch (e) {
               }
-            }
-            if (typeof node.strokeStyleId === "string" && node.strokeStyleId.length > 0) {
-              const styleId = node.strokeStyleId;
-              try {
-                const style = await figma.getStyleByIdAsync(styleId);
-                if (!style) {
-                  if (!markReported(node.id, `style:${styleId}`)) {
-                    issues.push({
-                      id: `issue_${++issueCounter}`,
-                      nodeId: node.id,
-                      nodeName,
-                      layerType: nodeType,
-                      layerTypeName,
-                      category: "color",
-                      categoryLabel: "Color",
-                      property: "strokes",
-                      propertyLabel: "Stroke Style",
-                      issueType: "missing",
-                      value: "#888888",
-                      formattedValue: `Missing Style (${styleId})`,
-                      suggestion: "Reassign to a valid Color Style or Variable"
-                    });
-                  }
-                } else if (style.type === "PAINT") {
-                  const isGrad = isGradientColorStyle(style);
-                  if (!isGrad && !markReported(node.id, `style:${styleId}`)) {
-                    let hex = "#888888";
-                    let tokenMatch = "";
-                    if ("paints" in style && Array.isArray(style.paints)) {
-                      const solidPaint = style.paints.find((p) => p && p.visible !== false && p.type === "SOLID");
-                      if (solidPaint) {
-                        hex = rgbToHex(solidPaint.color.r, solidPaint.color.g, solidPaint.color.b);
-                        tokenMatch = dsRegistry.matchColor(hex, false, true);
-                      }
-                    }
-                    const isArbitrary = !tokenMatch || tokenMatch.startsWith("[");
-                    issues.push({
-                      id: `issue_${++issueCounter}`,
-                      nodeId: node.id,
-                      nodeName,
-                      layerType: nodeType,
-                      layerTypeName,
-                      category: "color",
-                      categoryLabel: "Color",
-                      property: "strokes",
-                      propertyLabel: "Stroke Style",
-                      issueType: "unbound",
-                      value: hex,
-                      formattedValue: `Style: ${style.name}`,
-                      suggestion: isArbitrary ? `Legacy Color Style "${style.name}" \u2014 bind directly to Color variable` : `Legacy Color Style "${style.name}" \u2014 matches token: ${tokenMatch} (${hex})`
-                    });
-                  }
-                  if ("paints" in style && Array.isArray(style.paints)) {
-                    for (const sp of style.paints) {
-                      const spBinding = (_i = sp.boundVariables) == null ? void 0 : _i.color;
-                      if (spBinding && spBinding.type === "VARIABLE_ALIAS" && spBinding.id) {
-                        const vStatus = await checkVariableStatus(spBinding.id, node);
-                        reportBoundVariableIssue(vStatus, {
-                          nodeId: node.id,
-                          nodeName,
-                          layerType: nodeType,
-                          layerTypeName,
-                          category: "color",
-                          categoryLabel: "Color",
-                          property: "strokes",
-                          propertyLabel: `Style "${style.name}"`,
-                          value: sp.type === "SOLID" ? rgbToHex(sp.color.r, sp.color.g, sp.color.b) : "#888888",
-                          varId: spBinding.id,
-                          missingSuggestion: "Reassign to a valid Color variable",
-                          styleName: style.name
-                        });
-                      }
-                    }
-                  }
-                }
-              } catch (e) {
-              }
-            }
-            if ("strokes" in node && Array.isArray(node.strokes)) {
-              const hasStrokeWeight = typeof node.strokeWeight === "number" ? node.strokeWeight > 0 : true;
-              if (hasStrokeWeight) {
-                const strokes = node.strokes;
-                const boundStrokes = boundVars.strokes;
-                for (let i = 0; i < strokes.length; i++) {
-                  const paint = strokes[i];
+              if ("fills" in node && Array.isArray(node.fills)) {
+                const fills = node.fills;
+                const boundFills = boundVars.fills;
+                for (let i = 0; i < fills.length; i++) {
+                  const paint = fills[i];
                   if (!paint || paint.visible === false) continue;
-                  const propLabel = strokes.length > 1 ? `Stroke (${i + 1})` : "Stroke";
-                  const boundStroke = Array.isArray(boundStrokes) ? boundStrokes[i] : boundStrokes && typeof boundStrokes === "object" ? boundStrokes[i] || boundStrokes[String(i)] : void 0;
-                  const colorBinding = ((_j = paint.boundVariables) == null ? void 0 : _j.color) || boundStroke;
+                  const propLabel = fills.length > 1 ? `Fill (${i + 1})` : "Fill";
+                  const boundFill = Array.isArray(boundFills) ? boundFills[i] : boundFills && typeof boundFills === "object" ? boundFills[i] || boundFills[String(i)] : void 0;
+                  const colorBinding = ((_b = paint.boundVariables) == null ? void 0 : _b.color) || boundFill;
                   if (colorBinding && colorBinding.type === "VARIABLE_ALIAS" && colorBinding.id) {
                     const vStatus = await checkVariableStatus(colorBinding.id, node);
                     const valHex = paint.type === "SOLID" ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : "#888888";
@@ -1805,18 +1769,19 @@
                       layerTypeName,
                       category: "color",
                       categoryLabel: "Color",
-                      property: "strokes",
+                      property: "fills",
                       propertyLabel: propLabel,
                       value: valHex,
                       varId: colorBinding.id,
                       missingSuggestion: "Reassign to a valid Color variable"
                     });
                   } else if (paint.type === "SOLID") {
-                    const hasStyle = typeof node.strokeStyleId === "string" && node.strokeStyleId.length > 0;
+                    const hasStyle = typeof node.fillStyleId === "string" && node.fillStyleId.length > 0;
                     if (!hasStyle) {
                       const hex = rgbToHex(paint.color.r, paint.color.g, paint.color.b);
                       const opacityStr = typeof paint.opacity === "number" && paint.opacity < 1 ? ` (${Math.round(paint.opacity * 100)}%)` : "";
-                      const tokenMatch = dsRegistry.matchColor(hex, false, true);
+                      const isText = node.type === "TEXT";
+                      const tokenMatch = dsRegistry.matchColor(hex, isText, false);
                       const isArbitrary = tokenMatch.startsWith("[");
                       issues.push({
                         id: `issue_${++issueCounter}`,
@@ -1826,7 +1791,7 @@
                         layerTypeName,
                         category: "color",
                         categoryLabel: "Color",
-                        property: "strokes",
+                        property: "fills",
                         propertyLabel: propLabel,
                         issueType: "unbound",
                         value: hex,
@@ -1838,7 +1803,7 @@
                     if (Array.isArray(paint.gradientStops)) {
                       for (let sIdx = 0; sIdx < paint.gradientStops.length; sIdx++) {
                         const stop = paint.gradientStops[sIdx];
-                        const stopBinding = (_k = stop.boundVariables) == null ? void 0 : _k.color;
+                        const stopBinding = (_c = stop.boundVariables) == null ? void 0 : _c.color;
                         if (stopBinding && stopBinding.type === "VARIABLE_ALIAS" && stopBinding.id) {
                           const vStatus = await checkVariableStatus(stopBinding.id, node);
                           reportBoundVariableIssue(vStatus, {
@@ -1848,7 +1813,7 @@
                             layerTypeName,
                             category: "color",
                             categoryLabel: "Color",
-                            property: "strokes",
+                            property: "fills",
                             propertyLabel: `${propLabel} Stop (${sIdx + 1})`,
                             value: rgbToHex(stop.color.r, stop.color.g, stop.color.b),
                             varId: stopBinding.id,
@@ -1858,46 +1823,9 @@
                       }
                     }
                   }
-                }
-              }
-            }
-            let hasRemoteOrValidEffectStyle = false;
-            if (typeof node.effectStyleId === "string" && node.effectStyleId.length > 0) {
-              const styleId = node.effectStyleId;
-              try {
-                const style = await figma.getStyleByIdAsync(styleId);
-                if (style) {
-                  hasRemoteOrValidEffectStyle = true;
-                } else if (!markReported(node.id, `style:${styleId}`)) {
-                  issues.push({
-                    id: `issue_${++issueCounter}`,
-                    nodeId: node.id,
-                    nodeName,
-                    layerType: nodeType,
-                    layerTypeName,
-                    category: "color",
-                    categoryLabel: "Color",
-                    property: "effects",
-                    propertyLabel: "Effect Style",
-                    issueType: "missing",
-                    value: "#888888",
-                    formattedValue: `Missing Style (${styleId})`,
-                    suggestion: "Reassign to a valid Effect Style or Variable"
-                  });
-                }
-              } catch (e) {
-              }
-            }
-            if (!hasRemoteOrValidEffectStyle && "effects" in node && Array.isArray(node.effects)) {
-              const effects = node.effects;
-              for (let eIdx = 0; eIdx < effects.length; eIdx++) {
-                const eff = effects[eIdx];
-                if (!eff || eff.visible === false) continue;
-                if (eff.type === "DROP_SHADOW" || eff.type === "INNER_SHADOW") {
-                  const effColorBinding = (_l = eff.boundVariables) == null ? void 0 : _l.color;
-                  const effLabel = effects.length > 1 ? `Shadow (${eIdx + 1})` : "Shadow";
-                  if (effColorBinding && effColorBinding.type === "VARIABLE_ALIAS" && effColorBinding.id) {
-                    const vStatus = await checkVariableStatus(effColorBinding.id, node);
+                  const paintOpBinding = (_d = paint.boundVariables) == null ? void 0 : _d.opacity;
+                  if (paintOpBinding && paintOpBinding.type === "VARIABLE_ALIAS" && paintOpBinding.id) {
+                    const vStatus = await checkVariableStatus(paintOpBinding.id, node);
                     reportBoundVariableIssue(vStatus, {
                       nodeId: node.id,
                       nodeName,
@@ -1905,24 +1833,368 @@
                       layerTypeName,
                       category: "color",
                       categoryLabel: "Color",
-                      property: "effects",
-                      propertyLabel: effLabel,
-                      value: rgbToHex(eff.color.r, eff.color.g, eff.color.b),
-                      varId: effColorBinding.id,
-                      missingSuggestion: "Reassign to a valid Color variable"
+                      property: "fills",
+                      propertyLabel: `${propLabel} Opacity`,
+                      value: (_e = paint.opacity) != null ? _e : 1,
+                      varId: paintOpBinding.id,
+                      missingSuggestion: "Reassign to a valid Number variable"
                     });
+                  }
+                }
+              } else if (node.type === "TEXT" && node.fills === figma.mixed) {
+                try {
+                  const textNode = node;
+                  const segments = textNode.getStyledTextSegments(["fills", "boundVariables", "fillStyleId"]);
+                  for (let sIdx = 0; sIdx < segments.length; sIdx++) {
+                    const seg = segments[sIdx];
+                    if (Array.isArray(seg.fills)) {
+                      for (let pIdx = 0; pIdx < seg.fills.length; pIdx++) {
+                        const paint = seg.fills[pIdx];
+                        if (!paint || paint.visible === false) continue;
+                        const colorBinding = ((_f = paint.boundVariables) == null ? void 0 : _f.color) || ((_h = (_g = seg.boundVariables) == null ? void 0 : _g.fills) == null ? void 0 : _h[pIdx]);
+                        const segLabel = segments.length > 1 ? `Text Segment (${sIdx + 1})` : "Text Fill";
+                        if (colorBinding && colorBinding.type === "VARIABLE_ALIAS" && colorBinding.id) {
+                          const vStatus = await checkVariableStatus(colorBinding.id, node);
+                          reportBoundVariableIssue(vStatus, {
+                            nodeId: node.id,
+                            nodeName,
+                            layerType: nodeType,
+                            layerTypeName,
+                            category: "color",
+                            categoryLabel: "Color",
+                            property: "fills",
+                            propertyLabel: segLabel,
+                            value: paint.type === "SOLID" ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : "#888888",
+                            varId: colorBinding.id,
+                            missingSuggestion: "Reassign to a valid Color variable"
+                          });
+                        } else if (paint.type === "SOLID") {
+                          const hasSegStyle = typeof seg.fillStyleId === "string" && seg.fillStyleId.length > 0;
+                          if (!hasSegStyle) {
+                            const hex = rgbToHex(paint.color.r, paint.color.g, paint.color.b);
+                            const opacityStr = typeof paint.opacity === "number" && paint.opacity < 1 ? ` (${Math.round(paint.opacity * 100)}%)` : "";
+                            const tokenMatch = dsRegistry.matchColor(hex, true, false);
+                            const isArbitrary = tokenMatch.startsWith("[");
+                            issues.push({
+                              id: `issue_${++issueCounter}`,
+                              nodeId: node.id,
+                              nodeName,
+                              layerType: nodeType,
+                              layerTypeName,
+                              category: "color",
+                              categoryLabel: "Color",
+                              property: "fills",
+                              propertyLabel: segLabel,
+                              issueType: "unbound",
+                              value: hex,
+                              formattedValue: `${hex}${opacityStr}`,
+                              suggestion: isArbitrary ? "Arbitrary color \u2014 bind to Color variable" : `Matches token: ${tokenMatch} (${hex})`
+                            });
+                          } else {
+                            const segStyleId = seg.fillStyleId;
+                            if (!markReported(node.id, `segstyle:${segStyleId}`)) {
+                              try {
+                                const segStyle = await figma.getStyleByIdAsync(segStyleId);
+                                const styleName = segStyle ? segStyle.name : segStyleId;
+                                const isGrad = isGradientColorStyle(segStyle);
+                                if (!isGrad) {
+                                  const hex = rgbToHex(paint.color.r, paint.color.g, paint.color.b);
+                                  const tokenMatch = dsRegistry.matchColor(hex, true, false);
+                                  const isArbitrary = tokenMatch.startsWith("[");
+                                  issues.push({
+                                    id: `issue_${++issueCounter}`,
+                                    nodeId: node.id,
+                                    nodeName,
+                                    layerType: nodeType,
+                                    layerTypeName,
+                                    category: "color",
+                                    categoryLabel: "Color",
+                                    property: "fills",
+                                    propertyLabel: segLabel,
+                                    issueType: "unbound",
+                                    value: hex,
+                                    formattedValue: `Style: ${styleName}`,
+                                    suggestion: isArbitrary ? `Legacy Color Style "${styleName}" \u2014 bind directly to Color variable` : `Legacy Color Style "${styleName}" \u2014 matches token: ${tokenMatch} (${hex})`
+                                  });
+                                }
+                              } catch (e) {
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                } catch (e) {
+                }
+              }
+              if (typeof node.strokeStyleId === "string" && node.strokeStyleId.length > 0) {
+                const styleId = node.strokeStyleId;
+                try {
+                  const style = await figma.getStyleByIdAsync(styleId);
+                  if (!style) {
+                    if (!markReported(node.id, `style:${styleId}`)) {
+                      issues.push({
+                        id: `issue_${++issueCounter}`,
+                        nodeId: node.id,
+                        nodeName,
+                        layerType: nodeType,
+                        layerTypeName,
+                        category: "color",
+                        categoryLabel: "Color",
+                        property: "strokes",
+                        propertyLabel: "Stroke Style",
+                        issueType: "missing",
+                        value: "#888888",
+                        formattedValue: `Missing Style (${styleId})`,
+                        suggestion: "Reassign to a valid Color Style or Variable"
+                      });
+                    }
+                  } else if (style.type === "PAINT") {
+                    const isGrad = isGradientColorStyle(style);
+                    if (!isGrad && !markReported(node.id, `style:${styleId}`)) {
+                      let hex = "#888888";
+                      let tokenMatch = "";
+                      if ("paints" in style && Array.isArray(style.paints)) {
+                        const solidPaint = style.paints.find((p) => p && p.visible !== false && p.type === "SOLID");
+                        if (solidPaint) {
+                          hex = rgbToHex(solidPaint.color.r, solidPaint.color.g, solidPaint.color.b);
+                          tokenMatch = dsRegistry.matchColor(hex, false, true);
+                        }
+                      }
+                      const isArbitrary = !tokenMatch || tokenMatch.startsWith("[");
+                      issues.push({
+                        id: `issue_${++issueCounter}`,
+                        nodeId: node.id,
+                        nodeName,
+                        layerType: nodeType,
+                        layerTypeName,
+                        category: "color",
+                        categoryLabel: "Color",
+                        property: "strokes",
+                        propertyLabel: "Stroke Style",
+                        issueType: "unbound",
+                        value: hex,
+                        formattedValue: `Style: ${style.name}`,
+                        suggestion: isArbitrary ? `Legacy Color Style "${style.name}" \u2014 bind directly to Color variable` : `Legacy Color Style "${style.name}" \u2014 matches token: ${tokenMatch} (${hex})`
+                      });
+                    }
+                    if ("paints" in style && Array.isArray(style.paints)) {
+                      for (const sp of style.paints) {
+                        const spBinding = (_i = sp.boundVariables) == null ? void 0 : _i.color;
+                        if (spBinding && spBinding.type === "VARIABLE_ALIAS" && spBinding.id) {
+                          const vStatus = await checkVariableStatus(spBinding.id, node);
+                          reportBoundVariableIssue(vStatus, {
+                            nodeId: node.id,
+                            nodeName,
+                            layerType: nodeType,
+                            layerTypeName,
+                            category: "color",
+                            categoryLabel: "Color",
+                            property: "strokes",
+                            propertyLabel: `Style "${style.name}"`,
+                            value: sp.type === "SOLID" ? rgbToHex(sp.color.r, sp.color.g, sp.color.b) : "#888888",
+                            varId: spBinding.id,
+                            missingSuggestion: "Reassign to a valid Color variable",
+                            styleName: style.name
+                          });
+                        }
+                      }
+                    }
+                  }
+                } catch (e) {
+                }
+              }
+              if ("strokes" in node && Array.isArray(node.strokes)) {
+                const hasStrokeWeight = typeof node.strokeWeight === "number" ? node.strokeWeight > 0 : true;
+                if (hasStrokeWeight) {
+                  const strokes = node.strokes;
+                  const boundStrokes = boundVars.strokes;
+                  for (let i = 0; i < strokes.length; i++) {
+                    const paint = strokes[i];
+                    if (!paint || paint.visible === false) continue;
+                    const propLabel = strokes.length > 1 ? `Stroke (${i + 1})` : "Stroke";
+                    const boundStroke = Array.isArray(boundStrokes) ? boundStrokes[i] : boundStrokes && typeof boundStrokes === "object" ? boundStrokes[i] || boundStrokes[String(i)] : void 0;
+                    const colorBinding = ((_j = paint.boundVariables) == null ? void 0 : _j.color) || boundStroke;
+                    if (colorBinding && colorBinding.type === "VARIABLE_ALIAS" && colorBinding.id) {
+                      const vStatus = await checkVariableStatus(colorBinding.id, node);
+                      const valHex = paint.type === "SOLID" ? rgbToHex(paint.color.r, paint.color.g, paint.color.b) : "#888888";
+                      reportBoundVariableIssue(vStatus, {
+                        nodeId: node.id,
+                        nodeName,
+                        layerType: nodeType,
+                        layerTypeName,
+                        category: "color",
+                        categoryLabel: "Color",
+                        property: "strokes",
+                        propertyLabel: propLabel,
+                        value: valHex,
+                        varId: colorBinding.id,
+                        missingSuggestion: "Reassign to a valid Color variable"
+                      });
+                    } else if (paint.type === "SOLID") {
+                      const hasStyle = typeof node.strokeStyleId === "string" && node.strokeStyleId.length > 0;
+                      if (!hasStyle) {
+                        const hex = rgbToHex(paint.color.r, paint.color.g, paint.color.b);
+                        const opacityStr = typeof paint.opacity === "number" && paint.opacity < 1 ? ` (${Math.round(paint.opacity * 100)}%)` : "";
+                        const tokenMatch = dsRegistry.matchColor(hex, false, true);
+                        const isArbitrary = tokenMatch.startsWith("[");
+                        issues.push({
+                          id: `issue_${++issueCounter}`,
+                          nodeId: node.id,
+                          nodeName,
+                          layerType: nodeType,
+                          layerTypeName,
+                          category: "color",
+                          categoryLabel: "Color",
+                          property: "strokes",
+                          propertyLabel: propLabel,
+                          issueType: "unbound",
+                          value: hex,
+                          formattedValue: `${hex}${opacityStr}`,
+                          suggestion: isArbitrary ? "Arbitrary color \u2014 bind to Color variable" : `Matches token: ${tokenMatch} (${hex})`
+                        });
+                      }
+                    } else if (paint.type === "GRADIENT_LINEAR" || paint.type === "GRADIENT_RADIAL" || paint.type === "GRADIENT_ANGULAR" || paint.type === "GRADIENT_DIAMOND") {
+                      if (Array.isArray(paint.gradientStops)) {
+                        for (let sIdx = 0; sIdx < paint.gradientStops.length; sIdx++) {
+                          const stop = paint.gradientStops[sIdx];
+                          const stopBinding = (_k = stop.boundVariables) == null ? void 0 : _k.color;
+                          if (stopBinding && stopBinding.type === "VARIABLE_ALIAS" && stopBinding.id) {
+                            const vStatus = await checkVariableStatus(stopBinding.id, node);
+                            reportBoundVariableIssue(vStatus, {
+                              nodeId: node.id,
+                              nodeName,
+                              layerType: nodeType,
+                              layerTypeName,
+                              category: "color",
+                              categoryLabel: "Color",
+                              property: "strokes",
+                              propertyLabel: `${propLabel} Stop (${sIdx + 1})`,
+                              value: rgbToHex(stop.color.r, stop.color.g, stop.color.b),
+                              varId: stopBinding.id,
+                              missingSuggestion: "Reassign to a valid Color variable"
+                            });
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              const auditStyleBoundVariables2 = async (styleBoundVars, styleName) => {
+                if (!styleBoundVars || typeof styleBoundVars !== "object") return;
+                for (const [sKey, sVal] of Object.entries(styleBoundVars)) {
+                  if (!sVal) continue;
+                  const items = Array.isArray(sVal) ? sVal : [sVal];
+                  for (const item of items) {
+                    if (item && typeof item === "object" && item.type === "VARIABLE_ALIAS" && item.id) {
+                      const vStatus = await checkVariableStatus(item.id, node);
+                      reportBoundVariableIssue(vStatus, {
+                        nodeId: node.id,
+                        nodeName,
+                        layerType: nodeType,
+                        layerTypeName,
+                        category: "color",
+                        categoryLabel: "Color",
+                        property: sKey,
+                        propertyLabel: `Style "${styleName}" (${sKey})`,
+                        value: vStatus.isMissing ? "Missing" : vStatus.name,
+                        varId: item.id,
+                        missingSuggestion: `Reassign variable in style "${styleName}" to a valid local token`,
+                        styleName
+                      });
+                    }
+                  }
+                }
+              };
+              let hasRemoteOrValidEffectStyle2 = false;
+              if (typeof node.effectStyleId === "string" && node.effectStyleId.length > 0) {
+                const styleId = node.effectStyleId;
+                try {
+                  const style = await figma.getStyleByIdAsync(styleId);
+                  if (style) {
+                    hasRemoteOrValidEffectStyle2 = true;
+                    if ("effects" in style && Array.isArray(style.effects)) {
+                      for (const eff of style.effects) {
+                        const effColorBinding = (_l = eff == null ? void 0 : eff.boundVariables) == null ? void 0 : _l.color;
+                        if (effColorBinding && effColorBinding.type === "VARIABLE_ALIAS" && effColorBinding.id) {
+                          const vStatus = await checkVariableStatus(effColorBinding.id, node);
+                          reportBoundVariableIssue(vStatus, {
+                            nodeId: node.id,
+                            nodeName,
+                            layerType: nodeType,
+                            layerTypeName,
+                            category: "color",
+                            categoryLabel: "Color",
+                            property: "effects",
+                            propertyLabel: `Effect Style "${style.name}"`,
+                            value: eff.color ? rgbToHex(eff.color.r, eff.color.g, eff.color.b) : "#888888",
+                            varId: effColorBinding.id,
+                            missingSuggestion: "Reassign to a valid Effect Style or Color variable",
+                            styleName: style.name
+                          });
+                        }
+                      }
+                    }
+                    await auditStyleBoundVariables2(style.boundVariables, style.name);
+                  } else if (!markReported(node.id, `style:${styleId}`)) {
+                    issues.push({
+                      id: `issue_${++issueCounter}`,
+                      nodeId: node.id,
+                      nodeName,
+                      layerType: nodeType,
+                      layerTypeName,
+                      category: "color",
+                      categoryLabel: "Color",
+                      property: "effects",
+                      propertyLabel: "Effect Style",
+                      issueType: "missing",
+                      value: "#888888",
+                      formattedValue: `Missing Style (${styleId})`,
+                      suggestion: "Reassign to a valid Effect Style or Variable"
+                    });
+                  }
+                } catch (e) {
+                }
+              }
+              if (!hasRemoteOrValidEffectStyle2 && "effects" in node && Array.isArray(node.effects)) {
+                const effects = node.effects;
+                for (let eIdx = 0; eIdx < effects.length; eIdx++) {
+                  const eff = effects[eIdx];
+                  if (!eff || eff.visible === false) continue;
+                  if (eff.type === "DROP_SHADOW" || eff.type === "INNER_SHADOW") {
+                    const effColorBinding = (_m = eff.boundVariables) == null ? void 0 : _m.color;
+                    const effLabel = effects.length > 1 ? `Shadow (${eIdx + 1})` : "Shadow";
+                    if (effColorBinding && effColorBinding.type === "VARIABLE_ALIAS" && effColorBinding.id) {
+                      const vStatus = await checkVariableStatus(effColorBinding.id, node);
+                      reportBoundVariableIssue(vStatus, {
+                        nodeId: node.id,
+                        nodeName,
+                        layerType: nodeType,
+                        layerTypeName,
+                        category: "color",
+                        categoryLabel: "Color",
+                        property: "effects",
+                        propertyLabel: effLabel,
+                        value: rgbToHex(eff.color.r, eff.color.g, eff.color.b),
+                        varId: effColorBinding.id,
+                        missingSuggestion: "Reassign to a valid Color variable"
+                      });
+                    }
                   }
                 }
               }
             }
-            let hasRemoteOrValidTextStyle = false;
-            if (node.type === "TEXT") {
+            let hasLocalValidTextStyle = false;
+            if (!isAppleNode && node.type === "TEXT") {
               const textStyleId = node.textStyleId;
               if (typeof textStyleId === "string" && textStyleId.length > 0) {
                 try {
                   const textStyle = await figma.getStyleByIdAsync(textStyleId);
                   if (textStyle) {
-                    hasRemoteOrValidTextStyle = true;
+                    hasLocalValidTextStyle = !textStyle.remote;
+                    await auditStyleBoundVariables(textStyle.boundVariables, textStyle.name);
                   } else if (!markReported(node.id, `style:${textStyleId}`)) {
                     issues.push({
                       id: `issue_${++issueCounter}`,
@@ -1946,12 +2218,14 @@
                 try {
                   const textNode = node;
                   const segs = textNode.getStyledTextSegments(["textStyleId"]);
+                  const checkedStyleIds = /* @__PURE__ */ new Set();
                   for (const seg of segs) {
-                    if (typeof seg.textStyleId === "string" && seg.textStyleId.length > 0) {
+                    if (typeof seg.textStyleId === "string" && seg.textStyleId.length > 0 && !checkedStyleIds.has(seg.textStyleId)) {
+                      checkedStyleIds.add(seg.textStyleId);
                       const segStyle = await figma.getStyleByIdAsync(seg.textStyleId);
                       if (segStyle) {
-                        hasRemoteOrValidTextStyle = true;
-                        break;
+                        if (!segStyle.remote) hasLocalValidTextStyle = true;
+                        await auditStyleBoundVariables(segStyle.boundVariables, segStyle.name);
                       }
                     }
                   }
@@ -1962,7 +2236,7 @@
             for (const [bKey, bVal] of Object.entries(boundVars)) {
               if (!bVal) continue;
               if (bKey === "effects" && hasRemoteOrValidEffectStyle) continue;
-              if (hasRemoteOrValidTextStyle && /^(fontFamily|fontStyle|fontWeight|fontSize|lineHeight|letterSpacing|paragraphSpacing|paragraphIndent|textCase|textDecoration)$/i.test(bKey)) {
+              if (hasLocalValidTextStyle && /^(fontFamily|fontStyle|fontWeight|fontSize|lineHeight|letterSpacing|paragraphSpacing|paragraphIndent|textCase|textDecoration)$/i.test(bKey)) {
                 continue;
               }
               if (Array.isArray(bVal)) {
@@ -2018,7 +2292,7 @@
           issue.isIgnored = false;
         }
       }
-      const rawIssues = issues;
+      const rawIssues = issues.filter((i) => !(i.category === "color" && appleSubtreeNodeIds.has(i.nodeId)));
       const groupedMap = /* @__PURE__ */ new Map();
       for (const issue of rawIssues) {
         const groupKey = `${issue.isIgnored ? "ignored" : "active"}:${issue.issueType}:${issue.category}:${issue.property}:${issue.propertyLabel || ""}:${issue.layerType}:${(issue.nodeName || "").trim().toLowerCase()}:${issue.varId || ""}:${String(issue.value || "")}:${issue.formattedValue || ""}`;
@@ -6243,6 +6517,8 @@ ${usageJsx}
       await figma.clientStorage.setAsync("gemini_selected_model", selectedModel);
     }
     const promptTone = await figma.clientStorage.getAsync("gemini_prompt_tone") || "balanced";
+    const organizeLayoutModeRaw = await figma.clientStorage.getAsync("organize_layout_mode");
+    const organizeLayoutMode = organizeLayoutModeRaw === "rows" ? "rows" : "columns";
     figma.ui.postMessage({
       type: "init-data",
       provider,
@@ -6251,6 +6527,7 @@ ${usageJsx}
       apiKey,
       selectedModel,
       promptTone,
+      organizeLayoutMode,
       selection: await getSelectionData(),
       textLayers: scanDeepTextLayers()
     });
@@ -8507,18 +8784,80 @@ ${usageJsx}
       }
     }
   }
-  async function organizeElementsOnCanvas(forceAll = false) {
+  var ORGANIZE_LAYOUT_STORAGE_KEY = "organize_layout_mode";
+  async function getOrganizeLayoutMode() {
+    try {
+      const saved = await figma.clientStorage.getAsync(ORGANIZE_LAYOUT_STORAGE_KEY);
+      if (saved === "rows" || saved === "columns") {
+        return saved;
+      }
+    } catch (e) {
+    }
+    return "columns";
+  }
+  async function setOrganizeLayoutMode(mode) {
+    try {
+      await figma.clientStorage.setAsync(ORGANIZE_LAYOUT_STORAGE_KEY, mode);
+    } catch (e) {
+      console.warn("Failed to save organize layout mode:", e);
+    }
+  }
+  async function organizeElementsOnCanvas(forceAll = false, targetPage = figma.currentPage, layoutMode) {
+    const resolvedLayoutMode = layoutMode || await getOrganizeLayoutMode();
+    const isCurrentPage = targetPage.id === figma.currentPage.id;
     const selection = figma.currentPage.selection;
     let nodes = [];
-    if (!forceAll && selection.length > 1) {
+    if (isCurrentPage && !forceAll && selection.length > 1) {
       nodes = Array.from(selection);
     } else {
-      nodes = figma.currentPage.children.filter(
+      nodes = targetPage.children.filter(
         (n) => !n.locked && "x" in n && "y" in n && "width" in n && "height" in n
       );
     }
     if (nodes.length === 0) {
-      figma.notify("No elements found to arrange on canvas.", { error: true });
+      if (isCurrentPage) {
+        figma.notify("No elements found to arrange on canvas.", { error: true });
+      }
+      return;
+    }
+    const movedScreenNodes = [];
+    if (!isLibraryScreensPage(targetPage)) {
+      const screenNodes = nodes.filter(isScreenLibraryNode);
+      if (screenNodes.length > 0) {
+        if (typeof figma.loadAllPagesAsync === "function") {
+          await figma.loadAllPagesAsync();
+        }
+        const screensPage = getOrCreateTargetPage("screens");
+        if (typeof screensPage.loadAsync === "function") {
+          await screensPage.loadAsync();
+        }
+        for (const screenNode of screenNodes) {
+          try {
+            screensPage.appendChild(screenNode);
+            movedScreenNodes.push(screenNode);
+          } catch (err) {
+            console.warn(`Could not move "${screenNode.name}" to "${screensPage.name}":`, err);
+          }
+        }
+        if (movedScreenNodes.length > 0) {
+          const movedSet = new Set(movedScreenNodes);
+          nodes = nodes.filter((n) => !movedSet.has(n));
+          await organizeElementsOnCanvas(true, screensPage, resolvedLayoutMode);
+        }
+      }
+    }
+    if (nodes.length === 0) {
+      if (isCurrentPage) {
+        figma.currentPage.selection = [];
+        await sendSelectionToUI();
+        if (movedScreenNodes.length > 0) {
+          figma.notify(
+            `Moved ${movedScreenNodes.length} Screen component${movedScreenNodes.length > 1 ? "s" : ""} in background to "    \u{1F537} Screens" & arranged! \u{1F4D0}`
+          );
+        } else {
+          figma.notify("No elements found to arrange on canvas.", { error: true });
+        }
+      }
       return;
     }
     let startX = Math.min(...nodes.map((n) => n.x));
@@ -8546,22 +8885,39 @@ ${usageJsx}
     }
     const GAP_X = 272;
     const GAP_Y = 272;
-    let currentX = startX;
-    for (const grp of sortedGroups) {
-      const columnWidth = Math.max(...grp.items.map((n) => n.width || 0), 0);
+    if (resolvedLayoutMode === "rows") {
       let currentY = startY;
-      for (const item of grp.items) {
-        try {
-          item.x = currentX;
-          item.y = currentY;
-        } catch (err) {
-          console.warn(`Could not set position for "${item.name}":`, err);
+      for (const grp of sortedGroups) {
+        const rowHeight = Math.max(...grp.items.map((n) => n.height || 0), 0);
+        let currentX = startX;
+        for (const item of grp.items) {
+          try {
+            item.x = currentX;
+            item.y = currentY;
+          } catch (err) {
+            console.warn(`Could not set position for "${item.name}":`, err);
+          }
+          currentX += (item.width || 0) + GAP_X;
         }
-        currentY += (item.height || 0) + GAP_Y;
+        currentY += rowHeight + GAP_Y;
       }
-      currentX += columnWidth + GAP_X;
+    } else {
+      let currentX = startX;
+      for (const grp of sortedGroups) {
+        const columnWidth = Math.max(...grp.items.map((n) => n.width || 0), 0);
+        let currentY = startY;
+        for (const item of grp.items) {
+          try {
+            item.x = currentX;
+            item.y = currentY;
+          } catch (err) {
+            console.warn(`Could not set position for "${item.name}":`, err);
+          }
+          currentY += (item.height || 0) + GAP_Y;
+        }
+        currentX += columnWidth + GAP_X;
+      }
     }
-    figma.viewport.scrollAndZoomIntoView(nodes);
     function collapseContainers(node) {
       if ("expanded" in node) {
         try {
@@ -8575,10 +8931,23 @@ ${usageJsx}
         }
       }
     }
-    collapseContainers(figma.currentPage);
+    collapseContainers(targetPage);
+    if (!isCurrentPage) {
+      return;
+    }
+    figma.viewport.scrollAndZoomIntoView(nodes);
     figma.currentPage.selection = [];
     await sendSelectionToUI();
-    figma.notify(`Arranged ${nodes.length} element${nodes.length > 1 ? "s" : ""} in ${sortedGroups.length} column group${sortedGroups.length > 1 ? "s" : ""} & collapsed layers! \u{1F4D0}`);
+    const groupAxisLabel = resolvedLayoutMode === "rows" ? "row" : "column";
+    if (movedScreenNodes.length > 0) {
+      figma.notify(
+        `Arranged ${nodes.length} element${nodes.length > 1 ? "s" : ""} in ${sortedGroups.length} ${groupAxisLabel} group${sortedGroups.length > 1 ? "s" : ""} & moved ${movedScreenNodes.length} Screen component${movedScreenNodes.length > 1 ? "s" : ""} to "    \u{1F537} Screens"! \u{1F4D0}`
+      );
+    } else {
+      figma.notify(
+        `Arranged ${nodes.length} element${nodes.length > 1 ? "s" : ""} in ${sortedGroups.length} ${groupAxisLabel} group${sortedGroups.length > 1 ? "s" : ""} & collapsed layers! \u{1F4D0}`
+      );
+    }
   }
   function isLibraryComponentsPage(page = figma.currentPage) {
     const TARGET_PAGE_NAME = "    \u{1F537} Components";
@@ -8589,9 +8958,25 @@ ${usageJsx}
     }
     return clean.includes("\u{1F537}") && clean.includes("component");
   }
+  function isLibraryScreensPage(page = figma.currentPage) {
+    const TARGET_PAGE_NAME = "    \u{1F537} Screens";
+    if (page.name === TARGET_PAGE_NAME) return true;
+    const clean = page.name.trim().toLowerCase();
+    if (clean === "\u{1F537} screens" || clean === "\u{1F537}screens" || clean === "screens" || clean === "screen") {
+      return true;
+    }
+    return clean.includes("\u{1F537}") && clean.includes("screen");
+  }
+  function isScreenLibraryNode(node) {
+    if (node.type !== "COMPONENT" && node.type !== "COMPONENT_SET") {
+      return false;
+    }
+    const trimmed = (node.name || "").trim();
+    return /^screen(?=$|[^a-z])/i.test(trimmed);
+  }
   function getOrCreateTargetPage(pageType = "components") {
     const isScreens = pageType === "screens";
-    const TARGET_PAGE_NAME = isScreens ? "    \u{1F537} screens" : "    \u{1F537} Components";
+    const TARGET_PAGE_NAME = isScreens ? "    \u{1F537} Screens" : "    \u{1F537} Components";
     let targetPage = figma.root.children.find((p) => p.name === TARGET_PAGE_NAME);
     if (!targetPage) {
       const targetTrimmed = isScreens ? "\u{1F537} screens" : "\u{1F537} components";
@@ -8622,7 +9007,8 @@ ${usageJsx}
     }
     return targetPage;
   }
-  async function moveSelectedToComponentsPage() {
+  async function moveSelectedToComponentsPage(layoutMode) {
+    const resolvedLayoutMode = layoutMode || await getOrganizeLayoutMode();
     if (typeof figma.loadAllPagesAsync === "function") {
       await figma.loadAllPagesAsync();
     }
@@ -8658,25 +9044,47 @@ ${usageJsx}
       figma.notify("No element found in selection to move.", { error: true });
       return;
     }
-    const componentsTargetPage = getOrCreateTargetPage("components");
-    const nodesToTransfer = [];
-    for (const node of nodesToMove) {
-      let nodePage = node;
-      while (nodePage && nodePage.type !== "PAGE") {
-        nodePage = nodePage.parent;
+    const allNodesToMove = Array.from(nodesToMove);
+    const hasScreenNodes = allNodesToMove.some(isScreenLibraryNode);
+    const hasComponentNodes = allNodesToMove.some((n) => !isScreenLibraryNode(n));
+    const screensTargetPage = hasScreenNodes ? getOrCreateTargetPage("screens") : null;
+    const componentsTargetPage = hasComponentNodes ? getOrCreateTargetPage("components") : null;
+    if (screensTargetPage && typeof screensTargetPage.loadAsync === "function") {
+      await screensTargetPage.loadAsync();
+    }
+    if (componentsTargetPage && typeof componentsTargetPage.loadAsync === "function") {
+      await componentsTargetPage.loadAsync();
+    }
+    const getEnclosingPage = (node) => {
+      let curr = node;
+      while (curr && curr.type !== "PAGE") {
+        curr = curr.parent;
       }
-      if (nodePage && nodePage.id === componentsTargetPage.id) {
+      return curr && curr.type === "PAGE" ? curr : null;
+    };
+    const transfers = [];
+    for (const node of allNodesToMove) {
+      const isScreen = isScreenLibraryNode(node);
+      const targetPage = isScreen ? screensTargetPage : componentsTargetPage;
+      const nodePage = getEnclosingPage(node);
+      if (nodePage && nodePage.id === targetPage.id) {
         continue;
       }
-      nodesToTransfer.push(node);
+      const fromLibraryPage = Boolean(
+        nodePage && (isLibraryComponentsPage(nodePage) || isLibraryScreensPage(nodePage))
+      );
+      transfers.push({ node, targetPage, isScreen, fromLibraryPage });
     }
-    if (nodesToTransfer.length === 0) {
-      figma.notify("Selected element(s) are already on the components page! \u2139\uFE0F");
-      figma.currentPage = componentsTargetPage;
-      await organizeElementsOnCanvas(true);
+    if (transfers.length === 0) {
+      const focusPage = screensTargetPage && !componentsTargetPage ? screensTargetPage : componentsTargetPage;
+      const pageLabel = isLibraryScreensPage(focusPage) ? '"    \u{1F537} Screens"' : "components";
+      figma.notify(`Selected element(s) are already on the ${pageLabel} page! \u2139\uFE0F`);
+      figma.currentPage = focusPage;
+      await organizeElementsOnCanvas(true, focusPage, resolvedLayoutMode);
       return;
     }
-    for (const nodeToMove of nodesToTransfer) {
+    for (const { node: nodeToMove, fromLibraryPage } of transfers) {
+      if (fromLibraryPage) continue;
       if (nodeToMove.type === "COMPONENT" || nodeToMove.type === "COMPONENT_SET") {
         try {
           const originalParent = nodeToMove.parent;
@@ -8759,29 +9167,49 @@ ${usageJsx}
         }
       }
     }
-    figma.currentPage = componentsTargetPage;
-    let totalMoved = 0;
-    const allSuccessfullyMoved = [];
-    for (const nodeToMove of nodesToTransfer) {
+    const movedToScreens = [];
+    const movedToComponents = [];
+    for (const { node: nodeToMove, targetPage, isScreen } of transfers) {
       try {
-        componentsTargetPage.appendChild(nodeToMove);
-        totalMoved++;
-        allSuccessfullyMoved.push(nodeToMove);
+        targetPage.appendChild(nodeToMove);
+        if (isScreen) {
+          movedToScreens.push(nodeToMove);
+        } else {
+          movedToComponents.push(nodeToMove);
+        }
       } catch (err) {
-        console.error(`Could not move "${nodeToMove.name}" to "${componentsTargetPage.name}":`, err);
+        console.error(`Could not move "${nodeToMove.name}" to "${targetPage.name}":`, err);
         figma.notify(`Could not move "${nodeToMove.name}": ${err.message || err}`, { error: true });
       }
     }
-    await organizeElementsOnCanvas(true);
-    const selectionOnPage = allSuccessfullyMoved.filter(
-      (n) => n.parent && n.parent.id === componentsTargetPage.id
+    const primaryPage = movedToComponents.length > 0 ? componentsTargetPage : movedToScreens.length > 0 ? screensTargetPage : componentsTargetPage || screensTargetPage;
+    if (movedToScreens.length > 0 && screensTargetPage && screensTargetPage.id !== primaryPage.id) {
+      await organizeElementsOnCanvas(true, screensTargetPage, resolvedLayoutMode);
+    }
+    figma.currentPage = primaryPage;
+    await organizeElementsOnCanvas(true, primaryPage, resolvedLayoutMode);
+    const primaryMoved = primaryPage.id === (screensTargetPage == null ? void 0 : screensTargetPage.id) ? movedToScreens : movedToComponents;
+    const selectionOnPage = primaryMoved.filter(
+      (n) => n.parent && n.parent.id === primaryPage.id
     );
     if (selectionOnPage.length > 0) {
       figma.currentPage.selection = selectionOnPage;
       figma.viewport.scrollAndZoomIntoView(selectionOnPage);
     }
     await sendSelectionToUI();
-    figma.notify(`Moved ${totalMoved} element${totalMoved > 1 ? "s" : ""} to "    \u{1F537} Components" & arranged grid! \u{1F680}\u{1F4D0}`);
+    if (movedToScreens.length > 0 && movedToComponents.length > 0) {
+      figma.notify(
+        `Moved ${movedToComponents.length} to "    \u{1F537} Components" & ${movedToScreens.length} to "    \u{1F537} Screens" & arranged grid! \u{1F680}\u{1F4D0}`
+      );
+    } else if (movedToScreens.length > 0) {
+      figma.notify(
+        `Moved ${movedToScreens.length} element${movedToScreens.length > 1 ? "s" : ""} to "    \u{1F537} Screens" & arranged grid! \u{1F680}\u{1F4D0}`
+      );
+    } else if (movedToComponents.length > 0) {
+      figma.notify(
+        `Moved ${movedToComponents.length} element${movedToComponents.length > 1 ? "s" : ""} to "    \u{1F537} Components" & arranged grid! \u{1F680}\u{1F4D0}`
+      );
+    }
   }
 
   // src/properties/sanitizer.ts
@@ -9178,6 +9606,8 @@ ${usageJsx}
   // src/variables/autoBinder.ts
   var sessionVariablesLoaded = false;
   var sessionAllColsMap = /* @__PURE__ */ new Map();
+  var sessionLibraryInfoByKey = /* @__PURE__ */ new Map();
+  var sessionLocalColIds = /* @__PURE__ */ new Set();
   var sessionAllVarsMap = /* @__PURE__ */ new Map();
   var CACHED_VARIABLES_MAP = sessionAllVarsMap;
   var CACHED_TEXT_STYLES = [];
@@ -9520,6 +9950,8 @@ ${usageJsx}
       sessionPrecomputedMetrics = null;
       sessionPrecomputedColors = null;
       sessionAllColsMap.clear();
+      sessionLibraryInfoByKey.clear();
+      sessionLocalColIds.clear();
       sessionAllVarsMap.clear();
       try {
         await ensureTemporaryMetricsCollection();
@@ -9527,7 +9959,10 @@ ${usageJsx}
       }
       try {
         const localCols = await figma.variables.getLocalVariableCollectionsAsync();
-        for (const c of localCols) sessionAllColsMap.set(c.id, c);
+        for (const c of localCols) {
+          sessionAllColsMap.set(c.id, c);
+          sessionLocalColIds.add(c.id);
+        }
       } catch (e) {
       }
       try {
@@ -9545,6 +9980,12 @@ ${usageJsx}
       try {
         const libraryCollections = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
         for (const libCol of libraryCollections) {
+          if (libCol.key) {
+            sessionLibraryInfoByKey.set(libCol.key, {
+              name: libCol.name || "Remote Collection",
+              libraryName: libCol.libraryName || "External Library"
+            });
+          }
           if (libCol.name.trim().startsWith("_")) continue;
           sessionAllColsMap.set(libCol.key, libCol);
           try {
@@ -9640,7 +10081,10 @@ ${usageJsx}
           if (!v.scopes || v.scopes.length === 0) return;
           const col = sessionAllColsMap.get(v.variableCollectionId);
           const colName = col ? col.name.trim() : "";
-          if (colName.startsWith("_")) return;
+          const isMetricsCollection = /^(metrics|_metrics)$/i.test(colName);
+          if (colName.startsWith("_") && !isMetricsCollection) return;
+          const isLocal = !v.remote && sessionLocalColIds.has(v.variableCollectionId);
+          const isSchemesCollection = /^schemes$/i.test(colName);
           if (v.resolvedType === "FLOAT") {
             const val = await resolveVarValue(v);
             if (typeof val === "number") {
@@ -9649,7 +10093,10 @@ ${usageJsx}
                 name: v.name,
                 lowerName: v.name.toLowerCase(),
                 scopes: v.scopes,
-                value: val
+                value: val,
+                isLocal,
+                collectionName: colName,
+                isMetricsCollection
               });
             }
           } else if (v.resolvedType === "COLOR") {
@@ -9660,7 +10107,10 @@ ${usageJsx}
                 name: v.name,
                 lowerName: v.name.toLowerCase(),
                 scopes: v.scopes,
-                color: colVal
+                color: colVal,
+                isLocal,
+                collectionName: colName,
+                isSchemesCollection
               });
             }
           }
@@ -9742,11 +10192,13 @@ ${usageJsx}
       return null;
     }
     let processedCount = 0;
+    const smartAppleCaches = createAppleDetectionCaches();
     for (const node of allNodesToProcess) {
       processedCount++;
       if (allNodesToProcess.length > 30 && processedCount % 25 === 0) {
         await new Promise((r) => setTimeout(r, 0));
       }
+      const isAppleNode = await isInsideOfficialAppleSubtree(node, sessionLibraryInfoByKey, smartAppleCaches);
       if (options.setupContainers) {
         if ("fills" in node && Array.isArray(node.fills)) {
           try {
@@ -9930,135 +10382,137 @@ ${usageJsx}
           bindNumericProperty("strokeWeight", sNode.strokeWeight, ["STROKE_FLOAT"], "stroke");
         }
       }
-      const ancestorRole = getAncestorContainerRole(node);
-      if ("fills" in node && Array.isArray(node.fills) && node.fills.length > 0) {
-        try {
-          const fills = node.fills;
-          let requiredScope;
-          if (node.type === "FRAME" || node.type === "COMPONENT" || node.type === "COMPONENT_SET" || node.type === "INSTANCE") {
-            requiredScope = "FRAME_FILL";
-          } else if (node.type === "TEXT") {
-            requiredScope = "TEXT_FILL";
-          } else {
-            requiredScope = "SHAPE_FILL";
-          }
-          const candidateColorTokens = precomputedColors.filter((c) => {
-            if (!c.scopes || c.scopes.length === 0) return false;
-            return c.scopes.includes("ALL_SCOPES") || c.scopes.includes("ALL_FILLS") || c.scopes.includes(requiredScope);
-          });
-          let modifiedFills = false;
-          const newFills = JSON.parse(JSON.stringify(fills));
-          for (let i = 0; i < fills.length; i++) {
-            const paint = fills[i];
-            if (paint.type !== "SOLID" || paint.visible === false) continue;
-            if (!options.forceRebind && ((_a = paint.boundVariables) == null ? void 0 : _a.color)) continue;
-            const pr = paint.color.r;
-            const pg = paint.color.g;
-            const pb = paint.color.b;
-            const pa = paint.opacity !== void 0 ? paint.opacity : 1;
-            let bestToken = null;
-            let bestDist = Infinity;
-            let bestTieScore = -Infinity;
-            for (const item of candidateColorTokens) {
-              const resolved = item.color;
-              const dist = Math.sqrt(
-                Math.pow(pr - resolved.r, 2) + Math.pow(pg - resolved.g, 2) + Math.pow(pb - resolved.b, 2) + Math.pow(pa - resolved.a, 2)
-              );
-              const maxDist = options.mode === "exact" ? 0.015 : 0.08;
-              if (dist > maxDist) continue;
-              let tieScore = 0;
-              const vName = item.lowerName;
-              if (node.type === "TEXT") {
-                if (vName.includes("onprimary") && !vName.includes("container") && ancestorRole === "primary") {
-                  tieScore += 50;
-                } else if (vName.includes("onprimarycontainer") && ancestorRole === "primaryContainer") {
-                  tieScore += 50;
-                } else if ((vName.includes("onsurface") || vName.includes("onbackground")) && (ancestorRole === "surface" || ancestorRole === "background" || !ancestorRole)) {
-                  tieScore += 40;
+      if (!isAppleNode) {
+        const ancestorRole = getAncestorContainerRole(node);
+        if ("fills" in node && Array.isArray(node.fills) && node.fills.length > 0) {
+          try {
+            const fills = node.fills;
+            let requiredScope;
+            if (node.type === "FRAME" || node.type === "COMPONENT" || node.type === "COMPONENT_SET" || node.type === "INSTANCE") {
+              requiredScope = "FRAME_FILL";
+            } else if (node.type === "TEXT") {
+              requiredScope = "TEXT_FILL";
+            } else {
+              requiredScope = "SHAPE_FILL";
+            }
+            const candidateColorTokens = precomputedColors.filter((c) => {
+              if (!c.scopes || c.scopes.length === 0) return false;
+              return c.scopes.includes("ALL_SCOPES") || c.scopes.includes("ALL_FILLS") || c.scopes.includes(requiredScope);
+            });
+            let modifiedFills = false;
+            const newFills = JSON.parse(JSON.stringify(fills));
+            for (let i = 0; i < fills.length; i++) {
+              const paint = fills[i];
+              if (paint.type !== "SOLID" || paint.visible === false) continue;
+              if (!options.forceRebind && ((_a = paint.boundVariables) == null ? void 0 : _a.color)) continue;
+              const pr = paint.color.r;
+              const pg = paint.color.g;
+              const pb = paint.color.b;
+              const pa = paint.opacity !== void 0 ? paint.opacity : 1;
+              let bestToken = null;
+              let bestDist = Infinity;
+              let bestTieScore = -Infinity;
+              for (const item of candidateColorTokens) {
+                const resolved = item.color;
+                const dist = Math.sqrt(
+                  Math.pow(pr - resolved.r, 2) + Math.pow(pg - resolved.g, 2) + Math.pow(pb - resolved.b, 2) + Math.pow(pa - resolved.a, 2)
+                );
+                const maxDist = options.mode === "exact" ? 0.015 : 0.08;
+                if (dist > maxDist) continue;
+                let tieScore = 0;
+                const vName = item.lowerName;
+                if (node.type === "TEXT") {
+                  if (vName.includes("onprimary") && !vName.includes("container") && ancestorRole === "primary") {
+                    tieScore += 50;
+                  } else if (vName.includes("onprimarycontainer") && ancestorRole === "primaryContainer") {
+                    tieScore += 50;
+                  } else if ((vName.includes("onsurface") || vName.includes("onbackground")) && (ancestorRole === "surface" || ancestorRole === "background" || !ancestorRole)) {
+                    tieScore += 40;
+                  }
+                  if (vName.startsWith("on") || vName.includes("/on")) {
+                    tieScore += 20;
+                  }
+                } else if (node.type === "FRAME" || node.type === "COMPONENT" || node.type === "COMPONENT_SET" || node.type === "INSTANCE") {
+                  if (vName.startsWith("on") || vName.includes("/on")) {
+                    tieScore -= 50;
+                  }
+                  if (vName.includes("surface")) tieScore += 15;
+                  if (vName.includes("primary")) tieScore += 10;
                 }
-                if (vName.startsWith("on") || vName.includes("/on")) {
-                  tieScore += 20;
+                if (dist < bestDist - 5e-3 || Math.abs(dist - bestDist) <= 5e-3 && tieScore > bestTieScore) {
+                  bestDist = dist;
+                  bestTieScore = tieScore;
+                  bestToken = item;
                 }
-              } else if (node.type === "FRAME" || node.type === "COMPONENT" || node.type === "COMPONENT_SET" || node.type === "INSTANCE") {
-                if (vName.startsWith("on") || vName.includes("/on")) {
-                  tieScore -= 50;
-                }
-                if (vName.includes("surface")) tieScore += 15;
-                if (vName.includes("primary")) tieScore += 10;
               }
-              if (dist < bestDist - 5e-3 || Math.abs(dist - bestDist) <= 5e-3 && tieScore > bestTieScore) {
-                bestDist = dist;
-                bestTieScore = tieScore;
-                bestToken = item;
+              if (bestToken) {
+                newFills[i] = figma.variables.setBoundVariableForPaint(
+                  newFills[i],
+                  "color",
+                  bestToken.variable
+                );
+                modifiedFills = true;
+                colorsBoundCount++;
               }
             }
-            if (bestToken) {
-              newFills[i] = figma.variables.setBoundVariableForPaint(
-                newFills[i],
-                "color",
-                bestToken.variable
-              );
-              modifiedFills = true;
-              colorsBoundCount++;
+            if (modifiedFills) {
+              node.fills = newFills;
             }
+          } catch (err) {
           }
-          if (modifiedFills) {
-            node.fills = newFills;
-          }
-        } catch (err) {
         }
-      }
-      if ("strokes" in node && Array.isArray(node.strokes) && node.strokes.length > 0) {
-        try {
-          const strokes = node.strokes;
-          const candidateStrokeTokens = precomputedColors.filter((c) => {
-            if (!c.scopes || c.scopes.length === 0) return false;
-            return c.scopes.includes("ALL_SCOPES") || c.scopes.includes("STROKE_COLOR");
-          });
-          let modifiedStrokes = false;
-          const newStrokes = JSON.parse(JSON.stringify(strokes));
-          for (let i = 0; i < strokes.length; i++) {
-            const paint = strokes[i];
-            if (paint.type !== "SOLID" || paint.visible === false) continue;
-            if (!options.forceRebind && ((_b = paint.boundVariables) == null ? void 0 : _b.color)) continue;
-            const pr = paint.color.r;
-            const pg = paint.color.g;
-            const pb = paint.color.b;
-            const pa = paint.opacity !== void 0 ? paint.opacity : 1;
-            let bestToken = null;
-            let bestDist = Infinity;
-            let bestScore = -Infinity;
-            for (const item of candidateStrokeTokens) {
-              const resolved = item.color;
-              const dist = Math.sqrt(
-                Math.pow(pr - resolved.r, 2) + Math.pow(pg - resolved.g, 2) + Math.pow(pb - resolved.b, 2) + Math.pow(pa - resolved.a, 2)
-              );
-              const maxDist = options.mode === "exact" ? 0.015 : 0.08;
-              if (dist > maxDist) continue;
-              let score = 0;
-              const vName = item.lowerName;
-              if (vName.includes("outline")) score += 30;
-              if (vName.includes("border")) score += 20;
-              if (dist < bestDist - 5e-3 || Math.abs(dist - bestDist) <= 5e-3 && score > bestScore) {
-                bestDist = dist;
-                bestScore = score;
-                bestToken = item;
+        if ("strokes" in node && Array.isArray(node.strokes) && node.strokes.length > 0) {
+          try {
+            const strokes = node.strokes;
+            const candidateStrokeTokens = precomputedColors.filter((c) => {
+              if (!c.scopes || c.scopes.length === 0) return false;
+              return c.scopes.includes("ALL_SCOPES") || c.scopes.includes("STROKE_COLOR");
+            });
+            let modifiedStrokes = false;
+            const newStrokes = JSON.parse(JSON.stringify(strokes));
+            for (let i = 0; i < strokes.length; i++) {
+              const paint = strokes[i];
+              if (paint.type !== "SOLID" || paint.visible === false) continue;
+              if (!options.forceRebind && ((_b = paint.boundVariables) == null ? void 0 : _b.color)) continue;
+              const pr = paint.color.r;
+              const pg = paint.color.g;
+              const pb = paint.color.b;
+              const pa = paint.opacity !== void 0 ? paint.opacity : 1;
+              let bestToken = null;
+              let bestDist = Infinity;
+              let bestScore = -Infinity;
+              for (const item of candidateStrokeTokens) {
+                const resolved = item.color;
+                const dist = Math.sqrt(
+                  Math.pow(pr - resolved.r, 2) + Math.pow(pg - resolved.g, 2) + Math.pow(pb - resolved.b, 2) + Math.pow(pa - resolved.a, 2)
+                );
+                const maxDist = options.mode === "exact" ? 0.015 : 0.08;
+                if (dist > maxDist) continue;
+                let score = 0;
+                const vName = item.lowerName;
+                if (vName.includes("outline")) score += 30;
+                if (vName.includes("border")) score += 20;
+                if (dist < bestDist - 5e-3 || Math.abs(dist - bestDist) <= 5e-3 && score > bestScore) {
+                  bestDist = dist;
+                  bestScore = score;
+                  bestToken = item;
+                }
+              }
+              if (bestToken) {
+                newStrokes[i] = figma.variables.setBoundVariableForPaint(
+                  newStrokes[i],
+                  "color",
+                  bestToken.variable
+                );
+                modifiedStrokes = true;
+                colorsBoundCount++;
               }
             }
-            if (bestToken) {
-              newStrokes[i] = figma.variables.setBoundVariableForPaint(
-                newStrokes[i],
-                "color",
-                bestToken.variable
-              );
-              modifiedStrokes = true;
-              colorsBoundCount++;
+            if (modifiedStrokes) {
+              node.strokes = newStrokes;
             }
+          } catch (err) {
           }
-          if (modifiedStrokes) {
-            node.strokes = newStrokes;
-          }
-        } catch (err) {
         }
       }
       if (node.type === "TEXT") {
@@ -10200,6 +10654,556 @@ ${usageJsx}
       colorsBound: colorsBoundCount,
       textStylesBound: textStylesBoundCount
     };
+  }
+  function isNodeControlCandidate(node) {
+    const nameLower = (node.name || "").toLowerCase();
+    if (nameLower.includes("button") || nameLower.includes("input") || nameLower.includes("control") || nameLower.includes("tag") || nameLower.includes("badge") || nameLower.includes("chip") || nameLower.includes("tab") || nameLower.includes("toggle") || nameLower.includes("switch") || nameLower.includes("checkbox") || nameLower.includes("radio")) {
+      return true;
+    }
+    return "height" in node && "width" in node && node.height > 0 && node.height <= 56 && node.width > 0 && node.width <= 320;
+  }
+  function getAncestorColorRole(node) {
+    var _a, _b;
+    let curr = node.parent;
+    while (curr && curr.type !== "PAGE") {
+      const boundFillVar = (_b = (_a = curr.boundVariables) == null ? void 0 : _a.fills) == null ? void 0 : _b[0];
+      if (boundFillVar) {
+        const varObj = sessionAllVarsMap.get(boundFillVar.id);
+        if (varObj) {
+          const vName = varObj.name.toLowerCase();
+          if (vName.includes("primarycontainer")) return "primaryContainer";
+          if (vName.includes("primary")) return "primary";
+          if (vName.includes("surface")) return "surface";
+          if (vName.includes("background")) return "background";
+        }
+      }
+      curr = curr.parent;
+    }
+    return null;
+  }
+  function findBestMetricToken(rawValue, allowedScopes, semanticField, options, precomputedMetrics) {
+    const candidates = precomputedMetrics.filter((m) => {
+      if (options.allowedIds && !options.allowedIds.has(m.variable.id)) return false;
+      return checkScopeMatch(m.scopes, allowedScopes);
+    });
+    const hintLower = (options.hintName || "").toLowerCase();
+    const maxSnapDiff = Math.min(24, Math.max(8, rawValue * 0.45));
+    let bestToken = null;
+    let bestScore = -Infinity;
+    let minDiff = Infinity;
+    for (const item of candidates) {
+      const vName = item.lowerName;
+      if (rawValue > 0) {
+        if (semanticField === "paddingX" || semanticField === "paddingY") {
+          if (vName.includes("/gap/") || vName.startsWith("gap/") || vName.includes("gap")) continue;
+        } else if (semanticField === "gap") {
+          if (vName.includes("inset") || vName.includes("inline") || vName.includes("block") || vName.includes("padding")) {
+            continue;
+          }
+        } else if (semanticField === "stroke") {
+          if (vName.includes("gap") || vName.includes("padding") || vName.includes("radius")) continue;
+        }
+      }
+      const diff = Math.abs(item.value - rawValue);
+      if (options.mode === "exact") {
+        if (diff > 0.5) continue;
+      } else if (diff > maxSnapDiff) {
+        continue;
+      }
+      let score = diff <= 0.05 ? 1200 : diff <= 0.5 ? 900 - diff * 50 : 300 - diff * 25;
+      if (item.isMetricsCollection) score += 400;
+      if (item.isLocal) score += 200;
+      if (rawValue === 0) {
+        if (vName === "constant/none" || vName.endsWith("/constant/none") || vName === "none" || vName.endsWith("/none") || vName.includes("none") || vName.includes("zero")) {
+          score += 500;
+        }
+      }
+      if (semanticField === "paddingX") {
+        if (options.isControl) {
+          if (vName.startsWith("space/interactive/inline/")) score += 60;
+          else if (vName.includes("padding/buttonx") || vName.includes("padding/inputx")) score += 45;
+          else if (vName.startsWith("layout/")) score += 35;
+          else if (vName.startsWith("space/inset/")) score += 10;
+        } else {
+          if (vName.startsWith("space/inset/")) score += 60;
+          else if (vName.includes("padding/card")) score += 45;
+          else if (vName.startsWith("layout/")) score += 35;
+          else if (vName.startsWith("space/interactive/inline/")) score += 10;
+        }
+      } else if (semanticField === "paddingY") {
+        if (options.isControl) {
+          if (vName.startsWith("space/interactive/block/")) score += 60;
+          else if (vName.includes("padding/buttony") || vName.includes("padding/inputy")) score += 45;
+          else if (vName.startsWith("layout/")) score += 35;
+          else if (vName.startsWith("space/inset/")) score += 10;
+        } else {
+          if (vName.startsWith("space/inset/")) score += 60;
+          else if (vName.includes("padding/card")) score += 45;
+          else if (vName.startsWith("layout/")) score += 35;
+          else if (vName.startsWith("space/interactive/block/")) score += 10;
+        }
+      } else if (semanticField === "gap") {
+        if (vName.startsWith("space/gap/component/") || vName.startsWith("space/gap/layout/") || vName.startsWith("gap/") || vName.startsWith("layout/") || vName.includes("/gap/") || vName.includes("extrasmall")) {
+          score += 65;
+        }
+      } else if (semanticField === "radius") {
+        if (options.isControl) {
+          if (vName.startsWith("radius/interactive/") || vName.startsWith("radius/special/")) score += 60;
+          else if (vName.startsWith("radius/container/")) score += 10;
+        } else {
+          if (vName.startsWith("radius/container/")) score += 60;
+          else if (vName.startsWith("radius/interactive/")) score += 10;
+        }
+      } else if (semanticField === "stroke") {
+        if (vName.startsWith("border/") || vName.startsWith("constant/1")) score += 60;
+      }
+      if (hintLower) {
+        const hintLeaf = hintLower.split("/").pop() || "";
+        if (hintLeaf && vName.endsWith(hintLeaf)) score += 25;
+      }
+      if (score > bestScore || score === bestScore && diff < minDiff) {
+        bestScore = score;
+        minDiff = diff;
+        bestToken = item;
+      }
+    }
+    return bestToken;
+  }
+  function findBestColorToken(pr, pg, pb, pa, requiredScope, nodeType, ancestorRole, options, precomputedColors) {
+    const candidates = precomputedColors.filter((c) => {
+      if (options.allowedIds && !options.allowedIds.has(c.variable.id)) return false;
+      if (!c.scopes || c.scopes.length === 0) return false;
+      if (requiredScope === "STROKE_COLOR") {
+        return c.scopes.includes("ALL_SCOPES") || c.scopes.includes("STROKE_COLOR");
+      }
+      if (requiredScope === "EFFECT_COLOR") {
+        return c.scopes.includes("ALL_SCOPES") || c.scopes.includes("EFFECT_COLOR");
+      }
+      return c.scopes.includes("ALL_SCOPES") || c.scopes.includes("ALL_FILLS") || c.scopes.includes(requiredScope);
+    });
+    const maxDist = options.mode === "exact" ? 0.015 : 0.14;
+    const hintLower = (options.hintName || "").toLowerCase();
+    let bestToken = null;
+    let bestScore = -Infinity;
+    let bestDist = Infinity;
+    for (const item of candidates) {
+      const resolved = item.color;
+      const dist = Math.sqrt(
+        Math.pow(pr - resolved.r, 2) + Math.pow(pg - resolved.g, 2) + Math.pow(pb - resolved.b, 2) + Math.pow(pa - resolved.a, 2)
+      );
+      if (dist > maxDist) continue;
+      let score = dist <= 0.015 ? 1e3 - dist * 500 : 300 - dist * 400;
+      if (item.isSchemesCollection) score += 300;
+      if (item.isLocal) score += 200;
+      const vName = item.lowerName;
+      if (requiredScope === "STROKE_COLOR") {
+        if (vName.includes("outline")) score += 35;
+        if (vName.includes("border")) score += 25;
+      } else if (nodeType === "TEXT") {
+        if (vName.includes("onprimary") && !vName.includes("container") && ancestorRole === "primary") score += 50;
+        else if (vName.includes("onprimarycontainer") && ancestorRole === "primaryContainer") score += 50;
+        else if ((vName.includes("onsurface") || vName.includes("onbackground")) && (ancestorRole === "surface" || ancestorRole === "background" || !ancestorRole)) score += 40;
+        if (vName.startsWith("on") || vName.includes("/on")) score += 20;
+      } else if (nodeType === "FRAME" || nodeType === "COMPONENT" || nodeType === "COMPONENT_SET" || nodeType === "INSTANCE") {
+        if (vName.startsWith("on") || vName.includes("/on")) score -= 50;
+        if (vName.includes("surface")) score += 15;
+        if (vName.includes("primary")) score += 10;
+      }
+      if (hintLower) {
+        const hintLeaf = hintLower.split("/").pop() || "";
+        if (hintLeaf && vName.endsWith(hintLeaf)) score += 20;
+      }
+      if (score > bestScore || score === bestScore && dist < bestDist) {
+        bestScore = score;
+        bestDist = dist;
+        bestToken = item;
+      }
+    }
+    return bestToken;
+  }
+  async function runAuditAutoFix(nodeIds, options = { mode: "snap", filter: "all", detachUnmatchedForeign: true, notify: true }) {
+    var _a;
+    const uniqueIds = Array.from(new Set((nodeIds || []).filter((id) => typeof id === "string" && id.length > 0)));
+    if (uniqueIds.length === 0) {
+      if (options.notify !== false) {
+        figma.notify("Brak warstw do automatycznej naprawy w bie\u017C\u0105cym widoku audytu.", { error: true });
+      }
+      return { detachedCount: 0, reboundCount: 0, boundCount: 0 };
+    }
+    const targetNodes = [];
+    for (const id of uniqueIds) {
+      try {
+        const node = await figma.getNodeByIdAsync(id);
+        if (node && !node.removed && node.type !== "PAGE" && node.type !== "DOCUMENT") {
+          targetNodes.push(node);
+        }
+      } catch (e) {
+      }
+    }
+    if (targetNodes.length === 0) {
+      if (options.notify !== false) {
+        figma.notify("Nie znaleziono docelowych warstw na p\u0142\xF3tnie.", { error: true });
+      }
+      return { detachedCount: 0, reboundCount: 0, boundCount: 0 };
+    }
+    const auditCtx = await createAuditVariableContext(targetNodes);
+    const { precomputedMetrics, precomputedColors } = await preloadAutoBinderCaches(true, targetNodes[0]);
+    const allowedIds = /* @__PURE__ */ new Set();
+    const checkedVarIds = /* @__PURE__ */ new Set();
+    const registerAllowedBatch = async (items) => {
+      await Promise.all(
+        items.map(async (item) => {
+          if (!(item == null ? void 0 : item.variable) || checkedVarIds.has(item.variable.id)) return;
+          checkedVarIds.add(item.variable.id);
+          if (await auditCtx.isAllowedCandidateVariable(item.variable)) {
+            allowedIds.add(item.variable.id);
+          }
+        })
+      );
+    };
+    await registerAllowedBatch(precomputedMetrics);
+    await registerAllowedBatch(precomputedColors);
+    const filter = options.filter || "all";
+    const detachUnmatched = options.detachUnmatchedForeign !== false;
+    const matchesFilter = (category, issueType) => {
+      if (filter === "all") return true;
+      if (filter === "unbound" || filter === "missing" || filter === "foreign") {
+        return issueType === filter;
+      }
+      return category === filter;
+    };
+    const appleCaches = createAppleDetectionCaches();
+    let detachedCount = 0;
+    let reboundCount = 0;
+    let boundCount = 0;
+    for (let idx = 0; idx < targetNodes.length; idx++) {
+      if (idx > 0 && idx % 20 === 0) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      const node = targetNodes[idx];
+      const ignoredSet = getNodeIgnoredAuditKeys(node);
+      const isIgnoredProp = (category, prop) => ignoredSet.has("*") || ignoredSet.has(`${category}:*`) || ignoredSet.has(`${category}:${prop}`);
+      const isAppleNode = await isInsideOfficialAppleSubtree(node, auditCtx.libraryInfoByKey, appleCaches);
+      const boundVars = node.boundVariables || {};
+      const isControl = isNodeControlCandidate(node);
+      const ancestorRole = getAncestorColorRole(node);
+      const processNumericField = async (prop, rawValue, allowedScopes, semanticField, category) => {
+        if (isIgnoredProp(category, prop)) return;
+        const existingAlias = boundVars[prop];
+        if (existingAlias && existingAlias.type === "VARIABLE_ALIAS" && existingAlias.id) {
+          const status = await auditCtx.checkVariableStatus(existingAlias.id, node);
+          if (!status.isMissing && !status.isForeign) return;
+          const issueKind = status.isMissing ? "missing" : "foreign";
+          if (!matchesFilter(category, issueKind)) return;
+          const bestToken2 = findBestMetricToken(
+            rawValue,
+            allowedScopes,
+            semanticField,
+            { mode: options.mode, isControl, allowedIds, hintName: status.name },
+            precomputedMetrics
+          );
+          if (bestToken2) {
+            try {
+              node.setBoundVariable(prop, bestToken2.variable);
+              reboundCount++;
+              return;
+            } catch (e) {
+            }
+          }
+          if (detachUnmatched) {
+            try {
+              node.setBoundVariable(prop, null);
+              detachedCount++;
+            } catch (e) {
+            }
+          }
+          return;
+        }
+        if (!matchesFilter(category, "unbound")) return;
+        const bestToken = findBestMetricToken(
+          rawValue,
+          allowedScopes,
+          semanticField,
+          { mode: options.mode, isControl, allowedIds },
+          precomputedMetrics
+        );
+        if (bestToken) {
+          try {
+            node.setBoundVariable(prop, bestToken.variable);
+            boundCount++;
+          } catch (e) {
+          }
+        }
+      };
+      if (node.type !== "COMPONENT_SET" && "layoutMode" in node && node.layoutMode !== "NONE") {
+        const frame = node;
+        if (typeof frame.paddingLeft === "number" && frame.paddingLeft >= 0) {
+          await processNumericField("paddingLeft", frame.paddingLeft, ["GAP", "WIDTH_HEIGHT"], "paddingX", "padding");
+        }
+        if (typeof frame.paddingRight === "number" && frame.paddingRight >= 0) {
+          await processNumericField("paddingRight", frame.paddingRight, ["GAP", "WIDTH_HEIGHT"], "paddingX", "padding");
+        }
+        if (typeof frame.paddingTop === "number" && frame.paddingTop >= 0) {
+          await processNumericField("paddingTop", frame.paddingTop, ["GAP", "WIDTH_HEIGHT"], "paddingY", "padding");
+        }
+        if (typeof frame.paddingBottom === "number" && frame.paddingBottom >= 0) {
+          await processNumericField("paddingBottom", frame.paddingBottom, ["GAP", "WIDTH_HEIGHT"], "paddingY", "padding");
+        }
+        if (frame.primaryAxisAlignItems !== "SPACE_BETWEEN" && typeof frame.itemSpacing === "number" && frame.itemSpacing >= 0) {
+          await processNumericField("itemSpacing", frame.itemSpacing, ["GAP", "WIDTH_HEIGHT"], "gap", "gap");
+        }
+        if (frame.counterAxisAlignContent !== "SPACE_BETWEEN" && "layoutWrap" in frame && frame.layoutWrap === "WRAP" && typeof frame.counterAxisSpacing === "number") {
+          await processNumericField("counterAxisSpacing", frame.counterAxisSpacing, ["GAP", "WIDTH_HEIGHT"], "gap", "gap");
+        }
+      }
+      if (node.type !== "COMPONENT_SET" && "cornerRadius" in node) {
+        const rNode = node;
+        if (typeof rNode.cornerRadius === "number" && rNode.cornerRadius >= 0) {
+          const hasPerCornerBinding = Boolean(boundVars.topLeftRadius || boundVars.topRightRadius || boundVars.bottomLeftRadius || boundVars.bottomRightRadius);
+          if (hasPerCornerBinding) {
+            await processNumericField("topLeftRadius", rNode.cornerRadius, ["CORNER_RADIUS"], "radius", "radius");
+            await processNumericField("topRightRadius", rNode.cornerRadius, ["CORNER_RADIUS"], "radius", "radius");
+            await processNumericField("bottomLeftRadius", rNode.cornerRadius, ["CORNER_RADIUS"], "radius", "radius");
+            await processNumericField("bottomRightRadius", rNode.cornerRadius, ["CORNER_RADIUS"], "radius", "radius");
+          } else {
+            await processNumericField("cornerRadius", rNode.cornerRadius, ["CORNER_RADIUS"], "radius", "radius");
+          }
+        } else {
+          if (typeof rNode.topLeftRadius === "number" && rNode.topLeftRadius >= 0) {
+            await processNumericField("topLeftRadius", rNode.topLeftRadius, ["CORNER_RADIUS"], "radius", "radius");
+          }
+          if (typeof rNode.topRightRadius === "number" && rNode.topRightRadius >= 0) {
+            await processNumericField("topRightRadius", rNode.topRightRadius, ["CORNER_RADIUS"], "radius", "radius");
+          }
+          if (typeof rNode.bottomLeftRadius === "number" && rNode.bottomLeftRadius >= 0) {
+            await processNumericField("bottomLeftRadius", rNode.bottomLeftRadius, ["CORNER_RADIUS"], "radius", "radius");
+          }
+          if (typeof rNode.bottomRightRadius === "number" && rNode.bottomRightRadius >= 0) {
+            await processNumericField("bottomRightRadius", rNode.bottomRightRadius, ["CORNER_RADIUS"], "radius", "radius");
+          }
+        }
+      }
+      if (node.type !== "COMPONENT_SET" && "strokes" in node && Array.isArray(node.strokes) && node.strokes.length > 0) {
+        const sNode = node;
+        if (typeof sNode.strokeWeight === "number" && sNode.strokeWeight > 0) {
+          await processNumericField("strokeWeight", sNode.strokeWeight, ["STROKE_FLOAT"], "stroke", "stroke");
+        }
+      }
+      const processColorPaints = async (field, styleField, requiredScope) => {
+        var _a2, _b;
+        if (isIgnoredProp("color", field) || !(field in node) || !Array.isArray(node[field])) return;
+        const styleId = node[styleField];
+        if (typeof styleId === "string" && styleId.length > 0) {
+          try {
+            const style = await figma.getStyleByIdAsync(styleId);
+            let hasBadStyleBinding = !style;
+            if (style && "paints" in style && Array.isArray(style.paints)) {
+              for (const sp of style.paints) {
+                const spBinding = (_a2 = sp == null ? void 0 : sp.boundVariables) == null ? void 0 : _a2.color;
+                if (spBinding && spBinding.type === "VARIABLE_ALIAS" && spBinding.id) {
+                  const st = await auditCtx.checkVariableStatus(spBinding.id, node);
+                  if (st.isMissing || st.isForeign) {
+                    hasBadStyleBinding = true;
+                    break;
+                  }
+                }
+              }
+            }
+            if (hasBadStyleBinding && matchesFilter("color", !style ? "missing" : "foreign")) {
+              if (typeof node[`set${field === "fills" ? "Fill" : "Stroke"}StyleIdAsync`] === "function") {
+                await node[`set${field === "fills" ? "Fill" : "Stroke"}StyleIdAsync`]("");
+              } else {
+                node[styleField] = "";
+              }
+              detachedCount++;
+            }
+          } catch (e) {
+          }
+        }
+        try {
+          const paints = node[field];
+          if (!Array.isArray(paints) || paints.length === 0) return;
+          let modified = false;
+          const nextPaints = JSON.parse(JSON.stringify(paints));
+          for (let i = 0; i < paints.length; i++) {
+            const paint = paints[i];
+            if (!paint || paint.type !== "SOLID" || paint.visible === false) continue;
+            const pr = paint.color.r;
+            const pg = paint.color.g;
+            const pb = paint.color.b;
+            const pa = paint.opacity !== void 0 ? paint.opacity : 1;
+            const existingBinding = (_b = paint.boundVariables) == null ? void 0 : _b.color;
+            if (existingBinding && existingBinding.type === "VARIABLE_ALIAS" && existingBinding.id) {
+              const status = await auditCtx.checkVariableStatus(existingBinding.id, node);
+              if (!status.isMissing && !status.isForeign) continue;
+              const issueKind = status.isMissing ? "missing" : "foreign";
+              if (!matchesFilter("color", issueKind)) continue;
+              const bestColor = findBestColorToken(
+                pr,
+                pg,
+                pb,
+                pa,
+                requiredScope,
+                node.type,
+                ancestorRole,
+                { mode: options.mode, allowedIds, hintName: status.name },
+                precomputedColors
+              );
+              if (bestColor) {
+                nextPaints[i] = figma.variables.setBoundVariableForPaint(nextPaints[i], "color", bestColor.variable);
+                modified = true;
+                reboundCount++;
+              } else if (detachUnmatched) {
+                nextPaints[i] = figma.variables.setBoundVariableForPaint(nextPaints[i], "color", null);
+                modified = true;
+                detachedCount++;
+              }
+            } else if (matchesFilter("color", "unbound")) {
+              const bestColor = findBestColorToken(
+                pr,
+                pg,
+                pb,
+                pa,
+                requiredScope,
+                node.type,
+                ancestorRole,
+                { mode: options.mode, allowedIds },
+                precomputedColors
+              );
+              if (bestColor) {
+                nextPaints[i] = figma.variables.setBoundVariableForPaint(nextPaints[i], "color", bestColor.variable);
+                modified = true;
+                boundCount++;
+              }
+            }
+          }
+          if (modified) {
+            node[field] = nextPaints;
+          }
+        } catch (e) {
+        }
+      };
+      if (!isAppleNode && node.type !== "COMPONENT_SET") {
+        const fillScope = node.type === "FRAME" || node.type === "COMPONENT" || node.type === "INSTANCE" ? "FRAME_FILL" : node.type === "TEXT" ? "TEXT_FILL" : "SHAPE_FILL";
+        await processColorPaints("fills", "fillStyleId", fillScope);
+        await processColorPaints("strokes", "strokeStyleId", "STROKE_COLOR");
+        if (!isIgnoredProp("color", "effects") && "effects" in node && Array.isArray(node.effects)) {
+          try {
+            const effects = node.effects;
+            let effModified = false;
+            const nextEffects = JSON.parse(JSON.stringify(effects));
+            for (let eIdx = 0; eIdx < effects.length; eIdx++) {
+              const eff = effects[eIdx];
+              if (!eff || eff.visible === false || eff.type !== "DROP_SHADOW" && eff.type !== "INNER_SHADOW") continue;
+              const effBinding = (_a = eff.boundVariables) == null ? void 0 : _a.color;
+              if (effBinding && effBinding.type === "VARIABLE_ALIAS" && effBinding.id) {
+                const status = await auditCtx.checkVariableStatus(effBinding.id, node);
+                if (!status.isMissing && !status.isForeign) continue;
+                const issueKind = status.isMissing ? "missing" : "foreign";
+                if (!matchesFilter("color", issueKind)) continue;
+                const ea = eff.color.a !== void 0 ? eff.color.a : 1;
+                const bestColor = findBestColorToken(
+                  eff.color.r,
+                  eff.color.g,
+                  eff.color.b,
+                  ea,
+                  "EFFECT_COLOR",
+                  node.type,
+                  ancestorRole,
+                  { mode: options.mode, allowedIds, hintName: status.name },
+                  precomputedColors
+                );
+                if (bestColor && typeof figma.variables.setBoundVariableForEffect === "function") {
+                  nextEffects[eIdx] = figma.variables.setBoundVariableForEffect(nextEffects[eIdx], "color", bestColor.variable);
+                  effModified = true;
+                  reboundCount++;
+                } else if (detachUnmatched && typeof figma.variables.setBoundVariableForEffect === "function") {
+                  nextEffects[eIdx] = figma.variables.setBoundVariableForEffect(nextEffects[eIdx], "color", null);
+                  effModified = true;
+                  detachedCount++;
+                }
+              }
+            }
+            if (effModified) {
+              node.effects = nextEffects;
+            }
+          } catch (e) {
+          }
+        }
+      }
+      const handledKeys = /* @__PURE__ */ new Set([
+        "paddingLeft",
+        "paddingRight",
+        "paddingTop",
+        "paddingBottom",
+        "itemSpacing",
+        "counterAxisSpacing",
+        "cornerRadius",
+        "topLeftRadius",
+        "topRightRadius",
+        "bottomLeftRadius",
+        "bottomRightRadius",
+        "strokeWeight",
+        "fills",
+        "strokes",
+        "effects"
+      ]);
+      for (const [bKey, bVal] of Object.entries(node.boundVariables || {})) {
+        if (handledKeys.has(bKey) || !bVal || Array.isArray(bVal)) continue;
+        if (typeof bVal !== "object" || bVal.type !== "VARIABLE_ALIAS" || !bVal.id) continue;
+        const cat = bKey.includes("radius") ? "radius" : bKey.includes("spacing") || bKey.includes("gap") ? "gap" : bKey.includes("padding") ? "padding" : bKey.toLowerCase().includes("weight") || bKey.toLowerCase().includes("width") || bKey === "strokeWeight" ? "stroke" : "color";
+        if (isAppleNode && cat === "color" || isIgnoredProp(cat, bKey)) continue;
+        const status = await auditCtx.checkVariableStatus(bVal.id, node);
+        if (!status.isMissing && !status.isForeign) continue;
+        const issueKind = status.isMissing ? "missing" : "foreign";
+        if (!matchesFilter(cat, issueKind)) continue;
+        if (node.type === "TEXT") {
+          try {
+            await loadFontsForTextNode(node);
+          } catch (e) {
+          }
+        }
+        const numericVal = typeof node[bKey] === "number" ? node[bKey] : null;
+        let rebound = false;
+        if (numericVal !== null) {
+          const scopes = bKey === "opacity" ? ["OPACITY"] : bKey === "fontSize" ? ["FONT_SIZE"] : bKey === "lineHeight" ? ["LINE_HEIGHT"] : bKey === "letterSpacing" ? ["LETTER_SPACING"] : bKey.toLowerCase().includes("weight") ? ["STROKE_FLOAT"] : ["WIDTH_HEIGHT"];
+          const semanticField = bKey === "opacity" ? "opacity" : bKey.toLowerCase().includes("weight") ? "stroke" : /^(fontSize|lineHeight|letterSpacing|paragraphSpacing|paragraphIndent)$/.test(bKey) ? "typography" : "size";
+          const bestToken = findBestMetricToken(
+            numericVal,
+            scopes,
+            semanticField,
+            { mode: options.mode, isControl, allowedIds, hintName: status.name },
+            precomputedMetrics
+          );
+          if (bestToken) {
+            try {
+              node.setBoundVariable(bKey, bestToken.variable);
+              reboundCount++;
+              rebound = true;
+            } catch (e) {
+            }
+          }
+        }
+        if (!rebound && detachUnmatched) {
+          try {
+            node.setBoundVariable(bKey, null);
+            detachedCount++;
+          } catch (e) {
+          }
+        }
+      }
+    }
+    if (options.notify !== false) {
+      const totalAssigned = reboundCount + boundCount;
+      if (totalAssigned === 0 && detachedCount === 0) {
+        figma.notify("Brak pasuj\u0105cych zmiennych w kolekcji Metrics/Schemes do przepisania w ramach obecnego filtra.");
+      } else {
+        figma.notify(
+          `Audyt Auto-Fix: odpi\u0119to ${detachedCount}, podmieniono ${reboundCount}, dopi\u0119to ${boundCount} zmiennych (Metrics/Schemes wg Scopes). \u2728`
+        );
+      }
+    }
+    return { detachedCount, reboundCount, boundCount };
   }
 
   // src/renamer/textClassifier.ts
@@ -12411,6 +13415,105 @@ ${usageJsx}
       figma.currentPage.selection = allComponentSets;
     }
     return [...figma.currentPage.selection];
+  }
+
+  // src/components/pages.ts
+  function normalizeHexInput(rawHex) {
+    const clean = (rawHex || "").trim().replace(/^#/, "");
+    if (/^[0-9a-fA-F]{3}$/.test(clean)) {
+      const expanded = clean.split("").map((ch) => ch + ch).join("").toUpperCase();
+      return `#${expanded}`;
+    }
+    if (/^[0-9a-fA-F]{6}$/.test(clean)) {
+      return `#${clean.toUpperCase()}`;
+    }
+    return null;
+  }
+  function extractSolidBackgroundHex(page) {
+    try {
+      const bgs = page.backgrounds;
+      if (Array.isArray(bgs) && bgs.length > 0) {
+        const solid = bgs.find((p) => p.type === "SOLID");
+        if (solid) {
+          return rgbToHex(solid.color.r, solid.color.g, solid.color.b);
+        }
+      }
+    } catch (e) {
+    }
+    return null;
+  }
+  function buildPageSummaryItem(page) {
+    const suggestedTitleCaseName = convertStringToCase(page.name, "title");
+    return {
+      id: page.id,
+      name: page.name,
+      suggestedTitleCaseName,
+      needsTitleCase: suggestedTitleCaseName !== page.name,
+      backgroundHex: extractSolidBackgroundHex(page),
+      isCurrent: page.id === figma.currentPage.id
+    };
+  }
+  async function scanAllPagesSummary() {
+    if (typeof figma.loadAllPagesAsync === "function") {
+      await figma.loadAllPagesAsync();
+    }
+    const pages = [];
+    for (const page of figma.root.children) {
+      if (page.isPageDivider) continue;
+      pages.push(buildPageSummaryItem(page));
+    }
+    const currentPageHex = extractSolidBackgroundHex(figma.currentPage) || "#1E1E1E";
+    return { pages, currentPageHex };
+  }
+  async function applyMultiPageBackgroundAndTitleCase(options) {
+    let normalizedHex = null;
+    let solidPaint = null;
+    if (options.applyBackground) {
+      normalizedHex = normalizeHexInput(options.hex || "");
+      if (!normalizedHex) {
+        figma.notify("Invalid HEX color. Use format like #1A1A1A.", { error: true });
+        return null;
+      }
+      const rgb = parseHexOrRgb(normalizedHex);
+      solidPaint = { type: "SOLID", color: rgb, opacity: 1 };
+    }
+    if (typeof figma.loadAllPagesAsync === "function") {
+      await figma.loadAllPagesAsync();
+    }
+    let updatedBackgroundCount = 0;
+    let renamedPagesCount = 0;
+    for (const page of figma.root.children) {
+      if (page.isPageDivider) continue;
+      if (typeof page.loadAsync === "function") {
+        await page.loadAsync();
+      }
+      if (solidPaint) {
+        try {
+          page.backgrounds = [solidPaint];
+          updatedBackgroundCount++;
+        } catch (err) {
+          console.warn(`Could not update background for page "${page.name}":`, err);
+        }
+      }
+      if (options.applyTitleCase) {
+        const nextName = convertStringToCase(page.name, "title");
+        if (nextName !== page.name) {
+          try {
+            page.name = nextName;
+            renamedPagesCount++;
+          } catch (err) {
+            console.warn(`Could not rename page "${page.name}":`, err);
+          }
+        }
+      }
+    }
+    const scan = await scanAllPagesSummary();
+    return {
+      ...scan,
+      updatedBackgroundCount,
+      renamedPagesCount,
+      appliedHex: normalizedHex
+    };
   }
 
   // src/generator/presets.ts
@@ -15644,6 +16747,19 @@ ${usageJsx}
     } catch (e) {
     }
   }
+  function tryRenameVariable(variable, targetName, allVariables) {
+    if (!variable || variable.name === targetName) return false;
+    const hasConflict = allVariables.some(
+      (v) => !v.removed && v.id !== variable.id && v.variableCollectionId === variable.variableCollectionId && v.name === targetName
+    );
+    if (hasConflict) return false;
+    try {
+      variable.name = targetName;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
   function migrateFallbackColorVariables(variables) {
     const renamedMap = /* @__PURE__ */ new Map();
     if (!variables || !Array.isArray(variables)) return renamedMap;
@@ -15656,12 +16772,14 @@ ${usageJsx}
           if (!leaf.toLowerCase().endsWith("fallback")) {
             const newLeaf = `${toPascalCase3(leaf)}Fallback`;
             const newParts = ["Fallback", ...parts.slice(1, -1), newLeaf];
-            v.name = newParts.join("/");
-            renamedMap.set(v.id, oldName);
+            if (tryRenameVariable(v, newParts.join("/"), variables)) {
+              renamedMap.set(v.id, oldName);
+            }
           } else if (parts[0] !== "Fallback") {
             parts[0] = "Fallback";
-            v.name = parts.join("/");
-            renamedMap.set(v.id, oldName);
+            if (tryRenameVariable(v, parts.join("/"), variables)) {
+              renamedMap.set(v.id, oldName);
+            }
           }
           const currentLeaf = v.name.split("/").pop().toLowerCase();
           if (currentLeaf.startsWith("on")) {
@@ -15696,61 +16814,100 @@ ${usageJsx}
       const foundVar = variables.find((v) => !v.removed && v.resolvedType === "COLOR" && step.patterns.includes(v.name.toLowerCase()));
       if (foundVar && foundVar.name !== step.target) {
         const oldName = foundVar.name;
-        foundVar.name = step.target;
-        renamedMap.set(foundVar.id, oldName);
+        if (tryRenameVariable(foundVar, step.target, variables)) {
+          renamedMap.set(foundVar.id, oldName);
+        }
       }
     }
     return renamedMap;
+  }
+  var normLookupCache = /* @__PURE__ */ new WeakMap();
+  function getNormLookupMap(varsSource) {
+    let normMap = normLookupCache.get(varsSource);
+    if (normMap) return normMap;
+    normMap = /* @__PURE__ */ new Map();
+    for (const [existingKey, existingVar] of varsSource.entries()) {
+      if (!existingVar || existingVar.removed) continue;
+      const sepIdx = existingKey.indexOf(":");
+      const colId = sepIdx >= 0 ? existingKey.slice(0, sepIdx) : existingVar.variableCollectionId;
+      const keyVarName = sepIdx >= 0 ? existingKey.slice(sepIdx + 1) : existingVar.name;
+      const varNorm = `${colId}:${normalizePathForMatch(existingVar.name)}`;
+      if (!normMap.has(varNorm)) {
+        normMap.set(varNorm, { mapKey: existingKey, variable: existingVar });
+      }
+      const keyNorm = `${colId}:${normalizePathForMatch(keyVarName)}`;
+      if (!normMap.has(keyNorm)) {
+        normMap.set(keyNorm, { mapKey: existingKey, variable: existingVar });
+      }
+    }
+    normLookupCache.set(varsSource, normMap);
+    return normMap;
+  }
+  function safeRenameInMap(v, targetName, varsSource) {
+    if (!v || v.name === targetName) return;
+    const targetKey = `${v.variableCollectionId}:${targetName}`;
+    if (varsSource.has(targetKey)) {
+      const existing = varsSource.get(targetKey);
+      if (existing && existing.id !== v.id && !existing.removed) return;
+    }
+    try {
+      v.name = targetName;
+    } catch (e) {
+    }
   }
   function ensureVariable(name, collection, type, varsSource, oldName) {
     let v = null;
     const isMap = varsSource instanceof Map;
     const key = `${collection.id}:${name}`;
+    const normMap = isMap ? getNormLookupMap(varsSource) : null;
+    const targetNormKey = `${collection.id}:${normalizePathForMatch(name)}`;
     if (isMap) {
       v = varsSource.get(key);
+      if (v && v.removed) {
+        varsSource.delete(key);
+        v = null;
+      }
       if (!v && oldName) {
         const oldNames = Array.isArray(oldName) ? oldName : [oldName];
         for (const on of oldNames) {
           const oldKey = `${collection.id}:${on}`;
-          v = varsSource.get(oldKey);
-          if (v) {
+          const candidate = varsSource.get(oldKey);
+          if (candidate && !candidate.removed) {
+            v = candidate;
             varsSource.delete(oldKey);
-            if (v.name !== name) v.name = name;
+            safeRenameInMap(v, name, varsSource);
             varsSource.set(key, v);
+            if (normMap) {
+              normMap.set(targetNormKey, { mapKey: key, variable: v });
+            }
             break;
           }
         }
       }
-      if (!v) {
-        const targetNorm = normalizePathForMatch(name);
-        for (const [existingKey, existingVar] of varsSource.entries()) {
-          if (existingKey.startsWith(`${collection.id}:`)) {
-            if (normalizePathForMatch(existingVar.name) === targetNorm) {
-              v = existingVar;
-              varsSource.delete(existingKey);
-              if (v.name !== name) v.name = name;
-              varsSource.set(key, v);
-              break;
-            }
-          }
+      if (!v && normMap) {
+        const entry = normMap.get(targetNormKey);
+        if (entry && entry.variable && !entry.variable.removed) {
+          v = entry.variable;
+          varsSource.delete(entry.mapKey);
+          safeRenameInMap(v, name, varsSource);
+          varsSource.set(key, v);
+          normMap.set(targetNormKey, { mapKey: key, variable: v });
         }
       }
-      if (!v && oldName) {
+      if (!v && oldName && normMap) {
         const oldNames = Array.isArray(oldName) ? oldName : [oldName];
         for (const on of oldNames) {
-          const oldNorm = normalizePathForMatch(on);
-          for (const [existingKey, existingVar] of varsSource.entries()) {
-            if (existingKey.startsWith(`${collection.id}:`)) {
-              if (normalizePathForMatch(existingVar.name) === oldNorm) {
-                v = existingVar;
-                varsSource.delete(existingKey);
-                if (v.name !== name) v.name = name;
-                varsSource.set(key, v);
-                break;
-              }
-            }
+          const oldNormKey = `${collection.id}:${normalizePathForMatch(on)}`;
+          const entry = normMap.get(oldNormKey);
+          if (entry && entry.variable && !entry.variable.removed) {
+            v = entry.variable;
+            varsSource.delete(entry.mapKey);
+            safeRenameInMap(v, name, varsSource);
+            varsSource.set(key, v);
+            normMap.delete(oldNormKey);
+            normMap.set(targetNormKey, { mapKey: key, variable: v });
+            break;
           }
-          if (v) break;
         }
       }
     } else if (Array.isArray(varsSource)) {
@@ -15760,7 +16917,12 @@ ${usageJsx}
         for (const on of oldNames) {
           v = varsSource.find((iv) => iv.name === on && iv.variableCollectionId === collection.id);
           if (v) {
-            if (v.name !== name) v.name = name;
+            if (v.name !== name) {
+              try {
+                v.name = name;
+              } catch (e) {
+              }
+            }
             break;
           }
         }
@@ -15768,8 +16930,11 @@ ${usageJsx}
       if (!v) {
         const targetNorm = normalizePathForMatch(name);
         v = varsSource.find((iv) => iv.variableCollectionId === collection.id && normalizePathForMatch(iv.name) === targetNorm);
-        if (v) {
-          if (v.name !== name) v.name = name;
+        if (v && v.name !== name) {
+          try {
+            v.name = name;
+          } catch (e) {
+          }
         }
       }
       if (!v && oldName) {
@@ -15778,7 +16943,12 @@ ${usageJsx}
           const oldNorm = normalizePathForMatch(on);
           v = varsSource.find((iv) => iv.variableCollectionId === collection.id && normalizePathForMatch(iv.name) === oldNorm);
           if (v) {
-            if (v.name !== name) v.name = name;
+            if (v.name !== name) {
+              try {
+                v.name = name;
+              } catch (e) {
+              }
+            }
             break;
           }
         }
@@ -15786,12 +16956,18 @@ ${usageJsx}
     }
     if (v && v.resolvedType !== type) {
       v.remove();
-      if (isMap) varsSource.delete(key);
+      if (isMap) {
+        varsSource.delete(key);
+        if (normMap) normMap.delete(targetNormKey);
+      }
       v = null;
     }
     if (!v) {
       v = figma.variables.createVariable(name, collection, type);
-      if (isMap) varsSource.set(key, v);
+      if (isMap) {
+        varsSource.set(key, v);
+        if (normMap) normMap.set(targetNormKey, { mapKey: key, variable: v });
+      }
     }
     return v;
   }
@@ -16255,79 +17431,191 @@ ${usageJsx}
     }
     return detected;
   }
+  var CANONICAL_ROLE_BY_NORM = {
+    primary: "primary",
+    secondary: "secondary",
+    tertiary: "tertiary",
+    neutral: "neutral",
+    accessibility: "accessibility",
+    action: "action",
+    actiondark: "actionDark",
+    success: "success",
+    successdark: "successDark",
+    warning: "warning",
+    warningdark: "warningDark",
+    error: "error",
+    errordark: "errorDark"
+  };
   async function detectColorsFromDocument() {
+    var _a;
     const detected = {};
     const customColors = [];
     const collections = await figma.variables.getLocalVariableCollectionsAsync();
     const allLocalVars = await figma.variables.getLocalVariablesAsync();
     migrateFallbackColorVariables(allLocalVars);
-    const controlCols = collections.filter(
-      (c) => c.name === "_PaletteControls" || c.name === "_paletteControls" || c.name === "_StatesControls" || c.name === "_statesControls" || c.name === "_ShadesControls" || c.name === "_shadesControls"
+    const standardPaletteNorms = new Set(Object.keys(CANONICAL_ROLE_BY_NORM));
+    const registerStandardAliasName = (name) => {
+      if (!name || typeof name !== "string") return;
+      const norm = normalizePathForMatch(name);
+      if (norm) standardPaletteNorms.add(norm);
+    };
+    const paletteCol = collections.find(
+      (c) => c.name === "_Palettes" || c.name === "_palettes" || c.name === "Palettes" || c.name === "palettes"
     );
-    for (const controlsCol of controlCols) {
+    const inspectControlCollection = async (controlsCol, expectedRoles) => {
       const nameVar = findLocalVarByNormName(allLocalVars, controlsCol.id, "name");
       const colorVar = findLocalVarByNormName(allLocalVars, controlsCol.id, "50");
-      if (nameVar && colorVar) {
-        const expectedRoles = ["primary", "secondary", "tertiary", "neutral", "accessibility", "action", "success", "warning", "error", "errorDark"];
-        const modes = controlsCol.modes;
-        for (let i = 0; i < modes.length; i++) {
-          const modeId = modes[i].modeId;
-          const customName = nameVar.valuesByMode[modeId];
-          const colorValue = colorVar.valuesByMode[modeId];
-          let hexColor = null;
-          if (colorValue) {
-            if (colorValue.type === "VARIABLE_ALIAS") {
-              const aliasedVar = allLocalVars.find((v) => v.id === colorValue.id);
-              if (aliasedVar) {
-                const paletteCol2 = collections.find((c) => c.name === "_Palettes" || c.name === "_palettes" || c.name === "Palettes" || c.name === "palettes");
-                if (paletteCol2) {
-                  const defaultModeId = paletteCol2.modes[0].modeId;
-                  const resolvedColor = aliasedVar.valuesByMode[defaultModeId];
-                  if (resolvedColor && typeof resolvedColor === "object") {
-                    hexColor = rgbToHex2(resolvedColor.r, resolvedColor.g, resolvedColor.b);
-                  }
+      if (!colorVar && !nameVar) return;
+      const entries = [];
+      for (const mode of controlsCol.modes) {
+        const modeId = mode.modeId;
+        const rawName = nameVar ? nameVar.valuesByMode[modeId] : void 0;
+        const customName = typeof rawName === "string" && rawName.trim() ? rawName.trim() : (mode.name || "").trim();
+        let hexColor = null;
+        let aliasedGroupName = null;
+        const colorValue = colorVar ? colorVar.valuesByMode[modeId] : void 0;
+        if (colorValue) {
+          if (colorValue.type === "VARIABLE_ALIAS") {
+            const aliasedVar = allLocalVars.find((v) => v.id === colorValue.id);
+            if (aliasedVar) {
+              if (aliasedVar.name.includes("/")) {
+                aliasedGroupName = aliasedVar.name.substring(0, aliasedVar.name.lastIndexOf("/"));
+              }
+              if (paletteCol && paletteCol.modes.length > 0) {
+                const resolvedColor = aliasedVar.valuesByMode[paletteCol.modes[0].modeId];
+                if (resolvedColor && typeof resolvedColor === "object" && "r" in resolvedColor) {
+                  hexColor = rgbToHex2(resolvedColor.r, resolvedColor.g, resolvedColor.b);
                 }
               }
-            } else if (typeof colorValue === "object") {
-              hexColor = rgbToHex2(colorValue.r, colorValue.g, colorValue.b);
+              if (!hexColor) {
+                hexColor = await resolveVarToHex(aliasedVar, allLocalVars, collections);
+              }
             }
+          } else if (typeof colorValue === "object" && "r" in colorValue) {
+            hexColor = rgbToHex2(colorValue.r, colorValue.g, colorValue.b);
           }
-          if (customName && hexColor) {
-            const matchedRole = expectedRoles.find((r) => r === customName || r.toLowerCase() === customName.toLowerCase());
-            if (matchedRole) {
-              detected[matchedRole] = { name: customName, color: hexColor };
-            }
+        }
+        entries.push({
+          modeName: (mode.name || "").trim(),
+          customName,
+          hexColor,
+          aliasedGroupName
+        });
+      }
+      const assignedRoles = new Array(entries.length).fill(null);
+      const usedRoles = /* @__PURE__ */ new Set();
+      for (let i = 0; i < entries.length; i++) {
+        const candidates = [entries[i].customName, entries[i].modeName, entries[i].aliasedGroupName];
+        for (const cand of candidates) {
+          if (!cand) continue;
+          const matched = expectedRoles.find(
+            (r) => !usedRoles.has(r) && normalizePathForMatch(r) === normalizePathForMatch(cand)
+          );
+          if (matched) {
+            assignedRoles[i] = matched;
+            usedRoles.add(matched);
+            break;
+          }
+        }
+      }
+      for (let i = 0; i < entries.length; i++) {
+        if (assignedRoles[i]) continue;
+        const entry = entries[i];
+        const wantsDark = normalizePathForMatch(entry.customName || entry.modeName).endsWith("dark");
+        let fallbackRole;
+        if (i < expectedRoles.length && !usedRoles.has(expectedRoles[i])) {
+          const positionalRole = expectedRoles[i];
+          const positionalIsDark = positionalRole.endsWith("Dark");
+          if (positionalIsDark === wantsDark || entries.length === expectedRoles.length) {
+            fallbackRole = positionalRole;
+          }
+        }
+        if (!fallbackRole) {
+          fallbackRole = expectedRoles.find((r) => !usedRoles.has(r) && r.endsWith("Dark") === wantsDark) || expectedRoles.find((r) => !usedRoles.has(r));
+        }
+        if (fallbackRole) {
+          assignedRoles[i] = fallbackRole;
+          usedRoles.add(fallbackRole);
+        }
+      }
+      for (let i = 0; i < entries.length; i++) {
+        const role = assignedRoles[i];
+        const entry = entries[i];
+        if (!role) continue;
+        registerStandardAliasName(role);
+        registerStandardAliasName(entry.customName);
+        registerStandardAliasName(entry.modeName);
+        registerStandardAliasName(entry.aliasedGroupName);
+        if (entry.customName && entry.hexColor) {
+          detected[role] = { name: entry.customName, color: entry.hexColor };
+        }
+      }
+    };
+    const paletteControlCols = collections.filter(
+      (c) => c.name === "_PaletteControls" || c.name === "_paletteControls" || normalizePathForMatch(c.name) === "palettecontrols"
+    );
+    for (const col of paletteControlCols) {
+      await inspectControlCollection(
+        col,
+        ["primary", "secondary", "tertiary", "neutral", "accessibility"]
+      );
+    }
+    const statesControlCols = collections.filter(
+      (c) => c.name === "_StatesControls" || c.name === "_statesControls" || normalizePathForMatch(c.name) === "statescontrols"
+    );
+    for (const col of statesControlCols) {
+      await inspectControlCollection(
+        col,
+        ["action", "actionDark", "success", "successDark", "warning", "warningDark", "error", "errorDark"]
+      );
+    }
+    const schemesCol = collections.find(
+      (c) => c.name === "Schemes" || c.name === "schemes" || normalizePathForMatch(c.name) === "schemes"
+    );
+    if (schemesCol) {
+      const schemeVars = allLocalVars.filter((v) => v.variableCollectionId === schemesCol.id);
+      const lightMode = schemesCol.modes.find((m) => m.name === "Light" || m.name === "light");
+      if (lightMode && !detected.neutral) {
+        const surfaceVar = schemeVars.find((v) => {
+          const norm = normalizePathForMatch(v.name);
+          return norm === "default/surface" || norm === "default/onsurface" || norm === "default/surfacebackground";
+        });
+        const val = (_a = surfaceVar == null ? void 0 : surfaceVar.valuesByMode) == null ? void 0 : _a[lightMode.modeId];
+        if (val && val.type === "VARIABLE_ALIAS") {
+          const aliasedVar = allLocalVars.find((v) => v.id === val.id);
+          if (aliasedVar && aliasedVar.name.includes("/")) {
+            const groupName = aliasedVar.name.substring(0, aliasedVar.name.lastIndexOf("/"));
+            registerStandardAliasName(groupName);
           }
         }
       }
     }
-    const paletteCol = collections.find((c) => c.name === "_Palettes" || c.name === "_palettes" || c.name === "Palettes" || c.name === "palettes");
-    if (paletteCol) {
+    if (paletteCol && paletteCol.modes.length > 0) {
       const paletteVars = allLocalVars.filter((v) => v.variableCollectionId === paletteCol.id);
       const defaultModeId = paletteCol.modes[0].modeId;
+      const seenCustomNorms = /* @__PURE__ */ new Set();
       for (const v of paletteVars) {
-        if (v.name.endsWith("/50")) {
-          const customName = v.name.substring(0, v.name.length - 3);
-          const colorValue = v.valuesByMode[defaultModeId];
-          if (colorValue && typeof colorValue === "object") {
-            const hexColor = rgbToHex2(colorValue.r, colorValue.g, colorValue.b);
-            const lowerName = customName.toLowerCase();
-            const expectedRoles = ["primary", "secondary", "tertiary", "neutral", "accessibility", "action", "success", "warning", "error", "errordark", "actiondark", "successdark", "warningdark"];
-            let matchedRole = expectedRoles.find((r) => r === lowerName || lowerName.includes(r));
-            if (matchedRole) {
-              if (!detected[matchedRole]) {
-                detected[matchedRole] = { name: customName, color: hexColor };
-              }
-            } else if (!lowerName.startsWith("shades")) {
-              if (!customColors.some((c) => c.name.toLowerCase() === customName.toLowerCase())) {
-                customColors.push({ name: customName, color: hexColor });
-              }
-            }
+        if (!v.name.endsWith("/50")) continue;
+        const customName = v.name.substring(0, v.name.length - 3);
+        const normName = normalizePathForMatch(customName);
+        const lowerName = customName.toLowerCase();
+        if (!normName || lowerName.startsWith("shades")) continue;
+        const colorValue = v.valuesByMode[defaultModeId];
+        if (!colorValue || typeof colorValue !== "object" || !("r" in colorValue)) continue;
+        const hexColor = rgbToHex2(colorValue.r, colorValue.g, colorValue.b);
+        if (standardPaletteNorms.has(normName)) {
+          const canonicalRole = CANONICAL_ROLE_BY_NORM[normName];
+          if (canonicalRole && !detected[canonicalRole]) {
+            detected[canonicalRole] = { name: customName, color: hexColor };
           }
+          continue;
+        }
+        if (!seenCustomNorms.has(normName)) {
+          seenCustomNorms.add(normName);
+          customColors.push({ name: customName, color: hexColor });
         }
       }
     }
-    const schemesCol = collections.find((c) => c.name === "Schemes" || c.name === "schemes");
     if (schemesCol) {
       const schemeVars = allLocalVars.filter((v) => v.variableCollectionId === schemesCol.id);
       const lightMode = schemesCol.modes.find((m) => m.name === "Light" || m.name === "light");
@@ -16335,26 +17623,27 @@ ${usageJsx}
         const modeId = lightMode.modeId;
         const expectedRoles = ["primary", "secondary", "tertiary", "neutral", "action", "success", "warning", "error"];
         for (const role of expectedRoles) {
-          if (!detected[role]) {
-            for (const v of schemeVars) {
-              const lowerName = v.name.toLowerCase();
-              if (lowerName === role || lowerName.includes(role)) {
-                const colorValue = v.valuesByMode[modeId];
-                let hexColor = null;
-                if (colorValue) {
-                  if (colorValue.type === "VARIABLE_ALIAS") {
-                    const aliasedVar = allLocalVars.find((varInst) => varInst.id === colorValue.id);
-                    if (aliasedVar) {
-                      hexColor = await resolveVarToHex(aliasedVar, allLocalVars, collections);
-                    }
-                  } else if (typeof colorValue === "object") {
-                    hexColor = rgbToHex2(colorValue.r, colorValue.g, colorValue.b);
-                  }
+          if (detected[role]) continue;
+          for (const v of schemeVars) {
+            const leafName = v.name.includes("/") ? v.name.split("/").pop() : v.name;
+            const normLeaf = normalizePathForMatch(leafName);
+            if (normLeaf !== role && normLeaf !== `${role}default`) continue;
+            const colorValue = v.valuesByMode[modeId];
+            let hexColor = null;
+            if (colorValue) {
+              if (colorValue.type === "VARIABLE_ALIAS") {
+                const aliasedVar = allLocalVars.find((varInst) => varInst.id === colorValue.id);
+                if (aliasedVar) {
+                  hexColor = await resolveVarToHex(aliasedVar, allLocalVars, collections);
                 }
-                if (hexColor) {
-                  detected[role] = { name: v.name, color: hexColor };
-                }
+              } else if (typeof colorValue === "object" && "r" in colorValue) {
+                hexColor = rgbToHex2(colorValue.r, colorValue.g, colorValue.b);
               }
+            }
+            if (hexColor) {
+              const cleanName = leafName.endsWith("Default") && role !== "primary" ? leafName.slice(0, -"Default".length) : leafName;
+              detected[role] = { name: cleanName || role, color: hexColor };
+              break;
             }
           }
         }
@@ -16394,7 +17683,10 @@ ${usageJsx}
       const savedHeadersStyles = await figma.clientStorage.getAsync("pluginHeadersStyles");
       const savedBodyStyles = await figma.clientStorage.getAsync("pluginBodyStyles");
       const savedCustomGradients = await figma.clientStorage.getAsync("pluginCustomGradients");
-      const savedCustomColors = await figma.clientStorage.getAsync("pluginCustomColors");
+      try {
+        await figma.clientStorage.deleteAsync("pluginCustomColors");
+      } catch (e) {
+      }
       const savedIncludeMaterialIcons = await figma.clientStorage.getAsync("pluginIncludeMaterialIcons");
       const savedMaterialIconsFamily = await figma.clientStorage.getAsync("pluginMaterialIconsFamily");
       const savedMaterialIconsFill = await figma.clientStorage.getAsync("pluginMaterialIconsFill");
@@ -16412,9 +17704,12 @@ ${usageJsx}
         figma.notify(`Zaktualizowano ${updatedModesCount} tryb\xF3w (modes) w kolekcjach na PascalCase / ALLCAPS. \u2728`);
       }
       const detectedSeeds = await detectColorsFromDocument();
+      const detectedCustomColors = Array.isArray(detectedSeeds._customColors) ? detectedSeeds._customColors : [];
       const seeds = Object.assign({}, savedSettings);
       for (const [role, data] of Object.entries(detectedSeeds)) {
-        seeds[role] = data;
+        if (role !== "_customColors") {
+          seeds[role] = data;
+        }
       }
       const detectedTypo = await detectTypographyFromDocument();
       const availableFonts = await figma.listAvailableFontsAsync();
@@ -16473,7 +17768,7 @@ ${usageJsx}
         layoutMargin2xl: detectedTypo.layoutMargin2xl !== void 0 ? detectedTypo.layoutMargin2xl : savedLayoutMargin2xl !== void 0 ? savedLayoutMargin2xl : null,
         smPhoneModel: detectedTypo.smPhoneModel || savedSmPhoneModel || "393x852",
         customGradients: savedCustomGradients || [],
-        customColors: savedCustomColors && savedCustomColors.length > 0 ? savedCustomColors : detectedSeeds._customColors || [],
+        customColors: detectedCustomColors,
         includeMaterialIcons: detectedTypo.includeMaterialIcons !== void 0 ? detectedTypo.includeMaterialIcons : savedIncludeMaterialIcons !== void 0 ? savedIncludeMaterialIcons : true,
         materialIconsFamily: detectedTypo.materialIconsFamily || savedMaterialIconsFamily || "Material Symbols Rounded",
         materialIconsFill: detectedTypo.materialIconsFill !== void 0 ? detectedTypo.materialIconsFill : savedMaterialIconsFill !== void 0 ? savedMaterialIconsFill : 0,
@@ -16924,11 +18219,16 @@ ${usageJsx}
       await figma.clientStorage.setAsync("pluginLayoutMargin2xl", layoutMargin2xl);
       await figma.clientStorage.setAsync("pluginSmPhoneModel", smPhoneModel || "393x852");
       await figma.clientStorage.setAsync("pluginCustomGradients", customGradients || []);
-      await figma.clientStorage.setAsync("pluginCustomColors", customColors || []);
+      try {
+        await figma.clientStorage.deleteAsync("pluginCustomColors");
+      } catch (e) {
+      }
       await figma.clientStorage.setAsync("pluginIncludeMaterialIcons", includeMaterialIcons);
       await figma.clientStorage.setAsync("pluginMaterialIconsFamily", materialIconsFamily);
       await figma.clientStorage.setAsync("pluginMaterialIconsFill", materialIconsFill);
       await figma.clientStorage.setAsync("pluginMaterialIconsWeight", materialIconsWeight);
+      const yieldToUi = () => new Promise((resolve) => setTimeout(resolve, 0));
+      const cachedFloatVars = Array.isArray(allLocalVars) ? allLocalVars.filter((v) => v.resolvedType === "FLOAT" && !v.removed) : [];
       async function resolveMetric(value, col, modeId) {
         if (value === null || value === void 0) return null;
         const numVal = typeof value === "number" ? value : parseFloat(value);
@@ -16948,9 +18248,8 @@ ${usageJsx}
             }
           }
         }
-        if (Array.isArray(allLocalVars)) {
-          const floatVars = allLocalVars.filter((v) => v.resolvedType === "FLOAT" && !v.removed);
-          const match = floatVars.find((v) => {
+        if (cachedFloatVars.length > 0) {
+          const match = cachedFloatVars.find((v) => {
             if (!v.valuesByMode) return false;
             for (const mId of Object.keys(v.valuesByMode)) {
               const mVal = v.valuesByMode[mId];
@@ -17123,6 +18422,7 @@ ${usageJsx}
           }
         }
       }
+      await yieldToUi();
       const controlGroups = [
         {
           name: "_PaletteControls",
@@ -17245,6 +18545,7 @@ ${usageJsx}
           }
         }
       }
+      await yieldToUi();
       const schemesMap = /* @__PURE__ */ new Map();
       const genericMapping = {
         base: { light: 50, lightContrast: 35, dark: 50, darkContrast: 70, accessibility: 60 },
@@ -17997,6 +19298,7 @@ ${usageJsx}
           trackVariable(schemeCollection.id, schemeNameVarName);
         }
       }
+      await yieldToUi();
       const schemesControlsCollectionName = "_SchemesControls";
       let schemesControlsCollection = collections.find((c) => c.name === schemesControlsCollectionName || c.name === "_schemesControls" || c.name === "_schemesCodes" || normalizePathForMatch(c.name) === "schemescontrols");
       if (schemesControlsCollection) {
@@ -18061,7 +19363,12 @@ ${usageJsx}
         "SurfaceDim": "CanvasDim",
         "SurfaceBright": "CanvasMax"
       };
+      let schemesControlProcessed = 0;
       for (const token of allTokens) {
+        schemesControlProcessed++;
+        if (schemesControlProcessed % 50 === 0) {
+          await yieldToUi();
+        }
         const leafTokenName = token.name.includes("/") ? token.name.split("/").pop() : token.name;
         const groupFolder = getGroupName(token.name);
         const cleanTokenName = leafTokenName.startsWith(`${groupFolder}/`) ? leafTokenName.slice(groupFolder.length + 1) : leafTokenName;
@@ -18113,6 +19420,7 @@ ${usageJsx}
       if (oldMetricsControlsCol) {
         oldMetricsControlsCol.remove();
       }
+      await yieldToUi();
       const metricsColName = "Metrics";
       metricsCol = collections.find((c) => c.name === metricsColName || c.name === "metrics" || normalizePathForMatch(c.name) === "metrics");
       if (metricsCol) {
@@ -18492,7 +19800,10 @@ ${usageJsx}
         { name: "constant/3", oldName: "constant/three", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 3 } },
         { name: "constant/4", oldName: "constant/four", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 4 } },
         { name: "constant/6", oldName: "constant/six", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 6 } },
-        { name: "constant/8", oldName: "constant/eight", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 8 } }
+        { name: "constant/8", oldName: "constant/eight", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 8 } },
+        { name: "constant/16", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 16 } },
+        { name: "constant/24", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 24 } },
+        { name: "constant/32", scope: ["CORNER_RADIUS", "GAP", "STROKE_FLOAT", "WIDTH_HEIGHT"], values: { default: 32 } }
       ];
       let constantNoneVar = null;
       let constantOneVar = null;
@@ -18548,6 +19859,7 @@ ${usageJsx}
       trackVariable(accessibilityCol.id, "Accessibility");
       const localEffectStyles = await figma.getLocalEffectStylesAsync();
       const localPaintStyles = await figma.getLocalPaintStylesAsync();
+      await yieldToUi();
       const gradientRoles = ["primary", "secondary", "tertiary"];
       const gradientDefinitions = [
         // Liniowe Osiowe
@@ -19902,6 +21214,7 @@ ${usageJsx}
       layoutGrid = figma.variables.setBoundVariableForLayoutGrid(layoutGrid, "offset", layoutVarsMap["Margin"]);
       layoutGrid = figma.variables.setBoundVariableForLayoutGrid(layoutGrid, "gutterSize", layoutVarsMap["Gutter"]);
       mainGridStyle.layoutGrids = [layoutGrid];
+      await yieldToUi();
       const finalCollections = await figma.variables.getLocalVariableCollectionsAsync();
       const hideCount = { vars: 0, cols: 0, deleted: 0 };
       const freshAllLocalVars = await figma.variables.getLocalVariablesAsync();
@@ -20015,7 +21328,7 @@ ${usageJsx}
     const selection = figma.currentPage.selection;
     const items = selection.map((n) => ({ id: n.id, name: n.name, type: n.type }));
     const nodeTypes = selection.map((n) => n.type);
-    const isOnLibraryPage = isLibraryComponentsPage(figma.currentPage);
+    const isOnLibraryPage = isLibraryComponentsPage(figma.currentPage) || isLibraryScreensPage(figma.currentPage);
     const hasComponentSet = hasComponentSetInSelection(selection);
     const syncTargetName = resolveSyncTargetName(selection);
     let suggestedSource = null;
@@ -20615,6 +21928,17 @@ ${usageJsx}
       await scanDocument(msg.scope || "page");
     } else if (msg.type === "audit-tokens") {
       await runAuditTokens(msg.scope || "selection");
+    } else if (msg.type === "audit-auto-fix") {
+      const scope = msg.scope === "page" ? "page" : "selection";
+      const nodeIds = Array.isArray(msg.nodeIds) ? msg.nodeIds : [];
+      await runAuditAutoFix(nodeIds, {
+        mode: msg.mode === "exact" ? "exact" : "snap",
+        filter: msg.filter || "all",
+        detachUnmatchedForeign: true,
+        notify: true
+      });
+      await runAuditTokens(scope);
+      return;
     } else if (msg.type === "run-master-setup") {
       await runMasterSetup(msg);
       return;
@@ -20810,19 +22134,63 @@ ${usageJsx}
       }
     } else if (msg.type === "resize-window") {
       figma.ui.resize(640, 1024);
+    } else if (msg.type === "set-organize-layout-mode") {
+      const mode = msg.mode === "rows" ? "rows" : "columns";
+      await setOrganizeLayoutMode(mode);
     } else if (msg.type === "move-to-components-page") {
-      await moveSelectedToComponentsPage();
+      const layoutMode = msg.layoutMode === "rows" || msg.layoutMode === "columns" ? msg.layoutMode : void 0;
+      await moveSelectedToComponentsPage(layoutMode);
       sendSmartSwapSelectionToUI();
     } else if (msg.type === "organize-and-library") {
+      const layoutMode = msg.layoutMode === "rows" || msg.layoutMode === "columns" ? msg.layoutMode : void 0;
+      if (layoutMode) {
+        await setOrganizeLayoutMode(layoutMode);
+      }
       const selection = figma.currentPage.selection;
+      const isOnLibrary = isLibraryComponentsPage(figma.currentPage) || isLibraryScreensPage(figma.currentPage);
       if (selection.length === 0) {
-        await organizeElementsOnCanvas(true);
-      } else if (!isLibraryComponentsPage(figma.currentPage)) {
-        await moveSelectedToComponentsPage();
+        await organizeElementsOnCanvas(true, figma.currentPage, layoutMode);
+      } else if (!isOnLibrary) {
+        await moveSelectedToComponentsPage(layoutMode);
       } else {
-        await organizeElementsOnCanvas(false);
+        await organizeElementsOnCanvas(false, figma.currentPage, layoutMode);
       }
       sendSmartSwapSelectionToUI();
+    } else if (msg.type === "scan-pages-background") {
+      const scan = await scanAllPagesSummary();
+      figma.ui.postMessage({
+        type: "page-background-scan",
+        pages: scan.pages,
+        currentPageHex: scan.currentPageHex
+      });
+    } else if (msg.type === "apply-pages-background") {
+      const applyBackground = msg.applyBackground !== false;
+      const applyTitleCase = msg.applyTitleCase !== false;
+      const result = await applyMultiPageBackgroundAndTitleCase({
+        hex: msg.hex,
+        applyBackground,
+        applyTitleCase
+      });
+      if (result) {
+        const parts = [];
+        if (applyBackground && result.appliedHex) {
+          parts.push(`background ${result.appliedHex} on ${result.updatedBackgroundCount} page${result.updatedBackgroundCount === 1 ? "" : "s"}`);
+        }
+        if (applyTitleCase) {
+          parts.push(
+            result.renamedPagesCount > 0 ? `${result.renamedPagesCount} page${result.renamedPagesCount === 1 ? "" : "s"} renamed to Title Case` : "all page names already Title Case"
+          );
+        }
+        figma.notify(`Updated ${parts.join(" \xB7 ")}! \u{1F3A8}`);
+        figma.ui.postMessage({
+          type: "page-background-applied",
+          pages: result.pages,
+          currentPageHex: result.currentPageHex,
+          updatedBackgroundCount: result.updatedBackgroundCount,
+          renamedPagesCount: result.renamedPagesCount,
+          appliedHex: result.appliedHex
+        });
+      }
     } else if (msg.type === "get-selection") {
       sendSelectionToUI();
       sendSmartSwapSelectionToUI();

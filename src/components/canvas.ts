@@ -78,21 +78,96 @@ export function reorderComponentSetVariants(compSet: ComponentSetNode): void {
 }
 
 
-export async function organizeElementsOnCanvas(forceAll: boolean = false) {
+export type OrganizeLayoutMode = 'columns' | 'rows';
+
+const ORGANIZE_LAYOUT_STORAGE_KEY = 'organize_layout_mode';
+
+export async function getOrganizeLayoutMode(): Promise<OrganizeLayoutMode> {
+  try {
+    const saved = await figma.clientStorage.getAsync(ORGANIZE_LAYOUT_STORAGE_KEY);
+    if (saved === 'rows' || saved === 'columns') {
+      return saved;
+    }
+  } catch (e) {}
+  return 'columns';
+}
+
+export async function setOrganizeLayoutMode(mode: OrganizeLayoutMode): Promise<void> {
+  try {
+    await figma.clientStorage.setAsync(ORGANIZE_LAYOUT_STORAGE_KEY, mode);
+  } catch (e) {
+    console.warn('Failed to save organize layout mode:', e);
+  }
+}
+
+export async function organizeElementsOnCanvas(
+  forceAll: boolean = false,
+  targetPage: PageNode = figma.currentPage,
+  layoutMode?: OrganizeLayoutMode
+) {
+  const resolvedLayoutMode: OrganizeLayoutMode = layoutMode || (await getOrganizeLayoutMode());
+  const isCurrentPage = targetPage.id === figma.currentPage.id;
   const selection = figma.currentPage.selection;
   let nodes: SceneNode[] = [];
 
-  if (!forceAll && selection.length > 1) {
+  if (isCurrentPage && !forceAll && selection.length > 1) {
     nodes = Array.from(selection);
   } else {
-    // Top-level children on the current page
-    nodes = figma.currentPage.children.filter(
+    // Top-level children on the target page
+    nodes = targetPage.children.filter(
       (n): n is SceneNode => !n.locked && 'x' in n && 'y' in n && 'width' in n && 'height' in n
     );
   }
 
   if (nodes.length === 0) {
-    figma.notify('No elements found to arrange on canvas.', { error: true });
+    if (isCurrentPage) {
+      figma.notify('No elements found to arrange on canvas.', { error: true });
+    }
+    return;
+  }
+
+  // Move any Screen components/component sets on non-Screens pages to "    🔷 Screens" in the background
+  const movedScreenNodes: SceneNode[] = [];
+  if (!isLibraryScreensPage(targetPage)) {
+    const screenNodes = nodes.filter(isScreenLibraryNode);
+    if (screenNodes.length > 0) {
+      if (typeof figma.loadAllPagesAsync === 'function') {
+        await figma.loadAllPagesAsync();
+      }
+      const screensPage = getOrCreateTargetPage('screens');
+      if (typeof screensPage.loadAsync === 'function') {
+        await screensPage.loadAsync();
+      }
+
+      for (const screenNode of screenNodes) {
+        try {
+          screensPage.appendChild(screenNode);
+          movedScreenNodes.push(screenNode);
+        } catch (err) {
+          console.warn(`Could not move "${screenNode.name}" to "${screensPage.name}":`, err);
+        }
+      }
+
+      if (movedScreenNodes.length > 0) {
+        const movedSet = new Set(movedScreenNodes);
+        nodes = nodes.filter((n) => !movedSet.has(n));
+        await organizeElementsOnCanvas(true, screensPage, resolvedLayoutMode);
+      }
+    }
+  }
+
+  if (nodes.length === 0) {
+    if (isCurrentPage) {
+      figma.currentPage.selection = [];
+      await sendSelectionToUI();
+      if (movedScreenNodes.length > 0) {
+        figma.notify(
+          `Moved ${movedScreenNodes.length} Screen component${movedScreenNodes.length > 1 ? 's' : ''} in background to "    🔷 Screens" & arranged! 📐`
+        );
+      } else {
+        figma.notify('No elements found to arrange on canvas.', { error: true });
+      }
+    }
     return;
   }
 
@@ -132,27 +207,45 @@ export async function organizeElementsOnCanvas(forceAll: boolean = false) {
   const GAP_X = 272;
   const GAP_Y = 272;
 
-  let currentX = startX;
-
-  for (const grp of sortedGroups) {
-    const columnWidth = Math.max(...grp.items.map((n) => n.width || 0), 0);
+  if (resolvedLayoutMode === 'rows') {
     let currentY = startY;
 
-    for (const item of grp.items) {
-      try {
-        item.x = currentX;
-        item.y = currentY;
-      } catch (err) {
-        console.warn(`Could not set position for "${item.name}":`, err);
+    for (const grp of sortedGroups) {
+      const rowHeight = Math.max(...grp.items.map((n) => n.height || 0), 0);
+      let currentX = startX;
+
+      for (const item of grp.items) {
+        try {
+          item.x = currentX;
+          item.y = currentY;
+        } catch (err) {
+          console.warn(`Could not set position for "${item.name}":`, err);
+        }
+        currentX += (item.width || 0) + GAP_X;
       }
-      currentY += (item.height || 0) + GAP_Y;
+
+      currentY += rowHeight + GAP_Y;
     }
+  } else {
+    let currentX = startX;
 
-    currentX += columnWidth + GAP_X;
+    for (const grp of sortedGroups) {
+      const columnWidth = Math.max(...grp.items.map((n) => n.width || 0), 0);
+      let currentY = startY;
+
+      for (const item of grp.items) {
+        try {
+          item.x = currentX;
+          item.y = currentY;
+        } catch (err) {
+          console.warn(`Could not set position for "${item.name}":`, err);
+        }
+        currentY += (item.height || 0) + GAP_Y;
+      }
+
+      currentX += columnWidth + GAP_X;
+    }
   }
-
-  // Zoom/scroll viewport to show all arranged nodes
-  figma.viewport.scrollAndZoomIntoView(nodes);
 
   // Collapse all container layers in the Layers panel (equivalent to Alt + L)
   function collapseContainers(node: BaseNode) {
@@ -168,13 +261,29 @@ export async function organizeElementsOnCanvas(forceAll: boolean = false) {
     }
   }
 
-  collapseContainers(figma.currentPage);
+  collapseContainers(targetPage);
+
+  if (!isCurrentPage) {
+    return;
+  }
+
+  // Zoom/scroll viewport to show all arranged nodes
+  figma.viewport.scrollAndZoomIntoView(nodes);
 
   // Deselect all elements on canvas
   figma.currentPage.selection = [];
   await sendSelectionToUI();
 
-  figma.notify(`Arranged ${nodes.length} element${nodes.length > 1 ? 's' : ''} in ${sortedGroups.length} column group${sortedGroups.length > 1 ? 's' : ''} & collapsed layers! 📐`);
+  const groupAxisLabel = resolvedLayoutMode === 'rows' ? 'row' : 'column';
+  if (movedScreenNodes.length > 0) {
+    figma.notify(
+      `Arranged ${nodes.length} element${nodes.length > 1 ? 's' : ''} in ${sortedGroups.length} ${groupAxisLabel} group${sortedGroups.length > 1 ? 's' : ''} & moved ${movedScreenNodes.length} Screen component${movedScreenNodes.length > 1 ? 's' : ''} to "    🔷 Screens"! 📐`
+    );
+  } else {
+    figma.notify(
+      `Arranged ${nodes.length} element${nodes.length > 1 ? 's' : ''} in ${sortedGroups.length} ${groupAxisLabel} group${sortedGroups.length > 1 ? 's' : ''} & collapsed layers! 📐`
+    );
+  }
 }
 
 export function isLibraryComponentsPage(page: PageNode = figma.currentPage): boolean {
@@ -187,9 +296,27 @@ export function isLibraryComponentsPage(page: PageNode = figma.currentPage): boo
   return clean.includes('🔷') && clean.includes('component');
 }
 
+export function isLibraryScreensPage(page: PageNode = figma.currentPage): boolean {
+  const TARGET_PAGE_NAME = '    🔷 Screens';
+  if (page.name === TARGET_PAGE_NAME) return true;
+  const clean = page.name.trim().toLowerCase();
+  if (clean === '🔷 screens' || clean === '🔷screens' || clean === 'screens' || clean === 'screen') {
+    return true;
+  }
+  return clean.includes('🔷') && clean.includes('screen');
+}
+
+export function isScreenLibraryNode(node: BaseNode): boolean {
+  if (node.type !== 'COMPONENT' && node.type !== 'COMPONENT_SET') {
+    return false;
+  }
+  const trimmed = (node.name || '').trim();
+  return /^screen(?=$|[^a-z])/i.test(trimmed);
+}
+
 export function getOrCreateTargetPage(pageType: 'components' | 'screens' = 'components'): PageNode {
   const isScreens = pageType === 'screens';
-  const TARGET_PAGE_NAME = isScreens ? '    🔷 screens' : '    🔷 Components';
+  const TARGET_PAGE_NAME = isScreens ? '    🔷 Screens' : '    🔷 Components';
 
   // 1. Exact match (including leading spaces)
   let targetPage = figma.root.children.find((p) => p.name === TARGET_PAGE_NAME);
@@ -234,7 +361,8 @@ export function getOrCreateTargetPage(pageType: 'components' | 'screens' = 'comp
   return targetPage;
 }
 
-export async function moveSelectedToComponentsPage() {
+export async function moveSelectedToComponentsPage(layoutMode?: OrganizeLayoutMode) {
+  const resolvedLayoutMode: OrganizeLayoutMode = layoutMode || (await getOrganizeLayoutMode());
   if (typeof figma.loadAllPagesAsync === 'function') {
     await figma.loadAllPagesAsync();
   }
@@ -281,35 +409,65 @@ export async function moveSelectedToComponentsPage() {
     return;
   }
 
-  // Target page is always the components page ("    🔷 Components")
-  const componentsTargetPage = getOrCreateTargetPage('components');
+  const allNodesToMove = Array.from(nodesToMove);
+  const hasScreenNodes = allNodesToMove.some(isScreenLibraryNode);
+  const hasComponentNodes = allNodesToMove.some((n) => !isScreenLibraryNode(n));
 
-  const nodesToTransfer: SceneNode[] = [];
+  const screensTargetPage = hasScreenNodes ? getOrCreateTargetPage('screens') : null;
+  const componentsTargetPage = hasComponentNodes ? getOrCreateTargetPage('components') : null;
 
-  for (const node of nodesToMove) {
-    // Check if node is already on this target page
-    let nodePage: BaseNode | null = node;
-    while (nodePage && nodePage.type !== 'PAGE') {
-      nodePage = nodePage.parent;
+  if (screensTargetPage && typeof screensTargetPage.loadAsync === 'function') {
+    await screensTargetPage.loadAsync();
+  }
+  if (componentsTargetPage && typeof componentsTargetPage.loadAsync === 'function') {
+    await componentsTargetPage.loadAsync();
+  }
+
+  const getEnclosingPage = (node: BaseNode): PageNode | null => {
+    let curr: BaseNode | null = node;
+    while (curr && curr.type !== 'PAGE') {
+      curr = curr.parent;
     }
+    return curr && curr.type === 'PAGE' ? (curr as PageNode) : null;
+  };
 
-    if (nodePage && nodePage.id === componentsTargetPage.id) {
-      // Already on target page
+  interface TransferItem {
+    node: SceneNode;
+    targetPage: PageNode;
+    isScreen: boolean;
+    fromLibraryPage: boolean;
+  }
+
+  const transfers: TransferItem[] = [];
+
+  for (const node of allNodesToMove) {
+    const isScreen = isScreenLibraryNode(node);
+    const targetPage = isScreen ? screensTargetPage! : componentsTargetPage!;
+    const nodePage = getEnclosingPage(node);
+
+    if (nodePage && nodePage.id === targetPage.id) {
       continue;
     }
 
-    nodesToTransfer.push(node);
+    const fromLibraryPage = Boolean(
+      nodePage && (isLibraryComponentsPage(nodePage) || isLibraryScreensPage(nodePage))
+    );
+
+    transfers.push({ node, targetPage, isScreen, fromLibraryPage });
   }
 
-  if (nodesToTransfer.length === 0) {
-    figma.notify('Selected element(s) are already on the components page! ℹ️');
-    figma.currentPage = componentsTargetPage;
-    await organizeElementsOnCanvas(true);
+  if (transfers.length === 0) {
+    const focusPage = screensTargetPage && !componentsTargetPage ? screensTargetPage : componentsTargetPage!;
+    const pageLabel = isLibraryScreensPage(focusPage) ? '"    🔷 Screens"' : 'components';
+    figma.notify(`Selected element(s) are already on the ${pageLabel} page! ℹ️`);
+    figma.currentPage = focusPage;
+    await organizeElementsOnCanvas(true, focusPage, resolvedLayoutMode);
     return;
   }
 
-  // 1. Leave instances in the original place of components before moving
-  for (const nodeToMove of nodesToTransfer) {
+  // 1. Leave instances in the original place of components before moving (only from non-library pages)
+  for (const { node: nodeToMove, fromLibraryPage } of transfers) {
+    if (fromLibraryPage) continue;
     if (nodeToMove.type === 'COMPONENT' || nodeToMove.type === 'COMPONENT_SET') {
       try {
         const originalParent = nodeToMove.parent;
@@ -375,34 +533,62 @@ export async function moveSelectedToComponentsPage() {
     }
   }
 
-  // 2. Move components to target page
-  figma.currentPage = componentsTargetPage;
-  let totalMoved = 0;
-  const allSuccessfullyMoved: SceneNode[] = [];
+  // 2. Move components to their respective target pages
+  const movedToScreens: SceneNode[] = [];
+  const movedToComponents: SceneNode[] = [];
 
-  for (const nodeToMove of nodesToTransfer) {
+  for (const { node: nodeToMove, targetPage, isScreen } of transfers) {
     try {
-      componentsTargetPage.appendChild(nodeToMove);
-      totalMoved++;
-      allSuccessfullyMoved.push(nodeToMove);
+      targetPage.appendChild(nodeToMove);
+      if (isScreen) {
+        movedToScreens.push(nodeToMove);
+      } else {
+        movedToComponents.push(nodeToMove);
+      }
     } catch (err: any) {
-      console.error(`Could not move "${nodeToMove.name}" to "${componentsTargetPage.name}":`, err);
+      console.error(`Could not move "${nodeToMove.name}" to "${targetPage.name}":`, err);
       figma.notify(`Could not move "${nodeToMove.name}": ${err.message || err}`, { error: true });
     }
   }
 
-  // Organize elements in tidy grid on the target page
-  await organizeElementsOnCanvas(true);
+  // 3. Organize affected target pages and focus the primary destination page
+  const primaryPage =
+    movedToComponents.length > 0
+      ? componentsTargetPage!
+      : movedToScreens.length > 0
+        ? screensTargetPage!
+        : (componentsTargetPage || screensTargetPage!);
 
-  const selectionOnPage = allSuccessfullyMoved.filter(
-    (n) => n.parent && (n.parent as any).id === componentsTargetPage.id
+  if (movedToScreens.length > 0 && screensTargetPage && screensTargetPage.id !== primaryPage.id) {
+    await organizeElementsOnCanvas(true, screensTargetPage, resolvedLayoutMode);
+  }
+
+  figma.currentPage = primaryPage;
+  await organizeElementsOnCanvas(true, primaryPage, resolvedLayoutMode);
+
+  const primaryMoved = primaryPage.id === screensTargetPage?.id ? movedToScreens : movedToComponents;
+  const selectionOnPage = primaryMoved.filter(
+    (n) => n.parent && (n.parent as any).id === primaryPage.id
   );
   if (selectionOnPage.length > 0) {
     figma.currentPage.selection = selectionOnPage;
     figma.viewport.scrollAndZoomIntoView(selectionOnPage);
   }
   await sendSelectionToUI();
-  figma.notify(`Moved ${totalMoved} element${totalMoved > 1 ? 's' : ''} to "    🔷 Components" & arranged grid! 🚀📐`);
+
+  if (movedToScreens.length > 0 && movedToComponents.length > 0) {
+    figma.notify(
+      `Moved ${movedToComponents.length} to "    🔷 Components" & ${movedToScreens.length} to "    🔷 Screens" & arranged grid! 🚀📐`
+    );
+  } else if (movedToScreens.length > 0) {
+    figma.notify(
+      `Moved ${movedToScreens.length} element${movedToScreens.length > 1 ? 's' : ''} to "    🔷 Screens" & arranged grid! 🚀📐`
+    );
+  } else if (movedToComponents.length > 0) {
+    figma.notify(
+      `Moved ${movedToComponents.length} element${movedToComponents.length > 1 ? 's' : ''} to "    🔷 Components" & arranged grid! 🚀📐`
+    );
+  }
 }
 
 // ============================================================================

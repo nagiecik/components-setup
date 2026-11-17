@@ -406,10 +406,531 @@ function isGradientColorStyle(style: any): boolean {
   return false;
 }
 
+export interface VariableAuditStatus {
+  variable: Variable | null;
+  isMissing: boolean;
+  isForeign: boolean;
+  foreignSource?: 'remote' | 'remote-unlinked' | 'local-other';
+  foreignLibraryKey?: string;
+  collectionName?: string;
+  libraryName?: string;
+  name: string;
+}
+
+export interface LibraryCollectionInfo {
+  name: string;
+  libraryName: string;
+}
+
+export interface AuditVariableContext {
+  trustedLibraries: ReturnType<typeof getTrustedAuditLibraries>;
+  trustedLibraryKeys: Set<string>;
+  localCollectionIds: Set<string>;
+  allowedLocalCollectionIds: Set<string>;
+  libraryInfoByKey: Map<string, LibraryCollectionInfo>;
+  checkVariableStatus: (varId: string, consumerNode?: SceneNode) => Promise<VariableAuditStatus>;
+  isAllowedCandidateVariable: (variable: Variable) => Promise<boolean>;
+}
+
+const STANDARD_DS_COLLECTION_NAMES = new Set([
+  'schemes',
+  'metrics',
+  '_metrics',
+  'layout',
+  'typography',
+  'accessibility',
+  'palettes',
+  '_palettes',
+  'schemes controls',
+  'typography controls',
+  'variables',
+]);
+
+const CORE_DS_COLLECTION_NAMES = new Set([
+  'schemes',
+  'metrics',
+  '_metrics',
+  'layout',
+  'typography',
+  'accessibility',
+]);
+
+export async function createAuditVariableContext(seedNodes: readonly SceneNode[] = []): Promise<AuditVariableContext> {
+  const trustedLibraries = getTrustedAuditLibraries();
+  const trustedLibraryKeys = new Set(trustedLibraries.map((t) => t.key));
+  const hasTrustedRemoteLibrary = trustedLibraries.some(
+    (t) => t.source === 'remote' || (typeof t.key === 'string' && t.key.startsWith('remote:'))
+  );
+
+  let availableLibraryCollectionKeys: Set<string> | null = null;
+  const libraryInfoByKey = new Map<string, { name: string; libraryName: string }>();
+  try {
+    if (figma.teamLibrary && typeof (figma.teamLibrary as any).getAvailableLibraryVariableCollectionsAsync === 'function') {
+      const libs = await (figma.teamLibrary as any).getAvailableLibraryVariableCollectionsAsync();
+      if (Array.isArray(libs)) {
+        availableLibraryCollectionKeys = new Set(libs.map((l: any) => l.key));
+        for (const l of libs) {
+          if (l && l.key) {
+            libraryInfoByKey.set(l.key, {
+              name: l.name || 'Remote Collection',
+              libraryName: l.libraryName || 'External Library',
+            });
+          }
+        }
+      }
+    }
+  } catch (e) {
+    availableLibraryCollectionKeys = null;
+  }
+
+  let localCollections: VariableCollection[] = [];
+  try {
+    localCollections = await figma.variables.getLocalVariableCollectionsAsync();
+  } catch (e) {
+    localCollections = [];
+  }
+  const localCollectionIds = new Set<string>(localCollections.map(c => c.id));
+
+  const allowedLocalCollectionIds = new Set<string>();
+  const hasCoreLocalDsCollection = localCollections.some((c) =>
+    CORE_DS_COLLECTION_NAMES.has((c.name || '').trim().toLowerCase())
+  );
+  if (hasCoreLocalDsCollection) {
+    for (const c of localCollections) {
+      if (STANDARD_DS_COLLECTION_NAMES.has((c.name || '').trim().toLowerCase())) {
+        allowedLocalCollectionIds.add(c.id);
+      }
+    }
+  } else if (localCollections.length === 1) {
+    allowedLocalCollectionIds.add(localCollections[0].id);
+  }
+
+  // Fallback for custom-named files with multiple local collections: treat the most-used local collection as primary DS
+  if (allowedLocalCollectionIds.size === 0 && localCollections.length > 1) {
+    const localUsageCounts = new Map<string, number>();
+    const localVarColMap = new Map<string, string>();
+    try {
+      const localVars = await figma.variables.getLocalVariablesAsync();
+      for (const lv of localVars) {
+        localVarColMap.set(lv.id, lv.variableCollectionId);
+      }
+      const scanBoundMap = new Map<string, Set<string>>();
+      const unusedNumSet = new Set<string>();
+      for (const n of seedNodes) {
+        if ((n as any).boundVariables) {
+          extractVariableAliases((n as any).boundVariables, scanBoundMap, unusedNumSet);
+        }
+      }
+      for (const vId of scanBoundMap.keys()) {
+        const cid = localVarColMap.get(vId);
+        if (cid) {
+          localUsageCounts.set(cid, (localUsageCounts.get(cid) || 0) + 1);
+        }
+      }
+    } catch (e) {}
+
+    let primaryColId = localCollections[0].id;
+    let maxCount = -1;
+    for (const c of localCollections) {
+      const count = localUsageCounts.get(c.id) || 0;
+      if (count > maxCount) {
+        maxCount = count;
+        primaryColId = c.id;
+      }
+    }
+    allowedLocalCollectionIds.add(primaryColId);
+  }
+
+  const varStatusCache = new Map<string, VariableAuditStatus>();
+  const collectionCache = new Map<string, VariableCollection | null>();
+
+  async function getCollectionCached(colId: string): Promise<VariableCollection | null> {
+    if (collectionCache.has(colId)) return collectionCache.get(colId)!;
+    let collection: VariableCollection | null = null;
+    try {
+      collection = await figma.variables.getVariableCollectionByIdAsync(colId);
+    } catch (e) {
+      collection = null;
+    }
+    collectionCache.set(colId, collection);
+    return collection;
+  }
+
+  async function checkVariableStatus(varId: string, consumerNode?: SceneNode): Promise<VariableAuditStatus> {
+    if (!varId || typeof varId !== 'string') {
+      return { variable: null, isMissing: true, isForeign: false, name: 'Unknown' };
+    }
+    if (varStatusCache.has(varId)) {
+      const cached = varStatusCache.get(varId)!;
+      if (cached.isMissing || cached.foreignSource === 'remote-unlinked') return cached;
+      if (cached.variable && consumerNode && typeof (cached.variable as any).resolveForConsumer === 'function') {
+        try {
+          const resolved = (cached.variable as any).resolveForConsumer(consumerNode);
+          if (!resolved || resolved.value === undefined || resolved.value === null) {
+            return { variable: cached.variable, isMissing: true, isForeign: false, name: cached.name };
+          }
+        } catch (e) {
+          return { variable: cached.variable, isMissing: true, isForeign: false, name: cached.name };
+        }
+      }
+      return cached;
+    }
+    try {
+      let variable: Variable | null = null;
+      try {
+        variable = await figma.variables.getVariableByIdAsync(varId);
+      } catch (e) {
+        variable = null;
+      }
+      if (!variable) {
+        const res: VariableAuditStatus = { variable: null, isMissing: true, isForeign: false, name: `Missing Variable (${varId})` };
+        varStatusCache.set(varId, res);
+        return res;
+      }
+
+      const collection = await getCollectionCached(variable.variableCollectionId);
+      if (!collection) {
+        if ((variable as any).remote) {
+          const res: VariableAuditStatus = {
+            variable,
+            isMissing: false,
+            isForeign: true,
+            foreignSource: 'remote-unlinked',
+            collectionName: 'Unpublished / External File',
+            libraryName: 'Unpublished / Unlinked File',
+            name: variable.name,
+          };
+          varStatusCache.set(varId, res);
+          return res;
+        }
+        const res: VariableAuditStatus = { variable, isMissing: true, isForeign: false, name: variable.name };
+        varStatusCache.set(varId, res);
+        return res;
+      }
+
+      const isRemoteOrigin = Boolean(
+        collection.remote ||
+        (variable as any).remote ||
+        !localCollectionIds.has(collection.id)
+      );
+      const isSubscribedRemote = Boolean(
+        isRemoteOrigin &&
+        collection.remote &&
+        availableLibraryCollectionKeys &&
+        collection.key &&
+        availableLibraryCollectionKeys.has(collection.key)
+      );
+      const isUnlinkedRemote = isRemoteOrigin && !isSubscribedRemote;
+      const isPrivateUnderscoreCollection = (collection.name || '').trim().startsWith('_');
+      const isTrustedPrivateRemoteCollection =
+        isUnlinkedRemote && isPrivateUnderscoreCollection && hasTrustedRemoteLibrary;
+
+      if (isUnlinkedRemote && !isTrustedPrivateRemoteCollection) {
+        const collectionName = collection.name || 'External Collection';
+        const res: VariableAuditStatus = {
+          variable,
+          isMissing: false,
+          isForeign: true,
+          foreignSource: 'remote-unlinked',
+          collectionName,
+          libraryName: 'Unpublished / Unlinked File',
+          name: variable.name,
+        };
+        varStatusCache.set(varId, res);
+        return res;
+      }
+
+      if (collection && collection.variableIds && Array.isArray(collection.variableIds) && !collection.variableIds.includes(variable.id)) {
+        const res: VariableAuditStatus = { variable, isMissing: true, isForeign: false, name: variable.name };
+        varStatusCache.set(varId, res);
+        return res;
+      }
+
+      let isForeign = false;
+      let foreignSource: 'remote' | 'remote-unlinked' | 'local-other' | undefined;
+      let foreignLibraryKey: string | undefined;
+      let collectionName = collection.name || undefined;
+      let libraryName: string | undefined;
+
+      if (isTrustedPrivateRemoteCollection) {
+        isForeign = false;
+      } else if (isRemoteOrigin) {
+        foreignSource = 'remote';
+        const libMeta = collection.key ? libraryInfoByKey.get(collection.key) : undefined;
+        libraryName = libMeta?.libraryName || 'External Library';
+        collectionName = collection.name || libMeta?.name || 'Remote Collection';
+        foreignLibraryKey = `remote:${(libraryName || collectionName || 'External Library').trim()}`;
+        isForeign = !trustedLibraryKeys.has(foreignLibraryKey);
+      } else if (allowedLocalCollectionIds.size > 0 && !allowedLocalCollectionIds.has(collection.id)) {
+        foreignSource = 'local-other';
+        collectionName = collection.name || 'Other Collection';
+        foreignLibraryKey = `local:${collectionName.trim()}`;
+        isForeign = !trustedLibraryKeys.has(foreignLibraryKey);
+      }
+
+      if (consumerNode && typeof (variable as any).resolveForConsumer === 'function') {
+        try {
+          const resolved = (variable as any).resolveForConsumer(consumerNode);
+          if (!resolved || resolved.value === undefined || resolved.value === null) {
+            const res: VariableAuditStatus = { variable, isMissing: true, isForeign: false, name: variable.name };
+            varStatusCache.set(varId, res);
+            return res;
+          }
+        } catch (e) {
+          const res: VariableAuditStatus = { variable, isMissing: true, isForeign: false, name: variable.name };
+          varStatusCache.set(varId, res);
+          return res;
+        }
+      }
+
+      const { isMissing } = await resolveVariableValueAndStatus(variable);
+      const res: VariableAuditStatus = {
+        variable,
+        isMissing,
+        isForeign: isMissing ? false : isForeign,
+        foreignSource: isMissing ? undefined : foreignSource,
+        foreignLibraryKey: isMissing ? undefined : foreignLibraryKey,
+        collectionName,
+        libraryName,
+        name: variable.name,
+      };
+      varStatusCache.set(varId, res);
+      return res;
+    } catch (err) {
+      const res: VariableAuditStatus = { variable: null, isMissing: true, isForeign: false, name: `Missing (${varId})` };
+      varStatusCache.set(varId, res);
+      return res;
+    }
+  }
+
+  async function isAllowedCandidateVariable(variable: Variable): Promise<boolean> {
+    if (!variable || !variable.variableCollectionId) return false;
+    const collection = await getCollectionCached(variable.variableCollectionId);
+    if (!collection) return false;
+    const isRemoteOrigin = Boolean(
+      collection.remote ||
+      (variable as any).remote ||
+      !localCollectionIds.has(collection.id)
+    );
+    if (isRemoteOrigin) {
+      if (!collection.remote || !availableLibraryCollectionKeys || !collection.key || !availableLibraryCollectionKeys.has(collection.key)) {
+        return false;
+      }
+      const libMeta = libraryInfoByKey.get(collection.key);
+      const libraryName = libMeta?.libraryName || 'External Library';
+      const collectionName = collection.name || libMeta?.name || 'Remote Collection';
+      const key = `remote:${(libraryName || collectionName || 'External Library').trim()}`;
+      return trustedLibraryKeys.has(key);
+    }
+    if (allowedLocalCollectionIds.size === 0 || allowedLocalCollectionIds.has(collection.id)) {
+      return true;
+    }
+    const localKey = `local:${(collection.name || 'Other Collection').trim()}`;
+    return trustedLibraryKeys.has(localKey);
+  }
+
+  return {
+    trustedLibraries,
+    trustedLibraryKeys,
+    localCollectionIds,
+    allowedLocalCollectionIds,
+    libraryInfoByKey,
+    checkVariableStatus,
+    isAllowedCandidateVariable,
+  };
+}
+
+const APPLE_LIBRARY_NAME_REGEX = /\b(?:apple(?:\s+design(?:\s+resources)?)?|ios(?:\s*(?:and|&|\+)\s*ipados)?\s*\d+|ipados\s*\d+|macos\s*\d+|watchos\s*\d+|visionos\s*\d+|tvos\s*\d+)\b/i;
+const APPLE_DOC_URL_REGEX = /(?:developer\.apple\.com|apple\.com\/design|\bapple\s+design\s+resources\b|\bios\s+and\s+ipados\b)/i;
+const APPLE_EXPLICIT_COMPONENT_NAME_REGEX = /^(?:status\s*bar\s*[-–/]\s*(?:iphone|ipad)|iphone\s*[-–/]\s*status\s*bar|dynamic\s*island|home\s*indicator(?:\s*[-–/]\s*(?:iphone|ipad))?|tab\s*bar\s*[-–/]\s*(?:iphone|ipad)|navigation\s*bar\s*[-–/]\s*(?:iphone|ipad)|keyboard\s*[-–/]\s*(?:iphone|ipad)|bezel\s*[-–/]\s*(?:iphone|ipad)|iphone\s*\d{2}\b)/i;
+const APPLE_SYSTEM_STYLE_PREFIX_REGEX = /^(?:labels|fills|separators|backgrounds|system\s+colors|vibrancy|materials|ios|apple)\s*\//i;
+
+export interface AppleDetectionCaches {
+  instanceCache: Map<string, boolean>;
+  subtreeCache: Map<string, boolean>;
+  varLibCache: Map<string, boolean>;
+}
+
+export function createAppleDetectionCaches(): AppleDetectionCaches {
+  return {
+    instanceCache: new Map<string, boolean>(),
+    subtreeCache: new Map<string, boolean>(),
+    varLibCache: new Map<string, boolean>(),
+  };
+}
+
+async function isAppleBoundVariableId(
+  varId: string,
+  libraryInfoByKey?: Map<string, LibraryCollectionInfo>,
+  varLibCache?: Map<string, boolean>
+): Promise<boolean> {
+  if (!varId) return false;
+  if (varLibCache?.has(varId)) return varLibCache.get(varId)!;
+
+  let matched = false;
+  try {
+    const variable = await figma.variables.getVariableByIdAsync(varId);
+    if (variable?.variableCollectionId) {
+      const col = await figma.variables.getVariableCollectionByIdAsync(variable.variableCollectionId);
+      if (col) {
+        const libInfo = libraryInfoByKey?.get(col.key);
+        const candidates = [libInfo?.libraryName, libInfo?.name, col.name].filter(Boolean) as string[];
+        if (candidates.some((name) => APPLE_LIBRARY_NAME_REGEX.test(name))) {
+          matched = true;
+        }
+      }
+    }
+  } catch (e) {}
+
+  varLibCache?.set(varId, matched);
+  return matched;
+}
+
+async function hasAppleLibrarySignalsOnNodeTree(
+  root: SceneNode,
+  libraryInfoByKey?: Map<string, LibraryCollectionInfo>,
+  caches?: AppleDetectionCaches,
+  depth = 0
+): Promise<boolean> {
+  if (!root || depth > 2) return false;
+
+  const aliases = extractVariableAliases((root as any).boundVariables);
+  for (const aliasId of aliases) {
+    if (await isAppleBoundVariableId(aliasId, libraryInfoByKey, caches?.varLibCache)) {
+      return true;
+    }
+  }
+
+  for (const styleProp of ['fillStyleId', 'strokeStyleId', 'textStyleId', 'effectStyleId']) {
+    const sid = (root as any)[styleProp];
+    if (typeof sid === 'string' && sid.length > 0) {
+      try {
+        const style = await figma.getStyleByIdAsync(sid);
+        if (style) {
+          if (APPLE_LIBRARY_NAME_REGEX.test(style.name || '')) return true;
+          if ((style as any).remote && APPLE_SYSTEM_STYLE_PREFIX_REGEX.test(style.name || '')) return true;
+        }
+      } catch (e) {}
+    }
+  }
+
+  if ('children' in root && Array.isArray((root as any).children) && depth < 2) {
+    // Check a bounded subset of immediate descendants so deep instances resolve quickly
+    const children = (root as any).children as readonly SceneNode[];
+    const limit = Math.min(children.length, 16);
+    for (let i = 0; i < limit; i++) {
+      if (await hasAppleLibrarySignalsOnNodeTree(children[i], libraryInfoByKey, caches, depth + 1)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Checks whether an INSTANCE node originates from official Apple UI kits
+ * (e.g., "iOS and iPadOS 27", iOS/iPadOS/macOS/watchOS/visionOS Design Resources).
+ */
+export async function isOfficialAppleInstance(
+  node: SceneNode,
+  libraryInfoByKey?: Map<string, LibraryCollectionInfo>,
+  caches?: AppleDetectionCaches
+): Promise<boolean> {
+  if (!node || node.type !== 'INSTANCE') return false;
+  if (caches?.instanceCache.has(node.id)) {
+    return caches.instanceCache.get(node.id)!;
+  }
+
+  let isApple = false;
+  try {
+    const inst = node as InstanceNode;
+    let comp: ComponentNode | null = null;
+    try {
+      comp = typeof inst.getMainComponentAsync === 'function'
+        ? await inst.getMainComponentAsync()
+        : inst.mainComponent;
+    } catch (e) {
+      comp = inst.mainComponent;
+    }
+
+    const parentSet = comp?.parent && comp.parent.type === 'COMPONENT_SET'
+      ? (comp.parent as ComponentSetNode)
+      : null;
+
+    const textSignals = [
+      inst.name || '',
+      comp?.name || '',
+      parentSet?.name || '',
+      comp?.description || '',
+      parentSet?.description || '',
+    ];
+
+    const docLinks: any[] = [
+      ...(((comp as any)?.documentationLinks as any[]) || []),
+      ...(((parentSet as any)?.documentationLinks as any[]) || []),
+    ];
+    for (const link of docLinks) {
+      if (link?.uri && APPLE_DOC_URL_REGEX.test(String(link.uri))) {
+        isApple = true;
+        break;
+      }
+    }
+
+    if (!isApple) {
+      if (textSignals.some((t) => APPLE_LIBRARY_NAME_REGEX.test(t) || APPLE_DOC_URL_REGEX.test(t))) {
+        isApple = true;
+      } else if (
+        APPLE_EXPLICIT_COMPONENT_NAME_REGEX.test(inst.name || '') ||
+        APPLE_EXPLICIT_COMPONENT_NAME_REGEX.test(comp?.name || '') ||
+        APPLE_EXPLICIT_COMPONENT_NAME_REGEX.test(parentSet?.name || '')
+      ) {
+        isApple = true;
+      }
+    }
+
+    if (!isApple && (!comp || comp.remote || parentSet?.remote)) {
+      isApple = await hasAppleLibrarySignalsOnNodeTree(inst, libraryInfoByKey, caches, 0);
+    }
+  } catch (e) {
+    isApple = false;
+  }
+
+  caches?.instanceCache.set(node.id, isApple);
+  return isApple;
+}
+
+/**
+ * Checks whether a node is an official Apple UI Kit instance or resides inside one.
+ */
+export async function isInsideOfficialAppleSubtree(
+  node: SceneNode,
+  libraryInfoByKey?: Map<string, LibraryCollectionInfo>,
+  caches?: AppleDetectionCaches
+): Promise<boolean> {
+  if (!node) return false;
+  if (caches?.subtreeCache.has(node.id)) {
+    return caches.subtreeCache.get(node.id)!;
+  }
+
+  let curr: BaseNode | null = node;
+  while (curr && curr.type !== 'PAGE' && curr.type !== 'DOCUMENT') {
+    if (curr.type === 'INSTANCE') {
+      if (await isOfficialAppleInstance(curr as SceneNode, libraryInfoByKey, caches)) {
+        caches?.subtreeCache.set(node.id, true);
+        return true;
+      }
+    }
+    curr = curr.parent;
+  }
+
+  caches?.subtreeCache.set(node.id, false);
+  return false;
+}
+
 export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') {
   try {
     const trustedLibraries = getTrustedAuditLibraries();
-    const trustedLibraryKeys = new Set(trustedLibraries.map((t) => t.key));
 
     let targetRoots: readonly SceneNode[] = [];
     if (scope === 'selection') {
@@ -504,84 +1025,23 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
       return false;
     }
 
-    let availableLibraryCollectionKeys: Set<string> | null = null;
-    const libraryInfoByKey = new Map<string, { name: string; libraryName: string }>();
-    try {
-      if (figma.teamLibrary && typeof (figma.teamLibrary as any).getAvailableLibraryVariableCollectionsAsync === 'function') {
-        const libs = await (figma.teamLibrary as any).getAvailableLibraryVariableCollectionsAsync();
-        if (Array.isArray(libs)) {
-          availableLibraryCollectionKeys = new Set(libs.map((l: any) => l.key));
-          for (const l of libs) {
-            if (l && l.key) {
-              libraryInfoByKey.set(l.key, {
-                name: l.name || 'Remote Collection',
-                libraryName: l.libraryName || 'External Library',
-              });
-            }
-          }
-        }
-      }
-    } catch (e) {
-      availableLibraryCollectionKeys = null;
-    }
+    const remoteSubtreeNodeIds = new Set<string>();
 
-    let localCollections: VariableCollection[] = [];
-    try {
-      localCollections = await figma.variables.getLocalVariableCollectionsAsync();
-    } catch (e) {
-      localCollections = [];
-    }
-
-    const STANDARD_DS_COLLECTION_NAMES = new Set([
-      'schemes',
-      'metrics',
-      '_metrics',
-      'layout',
-      'typography',
-      'accessibility',
-      'palettes',
-      '_palettes',
-      'schemes controls',
-      'typography controls',
-      'variables',
-    ]);
-    const CORE_DS_COLLECTION_NAMES = new Set([
-      'schemes',
-      'metrics',
-      '_metrics',
-      'layout',
-      'typography',
-      'accessibility',
-    ]);
-
-    const allowedLocalCollectionIds = new Set<string>();
-    const hasCoreLocalDsCollection = localCollections.some((c) =>
-      CORE_DS_COLLECTION_NAMES.has((c.name || '').trim().toLowerCase())
-    );
-    if (hasCoreLocalDsCollection) {
-      for (const c of localCollections) {
-        if (STANDARD_DS_COLLECTION_NAMES.has((c.name || '').trim().toLowerCase())) {
-          allowedLocalCollectionIds.add(c.id);
-        }
-      }
-    } else if (localCollections.length === 1) {
-      allowedLocalCollectionIds.add(localCollections[0].id);
-    }
-
-    async function collectNodes(nodes: readonly SceneNode[] | null | undefined) {
+    async function collectNodes(nodes: readonly SceneNode[] | null | undefined, inRemoteSubtree = false) {
       if (!nodes) return;
       for (const node of nodes) {
         if (!node || visitedIds.has(node.id)) continue;
         visitedIds.add(node.id);
 
-        if (await isRemoteInstance(node) || await isInsideRemoteSubtree(node)) {
-          continue;
+        const nodeInRemoteSubtree = inRemoteSubtree || await isRemoteInstance(node) || await isInsideRemoteSubtree(node);
+        if (nodeInRemoteSubtree) {
+          remoteSubtreeNodeIds.add(node.id);
         }
 
         allNodes.push(node);
         if ('children' in node && (node as any).children && (node as any).children.length > 0) {
           try {
-            await collectNodes((node as any).children);
+            await collectNodes((node as any).children, nodeInRemoteSubtree);
           } catch (e) {}
         }
       }
@@ -589,168 +1049,12 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
 
     await collectNodes(targetRoots);
 
-    // Fallback for custom-named files with multiple local collections: treat the most-used local collection as primary DS
-    if (allowedLocalCollectionIds.size === 0 && localCollections.length > 1) {
-      const localUsageCounts = new Map<string, number>();
-      const localVarColMap = new Map<string, string>();
-      try {
-        const localVars = await figma.variables.getLocalVariablesAsync();
-        for (const lv of localVars) {
-          localVarColMap.set(lv.id, lv.variableCollectionId);
-        }
-        const scanBoundMap = new Map<string, Set<string>>();
-        const unusedNumSet = new Set<string>();
-        for (const n of allNodes) {
-          if ((n as any).boundVariables) {
-            extractVariableAliases((n as any).boundVariables, scanBoundMap, unusedNumSet);
-          }
-        }
-        for (const vId of scanBoundMap.keys()) {
-          const cid = localVarColMap.get(vId);
-          if (cid) {
-            localUsageCounts.set(cid, (localUsageCounts.get(cid) || 0) + 1);
-          }
-        }
-      } catch (e) {}
-
-      let primaryColId = localCollections[0].id;
-      let maxCount = -1;
-      for (const c of localCollections) {
-        const count = localUsageCounts.get(c.id) || 0;
-        if (count > maxCount) {
-          maxCount = count;
-          primaryColId = c.id;
-        }
-      }
-      allowedLocalCollectionIds.add(primaryColId);
-    }
-
-    interface VariableAuditStatus {
-      variable: Variable | null;
-      isMissing: boolean;
-      isForeign: boolean;
-      foreignSource?: 'remote' | 'local-other';
-      foreignLibraryKey?: string;
-      collectionName?: string;
-      libraryName?: string;
-      name: string;
-    }
-
-    const varStatusCache = new Map<string, VariableAuditStatus>();
-
-    async function checkVariableStatus(varId: string, consumerNode?: SceneNode): Promise<VariableAuditStatus> {
-      if (!varId || typeof varId !== 'string') {
-        return { variable: null, isMissing: true, isForeign: false, name: 'Unknown' };
-      }
-      if (varStatusCache.has(varId)) {
-        const cached = varStatusCache.get(varId)!;
-        if (cached.isMissing) return cached;
-        if (cached.variable && consumerNode && typeof (cached.variable as any).resolveForConsumer === 'function') {
-          try {
-            const resolved = (cached.variable as any).resolveForConsumer(consumerNode);
-            if (!resolved || resolved.value === undefined || resolved.value === null) {
-              return { variable: cached.variable, isMissing: true, isForeign: false, name: cached.name };
-            }
-          } catch (e) {
-            return { variable: cached.variable, isMissing: true, isForeign: false, name: cached.name };
-          }
-        }
-        return cached;
-      }
-      try {
-        let variable: Variable | null = null;
-        try {
-          variable = await figma.variables.getVariableByIdAsync(varId);
-        } catch (e) {
-          variable = null;
-        }
-        if (!variable) {
-          const res: VariableAuditStatus = { variable: null, isMissing: true, isForeign: false, name: `Missing Variable (${varId})` };
-          varStatusCache.set(varId, res);
-          return res;
-        }
-
-        // Check if variable collection exists
-        let collection: VariableCollection | null = null;
-        try {
-          collection = await figma.variables.getVariableCollectionByIdAsync(variable.variableCollectionId);
-        } catch (e) {
-          collection = null;
-        }
-        if (!collection) {
-          const res: VariableAuditStatus = { variable, isMissing: true, isForeign: false, name: variable.name };
-          varStatusCache.set(varId, res);
-          return res;
-        }
-
-        // Check if variable is still in collection's variableIds
-        if (collection && collection.variableIds && Array.isArray(collection.variableIds) && !collection.variableIds.includes(variable.id)) {
-          const res: VariableAuditStatus = { variable, isMissing: true, isForeign: false, name: variable.name };
-          varStatusCache.set(varId, res);
-          return res;
-        }
-
-        // Check if remote library collection is available in this file
-        if (collection && collection.remote && availableLibraryCollectionKeys && !availableLibraryCollectionKeys.has(collection.key)) {
-          const res: VariableAuditStatus = { variable, isMissing: true, isForeign: false, name: variable.name };
-          varStatusCache.set(varId, res);
-          return res;
-        }
-
-        // Determine if variable belongs to an external library or another local collection
-        let isForeign = false;
-        let foreignSource: 'remote' | 'local-other' | undefined;
-        let foreignLibraryKey: string | undefined;
-        let collectionName = collection.name || undefined;
-        let libraryName: string | undefined;
-
-        if (collection.remote || (variable as any).remote) {
-          foreignSource = 'remote';
-          const libMeta = collection.key ? libraryInfoByKey.get(collection.key) : undefined;
-          libraryName = libMeta?.libraryName || 'External Library';
-          collectionName = collection.name || libMeta?.name || 'Remote Collection';
-          foreignLibraryKey = `remote:${(libraryName || collectionName || 'External Library').trim()}`;
-          isForeign = !trustedLibraryKeys.has(foreignLibraryKey);
-        } else if (allowedLocalCollectionIds.size > 0 && !allowedLocalCollectionIds.has(collection.id)) {
-          foreignSource = 'local-other';
-          collectionName = collection.name || 'Other Collection';
-          foreignLibraryKey = `local:${collectionName.trim()}`;
-          isForeign = !trustedLibraryKeys.has(foreignLibraryKey);
-        }
-
-        // Verify consumer resolution if node is provided
-        if (consumerNode && typeof (variable as any).resolveForConsumer === 'function') {
-          try {
-            const resolved = (variable as any).resolveForConsumer(consumerNode);
-            if (!resolved || resolved.value === undefined || resolved.value === null) {
-              const res: VariableAuditStatus = { variable, isMissing: true, isForeign: false, name: variable.name };
-              varStatusCache.set(varId, res);
-              return res;
-            }
-          } catch (e) {
-            const res: VariableAuditStatus = { variable, isMissing: true, isForeign: false, name: variable.name };
-            varStatusCache.set(varId, res);
-            return res;
-          }
-        }
-
-        const { isMissing } = await resolveVariableValueAndStatus(variable);
-        const res: VariableAuditStatus = {
-          variable,
-          isMissing,
-          isForeign: isMissing ? false : isForeign,
-          foreignSource: isMissing ? undefined : foreignSource,
-          foreignLibraryKey: isMissing ? undefined : foreignLibraryKey,
-          collectionName,
-          libraryName,
-          name: variable.name,
-        };
-        varStatusCache.set(varId, res);
-        return res;
-      } catch (err) {
-        const res: VariableAuditStatus = { variable: null, isMissing: true, isForeign: false, name: `Missing (${varId})` };
-        varStatusCache.set(varId, res);
-        return res;
+    const { checkVariableStatus, libraryInfoByKey } = await createAuditVariableContext(allNodes);
+    const appleSubtreeNodeIds = new Set<string>();
+    const appleCaches = createAppleDetectionCaches();
+    for (const node of allNodes) {
+      if (await isInsideOfficialAppleSubtree(node, libraryInfoByKey, appleCaches)) {
+        appleSubtreeNodeIds.add(node.id);
       }
     }
 
@@ -798,6 +1102,7 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
         styleName?: string;
       }
     ): boolean => {
+      if (appleSubtreeNodeIds.has(opts.nodeId) && opts.category === 'color') return false;
       if (!vStatus.isMissing && !vStatus.isForeign) return false;
       if (markReported(opts.nodeId, `var:${opts.varId}`)) return false;
 
@@ -825,7 +1130,9 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
       }
 
       const sourceLabel =
-        vStatus.foreignSource === 'remote'
+        vStatus.foreignSource === 'remote-unlinked'
+          ? `Unpublished / Unlinked${vStatus.collectionName ? ` · ${vStatus.collectionName}` : ''}`
+          : vStatus.foreignSource === 'remote'
           ? `${vStatus.libraryName || 'External Library'}${vStatus.collectionName ? ` · ${vStatus.collectionName}` : ''}`
           : `Local: ${vStatus.collectionName || 'Other Collection'}`;
 
@@ -851,7 +1158,9 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
         collectionName: vStatus.collectionName,
         libraryName: vStatus.libraryName,
         suggestion:
-          vStatus.foreignSource === 'remote'
+          vStatus.foreignSource === 'remote-unlinked'
+            ? `Variable from unpublished or unlinked file ("${vStatus.collectionName || 'External File'}") — replace with a local Design System token`
+            : vStatus.foreignSource === 'remote'
             ? `External library variable ("${vStatus.libraryName || vStatus.collectionName}") — replace with a local Design System token`
             : `Variable from another local collection ("${vStatus.collectionName}") — replace with a token from the active Design System`,
       });
@@ -863,8 +1172,8 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
     for (const node of allNodes) {
       try {
         if (!node || (node.type as string) === 'PAGE' || (node.type as string) === 'DOCUMENT') continue;
-        if (await isRemoteInstance(node) || await isInsideRemoteSubtree(node)) continue;
 
+        const isAppleNode = appleSubtreeNodeIds.has(node.id);
         nodeIgnoredMap.set(node.id, getNodeIgnoredAuditKeys(node));
 
         const boundVars = getNodeBoundVariables(node);
@@ -1243,6 +1552,7 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
 
         // 4. COLOR CHECK (Fills, Strokes, Styles & Effects)
         if (node.type !== 'COMPONENT_SET') {
+          if (!isAppleNode) {
           // 4a. FILL STYLE CHECK
           if (typeof (node as any).fillStyleId === 'string' && (node as any).fillStyleId.length > 0) {
             const styleId = (node as any).fillStyleId;
@@ -1692,6 +2002,33 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
             }
           }
 
+          const auditStyleBoundVariables = async (styleBoundVars: any, styleName: string) => {
+            if (!styleBoundVars || typeof styleBoundVars !== 'object') return;
+            for (const [sKey, sVal] of Object.entries(styleBoundVars)) {
+              if (!sVal) continue;
+              const items = Array.isArray(sVal) ? sVal : [sVal];
+              for (const item of items) {
+                if (item && typeof item === 'object' && (item as any).type === 'VARIABLE_ALIAS' && (item as any).id) {
+                  const vStatus = await checkVariableStatus((item as any).id, node);
+                  reportBoundVariableIssue(vStatus, {
+                    nodeId: node.id,
+                    nodeName,
+                    layerType: nodeType,
+                    layerTypeName,
+                    category: 'color',
+                    categoryLabel: 'Color',
+                    property: sKey,
+                    propertyLabel: `Style "${styleName}" (${sKey})`,
+                    value: vStatus.isMissing ? 'Missing' : vStatus.name,
+                    varId: (item as any).id,
+                    missingSuggestion: `Reassign variable in style "${styleName}" to a valid local token`,
+                    styleName,
+                  });
+                }
+              }
+            }
+          };
+
           // 4e. EFFECTS (Drop & Inner Shadows)
           let hasRemoteOrValidEffectStyle = false;
           if (typeof (node as any).effectStyleId === 'string' && (node as any).effectStyleId.length > 0) {
@@ -1700,6 +2037,29 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
               const style = await figma.getStyleByIdAsync(styleId);
               if (style) {
                 hasRemoteOrValidEffectStyle = true;
+                if ('effects' in style && Array.isArray((style as any).effects)) {
+                  for (const eff of (style as any).effects) {
+                    const effColorBinding = eff?.boundVariables?.color;
+                    if (effColorBinding && effColorBinding.type === 'VARIABLE_ALIAS' && effColorBinding.id) {
+                      const vStatus = await checkVariableStatus(effColorBinding.id, node);
+                      reportBoundVariableIssue(vStatus, {
+                        nodeId: node.id,
+                        nodeName,
+                        layerType: nodeType,
+                        layerTypeName,
+                        category: 'color',
+                        categoryLabel: 'Color',
+                        property: 'effects',
+                        propertyLabel: `Effect Style "${style.name}"`,
+                        value: eff.color ? rgbToHex(eff.color.r, eff.color.g, eff.color.b) : '#888888',
+                        varId: effColorBinding.id,
+                        missingSuggestion: 'Reassign to a valid Effect Style or Color variable',
+                        styleName: style.name,
+                      });
+                    }
+                  }
+                }
+                await auditStyleBoundVariables((style as any).boundVariables, style.name);
               } else if (!markReported(node.id, `style:${styleId}`)) {
                 issues.push({
                   id: `issue_${++issueCounter}`,
@@ -1747,16 +2107,18 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
               }
             }
           }
+          }
 
           // 4f. SCAN ALL REMAINING BOUND VARIABLES ON NODE (Fills, Strokes, Effects, Opacity, Props)
-          let hasRemoteOrValidTextStyle = false;
-          if (node.type === 'TEXT') {
+          let hasLocalValidTextStyle = false;
+          if (!isAppleNode && node.type === 'TEXT') {
             const textStyleId = (node as any).textStyleId;
             if (typeof textStyleId === 'string' && textStyleId.length > 0) {
               try {
                 const textStyle = await figma.getStyleByIdAsync(textStyleId);
                 if (textStyle) {
-                  hasRemoteOrValidTextStyle = true;
+                  hasLocalValidTextStyle = !(textStyle as any).remote;
+                  await auditStyleBoundVariables((textStyle as any).boundVariables, textStyle.name);
                 } else if (!markReported(node.id, `style:${textStyleId}`)) {
                   issues.push({
                     id: `issue_${++issueCounter}`,
@@ -1779,12 +2141,14 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
               try {
                 const textNode = node as TextNode;
                 const segs = textNode.getStyledTextSegments(['textStyleId']);
+                const checkedStyleIds = new Set<string>();
                 for (const seg of segs) {
-                  if (typeof seg.textStyleId === 'string' && seg.textStyleId.length > 0) {
+                  if (typeof seg.textStyleId === 'string' && seg.textStyleId.length > 0 && !checkedStyleIds.has(seg.textStyleId)) {
+                    checkedStyleIds.add(seg.textStyleId);
                     const segStyle = await figma.getStyleByIdAsync(seg.textStyleId);
                     if (segStyle) {
-                      hasRemoteOrValidTextStyle = true;
-                      break;
+                      if (!(segStyle as any).remote) hasLocalValidTextStyle = true;
+                      await auditStyleBoundVariables((segStyle as any).boundVariables, segStyle.name);
                     }
                   }
                 }
@@ -1795,7 +2159,7 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
           for (const [bKey, bVal] of Object.entries(boundVars)) {
             if (!bVal) continue;
             if (bKey === 'effects' && hasRemoteOrValidEffectStyle) continue;
-            if (hasRemoteOrValidTextStyle && /^(fontFamily|fontStyle|fontWeight|fontSize|lineHeight|letterSpacing|paragraphSpacing|paragraphIndent|textCase|textDecoration)$/i.test(bKey)) {
+            if (hasLocalValidTextStyle && /^(fontFamily|fontStyle|fontWeight|fontSize|lineHeight|letterSpacing|paragraphSpacing|paragraphIndent|textCase|textDecoration)$/i.test(bKey)) {
               continue;
             }
             if (Array.isArray(bVal)) {
@@ -1868,8 +2232,8 @@ export async function runAuditTokens(scope: 'selection' | 'page' = 'selection') 
       }
     }
 
-    // Group identical issues across layers
-    const rawIssues = issues;
+    // Group identical issues across layers (report unbound raw values everywhere; suppress color issues on official Apple UI kits)
+    const rawIssues = issues.filter(i => !(i.category === 'color' && appleSubtreeNodeIds.has(i.nodeId)));
     const groupedMap = new Map<string, AuditIssue>();
     for (const issue of rawIssues) {
       const groupKey = `${issue.isIgnored ? 'ignored' : 'active'}:${issue.issueType}:${issue.category}:${issue.property}:${issue.propertyLabel || ''}:${issue.layerType}:${(issue.nodeName || '').trim().toLowerCase()}:${issue.varId || ''}:${String(issue.value || '')}:${issue.formattedValue || ''}`;

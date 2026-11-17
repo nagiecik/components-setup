@@ -45,7 +45,7 @@ export interface AuditIssue {
   formattedValue: string;
   varId?: string;
   varName?: string;
-  foreignSource?: 'remote' | 'local-other';
+  foreignSource?: 'remote' | 'remote-unlinked' | 'local-other';
   foreignLibraryKey?: string;
   collectionName?: string;
   libraryName?: string;
