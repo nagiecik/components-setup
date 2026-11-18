@@ -153,12 +153,12 @@ export async function handleCreatePalette(msg: any): Promise<void> {
       const secondaryBodyStyles = msg.secondaryBodyStyles || { regular: 'Regular', medium: 'Medium', bold: 'Bold' };
 
       if (!seeds.accessibility) seeds.accessibility = { name: "accessibility", color: "#ffed00" };
-      const baseActionColor = seeds.action ? seeds.action.color : "#2979FF";
-      const baseSuccessColor = seeds.success ? seeds.success.color : "#27AE60";
+      const baseActionColor = seeds.action ? seeds.action.color : "#256DE5";
+      const baseSuccessColor = seeds.success ? seeds.success.color : "#1D8549";
       const baseWarningColor = seeds.warning ? seeds.warning.color : "#F2C94C";
-      let baseErrorColor = (seeds.error && seeds.error.color) ? seeds.error.color : "#e7000b";
-      if (baseErrorColor.toUpperCase() === '#E6453B' || baseErrorColor.toUpperCase() === '#FF6467') baseErrorColor = '#e7000b';
-      seeds.error.color = baseErrorColor;
+      let baseErrorColor = (seeds.error && seeds.error.color) ? seeds.error.color : "#D1252E";
+      if (['#E6453B', '#FF6467', '#E7000B'].includes(baseErrorColor.toUpperCase())) baseErrorColor = '#D1252E';
+      if (seeds.error) seeds.error.color = baseErrorColor;
 
       seeds.actionDark = { name: (seeds.actionDark && seeds.actionDark.name) ? seeds.actionDark.name : "actionDark", color: deriveDarkBaseColor(baseActionColor) };
       seeds.successDark = { name: (seeds.successDark && seeds.successDark.name) ? seeds.successDark.name : "successDark", color: deriveDarkBaseColor(baseSuccessColor) };
@@ -550,7 +550,7 @@ export async function handleCreatePalette(msg: any): Promise<void> {
                   }
                   smartSetValueForMode(hexVar, modeId, rgbaToHex(val.r, val.g, val.b, val.a));
                 } else {
-                  const hex = (seeds[role] && seeds[role].color) ? seeds[role].color : '#2979FF';
+                  const hex = (seeds[role] && seeds[role].color) ? seeds[role].color : '#256DE5';
                   const baseRgb = hexToRgb(hex);
                   const finalColor = calculateTone(baseRgb, tone);
                   smartSetValueForMode(hexVar, modeId, rgbToHex(finalColor.r, finalColor.g, finalColor.b));
@@ -971,23 +971,25 @@ export async function handleCreatePalette(msg: any): Promise<void> {
           { name: `${pascalCustomName}Disabled`, rules: disabledRules, unadjusted: unadjustedDisabledRules },
         ];
 
-        for (const item of tokensConfigForFallback) {
-          const isChangedForWcag = (item.rules.light !== item.unadjusted.light) || (item.rules.dark !== item.unadjusted.dark);
-          if (isChangedForWcag) {
-            const fallbackLeafName = item.name.endsWith('Fallback') ? item.name : `${item.name}Fallback`;
-            tokensToCreate.push({
-              name: `Fallback/${fallbackLeafName}`,
-              oldName: [
-                `fallback/${item.name}`,
-                `Fallback/${item.name}`,
-                `fallback/${item.name.toLowerCase()}`,
-                `fallback/${fallbackLeafName}`,
-                `Fallback/${fallbackLeafName}`,
-                `fallback/${fallbackLeafName.toLowerCase()}`
-              ],
-              rules: item.unadjusted,
-              description: `Fallback unadjusted ${item.name} token (without WCAG recalculation).`
-            });
+        if (!isState) {
+          for (const item of tokensConfigForFallback) {
+            const isChangedForWcag = (item.rules.light !== item.unadjusted.light) || (item.rules.dark !== item.unadjusted.dark);
+            if (isChangedForWcag) {
+              const fallbackLeafName = item.name.endsWith('Fallback') ? item.name : `${item.name}Fallback`;
+              tokensToCreate.push({
+                name: `Fallback/${fallbackLeafName}`,
+                oldName: [
+                  `fallback/${item.name}`,
+                  `Fallback/${item.name}`,
+                  `fallback/${item.name.toLowerCase()}`,
+                  `fallback/${fallbackLeafName}`,
+                  `Fallback/${fallbackLeafName}`,
+                  `fallback/${fallbackLeafName.toLowerCase()}`
+                ],
+                rules: item.unadjusted,
+                description: `Fallback unadjusted ${item.name} token (without WCAG recalculation).`
+              });
+            }
           }
         }
 
