@@ -19,6 +19,9 @@ export interface AutoBinderOptions {
   forceRebind?: boolean;
   setupContainers?: boolean;
   bindTokens?: boolean;
+  bindMetrics?: boolean;
+  bindColors?: boolean;
+  bindTextStyles?: boolean;
 }
 
 export interface AuditAutoFixOptions {
@@ -888,10 +891,15 @@ export async function runSmartTokenAutoBinder(
       continue;
     }
 
+    const shouldBindMetrics = options.bindMetrics !== false;
+    const shouldBindColors = options.bindColors !== false;
+    const shouldBindTextStyles = options.bindTextStyles !== false;
+
     const boundVars = (node as any).boundVariables || {};
     const isControl = isInteractiveControl(node);
 
     // --- A. BIND METRICS (FLOAT) ---
+    if (shouldBindMetrics) {
     const bindNumericProperty = (
       prop: string,
       rawValue: number,
@@ -1074,9 +1082,10 @@ export async function runSmartTokenAutoBinder(
         bindNumericProperty('strokeWeight', sNode.strokeWeight, ['STROKE_FLOAT'], 'stroke');
       }
     }
+    }
 
     // --- B. BIND COLORS (schemes) ---
-    if (!isAppleNode) {
+    if (shouldBindColors && !isAppleNode) {
     const ancestorRole = getAncestorContainerRole(node);
 
     if ('fills' in node && Array.isArray((node as any).fills) && (node as any).fills.length > 0) {
@@ -1257,7 +1266,7 @@ export async function runSmartTokenAutoBinder(
     }
 
     // --- C. BIND TEXT STYLES (ENTIRE STYLE ONLY - NO SINGLE-VARIABLE FALLBACK!) ---
-    if (node.type === 'TEXT') {
+    if (shouldBindTextStyles && node.type === 'TEXT') {
       const textNode = node as TextNode;
 
       const applyMatchedStyle = async (matched: IndexedTextStyle, range?: { start: number; end: number }) => {
@@ -1376,7 +1385,7 @@ export async function runSmartTokenAutoBinder(
   const textNodes = allNodesToProcess.filter((n): n is TextNode => n.type === 'TEXT');
 
   if (options.notify !== false) {
-    if (textNodes.length > 0 && textStylesBoundCount === 0) {
+    if (options.bindTextStyles !== false && textNodes.length > 0 && textStylesBoundCount === 0) {
       if (availableTextStyles.length === 0) {
         figma.notify(
           "Brak stylów tekstowych w pamięci. Otwórz plik biblioteki DS i kliknij '📥 Zapisz style z tego pliku DS'!",

@@ -3066,6 +3066,19 @@
     }
     return deletedProps;
   }
+  function yieldToMain() {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  var selectionEventsSuppressedUntil = 0;
+  function suppressSelectionEvents(durationMs = 200) {
+    const targetUntil = Date.now() + Math.max(0, durationMs);
+    if (targetUntil > selectionEventsSuppressedUntil) {
+      selectionEventsSuppressedUntil = targetUntil;
+    }
+  }
+  function areSelectionEventsSuppressed() {
+    return Date.now() < selectionEventsSuppressedUntil;
+  }
 
   // src/generator/engine.ts
   function cleanUtilityColorToken(raw) {
@@ -6127,16 +6140,6 @@ ${usageJsx}
   }
 
   // src/utils/geometry.ts
-  function isNodeEffectivelyVisible(node) {
-    let curr = node;
-    while (curr && curr.type !== "PAGE") {
-      if ("visible" in curr && curr.visible === false) {
-        return false;
-      }
-      curr = curr.parent;
-    }
-    return true;
-  }
   function getSafeNodeChildren(node) {
     if (!node) return [];
     try {
@@ -6353,6 +6356,10 @@ ${usageJsx}
   }
 
   // src/retextifier/retextifier.ts
+  var isRetextifierDrawerOpen = false;
+  function setRetextifierDrawerOpen(open) {
+    isRetextifierDrawerOpen = open;
+  }
   function buildRetextifierLayerPath(node, rootNode) {
     try {
       const parts = [];
@@ -6416,13 +6423,14 @@ ${usageJsx}
     }
     return 0;
   }
-  function scanDeepTextLayers() {
+  async function scanDeepTextLayers() {
     const selection = [...figma.currentPage.selection].sort(compareNodesInLayersPanelOrder);
     const result = [];
     const visited = /* @__PURE__ */ new Set();
+    let visitedCount = 0;
     function registerTextNode(textNode, rootNode, pathPrefix) {
       if (!textNode || !textNode.id || visited.has(textNode.id)) return;
-      if (!isNodeEffectivelyVisible(textNode)) return;
+      if ("visible" in textNode && textNode.visible === false) return;
       visited.add(textNode.id);
       const layerPath = pathPrefix ? `${pathPrefix} > ${textNode.name || "Text"}` : buildRetextifierLayerPath(textNode, rootNode);
       const parentName = textNode.parent && "name" in textNode.parent ? String(textNode.parent.name) : "";
@@ -6435,37 +6443,6 @@ ${usageJsx}
         layerPath
       });
     }
-    function traverseNode(node, rootNode, pathPrefix) {
-      if (!node) return;
-      if ("visible" in node && node.visible === false) return;
-      if (node.type === "TEXT") {
-        registerTextNode(node, rootNode, pathPrefix);
-        return;
-      }
-      const currentPath = pathPrefix ? `${pathPrefix} > ${node.name}` : node.name;
-      const orderedChildren = getChildrenInLayersPanelOrder(node);
-      if (orderedChildren.length > 0) {
-        for (const child of orderedChildren) {
-          try {
-            traverseNode(child, rootNode, currentPath);
-          } catch (err) {
-            console.warn("[Retextifier] Error traversing child node:", err);
-          }
-        }
-        return;
-      }
-      if ("findAllWithCriteria" in node && typeof node.findAllWithCriteria === "function") {
-        try {
-          const found = node.findAllWithCriteria({ types: ["TEXT"] }).sort(
-            compareNodesInLayersPanelOrder
-          );
-          for (const tn of found) {
-            registerTextNode(tn, rootNode);
-          }
-        } catch (e) {
-        }
-      }
-    }
     for (const rootNode of selection) {
       try {
         if ("visible" in rootNode && rootNode.visible === false) {
@@ -6475,16 +6452,37 @@ ${usageJsx}
           registerTextNode(rootNode, rootNode);
           continue;
         }
-        traverseNode(rootNode, rootNode, "");
-        if ("findAllWithCriteria" in rootNode && typeof rootNode.findAllWithCriteria === "function") {
-          try {
-            const textNodes = rootNode.findAllWithCriteria({ types: ["TEXT"] }).sort(
-              compareNodesInLayersPanelOrder
-            );
-            for (const tn of textNodes) {
-              registerTextNode(tn, rootNode);
+        const stack = [{ node: rootNode, pathPrefix: "" }];
+        while (stack.length > 0) {
+          const { node, pathPrefix } = stack.pop();
+          if (!node) continue;
+          if ("visible" in node && node.visible === false) continue;
+          visitedCount++;
+          if (visitedCount % 120 === 0) {
+            await yieldToMain();
+          }
+          if (node.type === "TEXT") {
+            registerTextNode(node, rootNode, pathPrefix);
+            continue;
+          }
+          const currentPath = pathPrefix ? `${pathPrefix} > ${node.name}` : node.name;
+          const orderedChildren = getChildrenInLayersPanelOrder(node);
+          if (orderedChildren.length > 0) {
+            for (let i = orderedChildren.length - 1; i >= 0; i--) {
+              stack.push({ node: orderedChildren[i], pathPrefix: currentPath });
             }
-          } catch (e) {
+            continue;
+          }
+          if ("findAllWithCriteria" in node && typeof node.findAllWithCriteria === "function") {
+            try {
+              const found = node.findAllWithCriteria({ types: ["TEXT"] }).sort(
+                compareNodesInLayersPanelOrder
+              );
+              for (const tn of found) {
+                registerTextNode(tn, rootNode);
+              }
+            } catch (e) {
+            }
           }
         }
       } catch (err) {
@@ -6493,14 +6491,16 @@ ${usageJsx}
     }
     return result;
   }
-  async function sendSelectionToUI() {
+  async function sendSelectionToUI(forceTextLayers = false) {
     const selectionData = await getSelectionData();
-    const textLayers = scanDeepTextLayers();
-    figma.ui.postMessage({
+    const payload = {
       type: "selection-change",
-      selection: selectionData,
-      textLayers
-    });
+      selection: selectionData
+    };
+    if (forceTextLayers || isRetextifierDrawerOpen) {
+      payload.textLayers = await scanDeepTextLayers();
+    }
+    figma.ui.postMessage(payload);
   }
   async function sendInitialData() {
     const provider = await figma.clientStorage.getAsync("ai_provider") || "groq";
@@ -6519,7 +6519,7 @@ ${usageJsx}
     const promptTone = await figma.clientStorage.getAsync("gemini_prompt_tone") || "balanced";
     const organizeLayoutModeRaw = await figma.clientStorage.getAsync("organize_layout_mode");
     const organizeLayoutMode = organizeLayoutModeRaw === "rows" ? "rows" : "columns";
-    figma.ui.postMessage({
+    const payload = {
       type: "init-data",
       provider,
       groqApiKey,
@@ -6528,9 +6528,12 @@ ${usageJsx}
       selectedModel,
       promptTone,
       organizeLayoutMode,
-      selection: await getSelectionData(),
-      textLayers: scanDeepTextLayers()
-    });
+      selection: await getSelectionData()
+    };
+    if (isRetextifierDrawerOpen) {
+      payload.textLayers = await scanDeepTextLayers();
+    }
+    figma.ui.postMessage(payload);
   }
 
   // src/variables/variables.ts
@@ -9413,8 +9416,13 @@ ${usageJsx}
     const nodes = Array.isArray(root) ? root : [root];
     const targets = collectComponentTargets(nodes);
     let totalRenamed = 0;
+    let targetIdx = 0;
     for (const target of targets) {
       if (!target) continue;
+      if (targetIdx > 0 && targetIdx % 3 === 0) {
+        await yieldToMain();
+      }
+      targetIdx++;
       try {
         if (target.type === "COMPONENT_SET") {
           const compSet = target;
@@ -9572,8 +9580,13 @@ ${usageJsx}
     }
     return totalRenamed;
   }
-  async function sanitizeInstanceProperties(node) {
-    if (!node) return;
+  async function sanitizeInstanceProperties(node, visited = /* @__PURE__ */ new Set(), progress = { count: 0 }) {
+    if (!node || !node.id || visited.has(node.id)) return;
+    visited.add(node.id);
+    progress.count++;
+    if (progress.count % 40 === 0) {
+      await yieldToMain();
+    }
     if (node.type === "INSTANCE") {
       const inst = node;
       try {
@@ -9598,7 +9611,7 @@ ${usageJsx}
     }
     if ("children" in node && node.children) {
       for (const child of node.children) {
-        await sanitizeInstanceProperties(child);
+        await sanitizeInstanceProperties(child, visited, progress);
       }
     }
   }
@@ -10235,154 +10248,159 @@ ${usageJsx}
       if (options.bindTokens === false) {
         continue;
       }
+      const shouldBindMetrics = options.bindMetrics !== false;
+      const shouldBindColors = options.bindColors !== false;
+      const shouldBindTextStyles = options.bindTextStyles !== false;
       const boundVars = node.boundVariables || {};
       const isControl = isInteractiveControl(node);
-      const bindNumericProperty = (prop, rawValue, allowedScopes, semanticField) => {
-        if (!options.forceRebind && boundVars[prop]) return;
-        if (prop === "cornerRadius" && !options.forceRebind && (boundVars.cornerRadius || boundVars.topLeftRadius)) return;
-        const candidates = precomputedMetrics.filter((m) => checkScopeMatch(m.scopes, allowedScopes));
-        let bestToken = null;
-        let bestScore = -Infinity;
-        let minDiff = Infinity;
-        for (const item of candidates) {
-          const vName = item.lowerName;
-          if (rawValue > 0) {
-            if (semanticField === "paddingX" || semanticField === "paddingY") {
-              if (vName.includes("/gap/") || vName.startsWith("gap/") || vName.includes("gap")) continue;
+      if (shouldBindMetrics) {
+        const bindNumericProperty = (prop, rawValue, allowedScopes, semanticField) => {
+          if (!options.forceRebind && boundVars[prop]) return;
+          if (prop === "cornerRadius" && !options.forceRebind && (boundVars.cornerRadius || boundVars.topLeftRadius)) return;
+          const candidates = precomputedMetrics.filter((m) => checkScopeMatch(m.scopes, allowedScopes));
+          let bestToken = null;
+          let bestScore = -Infinity;
+          let minDiff = Infinity;
+          for (const item of candidates) {
+            const vName = item.lowerName;
+            if (rawValue > 0) {
+              if (semanticField === "paddingX" || semanticField === "paddingY") {
+                if (vName.includes("/gap/") || vName.startsWith("gap/") || vName.includes("gap")) continue;
+              } else if (semanticField === "gap") {
+                if (vName.includes("inset") || vName.includes("inline") || vName.includes("block") || vName.includes("padding")) {
+                  continue;
+                }
+              }
+            }
+            const diff = Math.abs(item.value - rawValue);
+            if (options.mode === "exact") {
+              if (diff > 0.5) continue;
+            } else {
+              if (diff > 6.5) continue;
+            }
+            let score = 100 - diff * 15;
+            if (rawValue === 0) {
+              if (vName === "constant/none" || vName.endsWith("/constant/none") || vName === "none" || vName.endsWith("/none") || vName.includes("none") || vName.includes("zero")) {
+                score += 500;
+              }
+            }
+            if (semanticField === "paddingX") {
+              if (isControl) {
+                if (vName.startsWith("space/interactive/inline/")) score += 50;
+                else if (vName.includes("padding/buttonx") || vName.includes("padding/inputx")) score += 40;
+                else if (vName.startsWith("layout/")) score += 35;
+                else if (vName.startsWith("space/inset/")) score += 10;
+              } else {
+                if (vName.startsWith("space/inset/")) score += 50;
+                else if (vName.includes("padding/card")) score += 40;
+                else if (vName.startsWith("layout/")) score += 35;
+                else if (vName.startsWith("space/interactive/inline/")) score += 10;
+              }
+            } else if (semanticField === "paddingY") {
+              if (isControl) {
+                if (vName.startsWith("space/interactive/block/")) score += 50;
+                else if (vName.includes("padding/buttony") || vName.includes("padding/inputy")) score += 40;
+                else if (vName.startsWith("layout/")) score += 35;
+                else if (vName.startsWith("space/inset/")) score += 10;
+              } else {
+                if (vName.startsWith("space/inset/")) score += 50;
+                else if (vName.includes("padding/card")) score += 40;
+                else if (vName.startsWith("layout/")) score += 35;
+                else if (vName.startsWith("space/interactive/block/")) score += 10;
+              }
             } else if (semanticField === "gap") {
-              if (vName.includes("inset") || vName.includes("inline") || vName.includes("block") || vName.includes("padding")) {
-                continue;
+              if (vName.startsWith("space/gap/component/") || vName.startsWith("space/gap/layout/") || vName.startsWith("gap/") || vName.startsWith("layout/") || vName.includes("/gap/") || vName.includes("extrasmall")) {
+                score += 60;
               }
+            } else if (semanticField === "radius") {
+              if (isControl) {
+                if (vName.startsWith("radius/interactive/") || vName.startsWith("radius/special/")) score += 50;
+                else if (vName.startsWith("radius/container/")) score += 10;
+              } else {
+                if (vName.startsWith("radius/container/")) score += 50;
+                else if (vName.startsWith("radius/interactive/")) score += 10;
+              }
+            } else if (semanticField === "stroke") {
+              if (vName.startsWith("border/") || vName.startsWith("constant/1")) score += 50;
+            }
+            if (score > bestScore || score === bestScore && diff < minDiff) {
+              bestScore = score;
+              minDiff = diff;
+              bestToken = item;
             }
           }
-          const diff = Math.abs(item.value - rawValue);
-          if (options.mode === "exact") {
-            if (diff > 0.5) continue;
-          } else {
-            if (diff > 6.5) continue;
-          }
-          let score = 100 - diff * 15;
-          if (rawValue === 0) {
-            if (vName === "constant/none" || vName.endsWith("/constant/none") || vName === "none" || vName.endsWith("/none") || vName.includes("none") || vName.includes("zero")) {
-              score += 500;
-            }
-          }
-          if (semanticField === "paddingX") {
-            if (isControl) {
-              if (vName.startsWith("space/interactive/inline/")) score += 50;
-              else if (vName.includes("padding/buttonx") || vName.includes("padding/inputx")) score += 40;
-              else if (vName.startsWith("layout/")) score += 35;
-              else if (vName.startsWith("space/inset/")) score += 10;
-            } else {
-              if (vName.startsWith("space/inset/")) score += 50;
-              else if (vName.includes("padding/card")) score += 40;
-              else if (vName.startsWith("layout/")) score += 35;
-              else if (vName.startsWith("space/interactive/inline/")) score += 10;
-            }
-          } else if (semanticField === "paddingY") {
-            if (isControl) {
-              if (vName.startsWith("space/interactive/block/")) score += 50;
-              else if (vName.includes("padding/buttony") || vName.includes("padding/inputy")) score += 40;
-              else if (vName.startsWith("layout/")) score += 35;
-              else if (vName.startsWith("space/inset/")) score += 10;
-            } else {
-              if (vName.startsWith("space/inset/")) score += 50;
-              else if (vName.includes("padding/card")) score += 40;
-              else if (vName.startsWith("layout/")) score += 35;
-              else if (vName.startsWith("space/interactive/block/")) score += 10;
-            }
-          } else if (semanticField === "gap") {
-            if (vName.startsWith("space/gap/component/") || vName.startsWith("space/gap/layout/") || vName.startsWith("gap/") || vName.startsWith("layout/") || vName.includes("/gap/") || vName.includes("extrasmall")) {
-              score += 60;
-            }
-          } else if (semanticField === "radius") {
-            if (isControl) {
-              if (vName.startsWith("radius/interactive/") || vName.startsWith("radius/special/")) score += 50;
-              else if (vName.startsWith("radius/container/")) score += 10;
-            } else {
-              if (vName.startsWith("radius/container/")) score += 50;
-              else if (vName.startsWith("radius/interactive/")) score += 10;
-            }
-          } else if (semanticField === "stroke") {
-            if (vName.startsWith("border/") || vName.startsWith("constant/1")) score += 50;
-          }
-          if (score > bestScore || score === bestScore && diff < minDiff) {
-            bestScore = score;
-            minDiff = diff;
-            bestToken = item;
-          }
-        }
-        if (bestToken) {
-          if (prop === "cornerRadius") {
-            try {
-              node.setBoundVariable("cornerRadius", bestToken.variable);
-              metricsBoundCount++;
-            } catch (e) {
+          if (bestToken) {
+            if (prop === "cornerRadius") {
               try {
-                node.setBoundVariable("topLeftRadius", bestToken.variable);
-                node.setBoundVariable("topRightRadius", bestToken.variable);
-                node.setBoundVariable("bottomLeftRadius", bestToken.variable);
-                node.setBoundVariable("bottomRightRadius", bestToken.variable);
+                node.setBoundVariable("cornerRadius", bestToken.variable);
                 metricsBoundCount++;
-              } catch (err) {
+              } catch (e) {
+                try {
+                  node.setBoundVariable("topLeftRadius", bestToken.variable);
+                  node.setBoundVariable("topRightRadius", bestToken.variable);
+                  node.setBoundVariable("bottomLeftRadius", bestToken.variable);
+                  node.setBoundVariable("bottomRightRadius", bestToken.variable);
+                  metricsBoundCount++;
+                } catch (err) {
+                }
+              }
+            } else {
+              try {
+                node.setBoundVariable(prop, bestToken.variable);
+                metricsBoundCount++;
+              } catch (e) {
               }
             }
+          }
+        };
+        if ("layoutMode" in node && node.layoutMode !== "NONE") {
+          const autoNode = node;
+          if (typeof autoNode.paddingLeft === "number" && autoNode.paddingLeft >= 0) {
+            bindNumericProperty("paddingLeft", autoNode.paddingLeft, ["GAP", "WIDTH_HEIGHT"], "paddingX");
+          }
+          if (typeof autoNode.paddingRight === "number" && autoNode.paddingRight >= 0) {
+            bindNumericProperty("paddingRight", autoNode.paddingRight, ["GAP", "WIDTH_HEIGHT"], "paddingX");
+          }
+          if (typeof autoNode.paddingTop === "number" && autoNode.paddingTop >= 0) {
+            bindNumericProperty("paddingTop", autoNode.paddingTop, ["GAP", "WIDTH_HEIGHT"], "paddingY");
+          }
+          if (typeof autoNode.paddingBottom === "number" && autoNode.paddingBottom >= 0) {
+            bindNumericProperty("paddingBottom", autoNode.paddingBottom, ["GAP", "WIDTH_HEIGHT"], "paddingY");
+          }
+          if (typeof autoNode.itemSpacing === "number" && autoNode.itemSpacing >= 0) {
+            bindNumericProperty("itemSpacing", autoNode.itemSpacing, ["GAP", "WIDTH_HEIGHT"], "gap");
+          }
+          if (typeof autoNode.counterAxisSpacing === "number" && autoNode.counterAxisSpacing >= 0) {
+            bindNumericProperty("counterAxisSpacing", autoNode.counterAxisSpacing, ["GAP", "WIDTH_HEIGHT"], "gap");
+          }
+        }
+        if ("cornerRadius" in node) {
+          const rNode = node;
+          if (typeof rNode.cornerRadius === "number" && rNode.cornerRadius >= 0) {
+            bindNumericProperty("cornerRadius", rNode.cornerRadius, ["CORNER_RADIUS"], "radius");
           } else {
-            try {
-              node.setBoundVariable(prop, bestToken.variable);
-              metricsBoundCount++;
-            } catch (e) {
+            const tl = typeof rNode.topLeftRadius === "number" ? rNode.topLeftRadius : null;
+            const tr = typeof rNode.topRightRadius === "number" ? rNode.topRightRadius : null;
+            const bl = typeof rNode.bottomLeftRadius === "number" ? rNode.bottomLeftRadius : null;
+            const br = typeof rNode.bottomRightRadius === "number" ? rNode.bottomRightRadius : null;
+            if (tl !== null && tl === tr && tl === bl && tl === br && tl >= 0) {
+              bindNumericProperty("cornerRadius", tl, ["CORNER_RADIUS"], "radius");
+            } else {
+              if (tl !== null && tl >= 0) bindNumericProperty("topLeftRadius", tl, ["CORNER_RADIUS"], "radius");
+              if (tr !== null && tr >= 0) bindNumericProperty("topRightRadius", tr, ["CORNER_RADIUS"], "radius");
+              if (bl !== null && bl >= 0) bindNumericProperty("bottomLeftRadius", bl, ["CORNER_RADIUS"], "radius");
+              if (br !== null && br >= 0) bindNumericProperty("bottomRightRadius", br, ["CORNER_RADIUS"], "radius");
             }
           }
         }
-      };
-      if ("layoutMode" in node && node.layoutMode !== "NONE") {
-        const autoNode = node;
-        if (typeof autoNode.paddingLeft === "number" && autoNode.paddingLeft >= 0) {
-          bindNumericProperty("paddingLeft", autoNode.paddingLeft, ["GAP", "WIDTH_HEIGHT"], "paddingX");
-        }
-        if (typeof autoNode.paddingRight === "number" && autoNode.paddingRight >= 0) {
-          bindNumericProperty("paddingRight", autoNode.paddingRight, ["GAP", "WIDTH_HEIGHT"], "paddingX");
-        }
-        if (typeof autoNode.paddingTop === "number" && autoNode.paddingTop >= 0) {
-          bindNumericProperty("paddingTop", autoNode.paddingTop, ["GAP", "WIDTH_HEIGHT"], "paddingY");
-        }
-        if (typeof autoNode.paddingBottom === "number" && autoNode.paddingBottom >= 0) {
-          bindNumericProperty("paddingBottom", autoNode.paddingBottom, ["GAP", "WIDTH_HEIGHT"], "paddingY");
-        }
-        if (typeof autoNode.itemSpacing === "number" && autoNode.itemSpacing >= 0) {
-          bindNumericProperty("itemSpacing", autoNode.itemSpacing, ["GAP", "WIDTH_HEIGHT"], "gap");
-        }
-        if (typeof autoNode.counterAxisSpacing === "number" && autoNode.counterAxisSpacing >= 0) {
-          bindNumericProperty("counterAxisSpacing", autoNode.counterAxisSpacing, ["GAP", "WIDTH_HEIGHT"], "gap");
-        }
-      }
-      if ("cornerRadius" in node) {
-        const rNode = node;
-        if (typeof rNode.cornerRadius === "number" && rNode.cornerRadius >= 0) {
-          bindNumericProperty("cornerRadius", rNode.cornerRadius, ["CORNER_RADIUS"], "radius");
-        } else {
-          const tl = typeof rNode.topLeftRadius === "number" ? rNode.topLeftRadius : null;
-          const tr = typeof rNode.topRightRadius === "number" ? rNode.topRightRadius : null;
-          const bl = typeof rNode.bottomLeftRadius === "number" ? rNode.bottomLeftRadius : null;
-          const br = typeof rNode.bottomRightRadius === "number" ? rNode.bottomRightRadius : null;
-          if (tl !== null && tl === tr && tl === bl && tl === br && tl >= 0) {
-            bindNumericProperty("cornerRadius", tl, ["CORNER_RADIUS"], "radius");
-          } else {
-            if (tl !== null && tl >= 0) bindNumericProperty("topLeftRadius", tl, ["CORNER_RADIUS"], "radius");
-            if (tr !== null && tr >= 0) bindNumericProperty("topRightRadius", tr, ["CORNER_RADIUS"], "radius");
-            if (bl !== null && bl >= 0) bindNumericProperty("bottomLeftRadius", bl, ["CORNER_RADIUS"], "radius");
-            if (br !== null && br >= 0) bindNumericProperty("bottomRightRadius", br, ["CORNER_RADIUS"], "radius");
+        if ("strokes" in node && Array.isArray(node.strokes) && node.strokes.length > 0) {
+          const sNode = node;
+          if (typeof sNode.strokeWeight === "number" && sNode.strokeWeight > 0) {
+            bindNumericProperty("strokeWeight", sNode.strokeWeight, ["STROKE_FLOAT"], "stroke");
           }
         }
       }
-      if ("strokes" in node && Array.isArray(node.strokes) && node.strokes.length > 0) {
-        const sNode = node;
-        if (typeof sNode.strokeWeight === "number" && sNode.strokeWeight > 0) {
-          bindNumericProperty("strokeWeight", sNode.strokeWeight, ["STROKE_FLOAT"], "stroke");
-        }
-      }
-      if (!isAppleNode) {
+      if (shouldBindColors && !isAppleNode) {
         const ancestorRole = getAncestorContainerRole(node);
         if ("fills" in node && Array.isArray(node.fills) && node.fills.length > 0) {
           try {
@@ -10515,7 +10533,7 @@ ${usageJsx}
           }
         }
       }
-      if (node.type === "TEXT") {
+      if (shouldBindTextStyles && node.type === "TEXT") {
         const textNode = node;
         const applyMatchedStyle = async (matched, range) => {
           let styleObj = matched.style || null;
@@ -10619,7 +10637,7 @@ ${usageJsx}
     }
     const textNodes = allNodesToProcess.filter((n) => n.type === "TEXT");
     if (options.notify !== false) {
-      if (textNodes.length > 0 && textStylesBoundCount === 0) {
+      if (options.bindTextStyles !== false && textNodes.length > 0 && textStylesBoundCount === 0) {
         if (availableTextStyles.length === 0) {
           figma.notify(
             "Brak styl\xF3w tekstowych w pami\u0119ci. Otw\xF3rz plik biblioteki DS i kliknij '\u{1F4E5} Zapisz style z tego pliku DS'!",
@@ -11943,8 +11961,12 @@ ${usageJsx}
     }
     return name;
   }
-  async function sanitizeLayerNames(node, isPascalCaseOnly = false) {
+  async function sanitizeLayerNames(node, isPascalCaseOnly = false, options) {
     if (!node) return;
+    if (options == null ? void 0 : options.visited) {
+      if (options.visited.has(node.id)) return;
+      options.visited.add(node.id);
+    }
     if (isSystemOrIgnoredNode(node)) {
       return;
     }
@@ -12005,9 +12027,9 @@ ${usageJsx}
         }
       }
     }
-    if ("children" in node && node.children) {
+    if ((options == null ? void 0 : options.recursive) !== false && "children" in node && node.children) {
       for (const child of node.children) {
-        await sanitizeLayerNames(child, isPascalCaseOnly);
+        await sanitizeLayerNames(child, isPascalCaseOnly, options);
       }
     }
   }
@@ -13066,10 +13088,19 @@ ${usageJsx}
         curr = curr.parent;
       }
     }
-    function collectSubtree(n) {
-      if (!n) return;
+    const visitedCollect = /* @__PURE__ */ new Set();
+    const stack = [...selection];
+    let collectSteps = 0;
+    while (stack.length > 0) {
+      const n = stack.pop();
+      if (!n || n.id && visitedCollect.has(n.id)) continue;
+      if (n.id) visitedCollect.add(n.id);
       if (n.type === "INSTANCE") {
-        return;
+        continue;
+      }
+      collectSteps++;
+      if (collectSteps % 250 === 0) {
+        await yieldToMain();
       }
       nodesToSanitize.add(n);
       if (n.type === "COMPONENT_SET") {
@@ -13082,12 +13113,12 @@ ${usageJsx}
             nodesToSanitize.add(child);
             if ("children" in child && child.children) {
               for (const sub of child.children) {
-                collectSubtree(sub);
+                stack.push(sub);
               }
             }
           }
         }
-        return;
+        continue;
       }
       if (n.type === "COMPONENT") {
         componentTargets.add(n);
@@ -13100,34 +13131,35 @@ ${usageJsx}
       }
       if ("children" in n && n.children) {
         for (const child of n.children) {
-          collectSubtree(child);
+          stack.push(child);
         }
       }
     }
-    for (const n of selection) {
-      collectSubtree(n);
-    }
-    for (const cs of componentSets) {
+    const allComponentTargets = Array.from(/* @__PURE__ */ new Set([...componentSets, ...componentTargets]));
+    if (allComponentTargets.length > 0) {
       try {
-        await sanitizeComponentProperties(cs);
+        await sanitizeComponentProperties(allComponentTargets);
       } catch (_) {
       }
     }
-    for (const target of componentTargets) {
-      try {
-        await sanitizeComponentProperties(target);
-      } catch (_) {
-      }
-    }
+    let renamedSteps = 0;
     for (const node of nodesToSanitize) {
-      await sanitizeLayerNames(node, true);
+      if (node.removed) continue;
+      await sanitizeLayerNames(node, true, { recursive: false });
+      renamedSteps++;
+      if (renamedSteps % 35 === 0) {
+        await yieldToMain();
+      }
     }
+    const visitedInstances = /* @__PURE__ */ new Set();
+    const instanceProgress = { count: 0 };
     for (const n of selection) {
-      await sanitizeInstanceProperties(n);
+      await sanitizeInstanceProperties(n, visitedInstances, instanceProgress);
     }
     try {
       const currentSelection = [...figma.currentPage.selection];
       if (currentSelection.length > 0) {
+        suppressSelectionEvents(250);
         figma.currentPage.selection = [];
         figma.currentPage.selection = currentSelection;
       }
@@ -13454,6 +13486,7 @@ ${usageJsx}
     };
   }
   async function scanAllPagesSummary() {
+    var _a;
     if (typeof figma.loadAllPagesAsync === "function") {
       await figma.loadAllPagesAsync();
     }
@@ -13463,7 +13496,15 @@ ${usageJsx}
       pages.push(buildPageSummaryItem(page));
     }
     const currentPageHex = extractSolidBackgroundHex(figma.currentPage) || "#1E1E1E";
-    return { pages, currentPageHex };
+    const fileName = ((_a = figma.root) == null ? void 0 : _a.name) || "";
+    const suggestedFileNameTitleCase = convertStringToCase(fileName, "title");
+    return {
+      pages,
+      currentPageHex,
+      fileName,
+      suggestedFileNameTitleCase,
+      needsFileTitleCase: suggestedFileNameTitleCase !== fileName
+    };
   }
   async function applyMultiPageBackgroundAndTitleCase(options) {
     let normalizedHex = null;
@@ -18178,12 +18219,12 @@ ${usageJsx}
       const secondaryHeadersStyles = msg.secondaryHeadersStyles || { regular: "Regular", medium: "Medium", bold: "Bold" };
       const secondaryBodyStyles = msg.secondaryBodyStyles || { regular: "Regular", medium: "Medium", bold: "Bold" };
       if (!seeds.accessibility) seeds.accessibility = { name: "accessibility", color: "#ffed00" };
-      const baseActionColor = seeds.action ? seeds.action.color : "#2979FF";
-      const baseSuccessColor = seeds.success ? seeds.success.color : "#27AE60";
+      const baseActionColor = seeds.action ? seeds.action.color : "#256DE5";
+      const baseSuccessColor = seeds.success ? seeds.success.color : "#1D8549";
       const baseWarningColor = seeds.warning ? seeds.warning.color : "#F2C94C";
-      let baseErrorColor = seeds.error && seeds.error.color ? seeds.error.color : "#e7000b";
-      if (baseErrorColor.toUpperCase() === "#E6453B" || baseErrorColor.toUpperCase() === "#FF6467") baseErrorColor = "#e7000b";
-      seeds.error.color = baseErrorColor;
+      let baseErrorColor = seeds.error && seeds.error.color ? seeds.error.color : "#D1252E";
+      if (["#E6453B", "#FF6467", "#E7000B"].includes(baseErrorColor.toUpperCase())) baseErrorColor = "#D1252E";
+      if (seeds.error) seeds.error.color = baseErrorColor;
       seeds.actionDark = { name: seeds.actionDark && seeds.actionDark.name ? seeds.actionDark.name : "actionDark", color: deriveDarkBaseColor(baseActionColor) };
       seeds.successDark = { name: seeds.successDark && seeds.successDark.name ? seeds.successDark.name : "successDark", color: deriveDarkBaseColor(baseSuccessColor) };
       seeds.warningDark = { name: seeds.warningDark && seeds.warningDark.name ? seeds.warningDark.name : "warningDark", color: deriveDarkBaseColor(baseWarningColor) };
@@ -18519,7 +18560,7 @@ ${usageJsx}
                   }
                   smartSetValueForMode(hexVar, modeId, rgbaToHex(val.r, val.g, val.b, val.a));
                 } else {
-                  const hex = seeds[role] && seeds[role].color ? seeds[role].color : "#2979FF";
+                  const hex = seeds[role] && seeds[role].color ? seeds[role].color : "#256DE5";
                   const baseRgb = hexToRgb(hex);
                   const finalColor = calculateTone(baseRgb, tone);
                   smartSetValueForMode(hexVar, modeId, rgbToHex2(finalColor.r, finalColor.g, finalColor.b));
@@ -18895,23 +18936,25 @@ ${usageJsx}
           { name: `On${pascalCustomName}Disabled`, rules: onDisabledRules, unadjusted: unadjustedOnDisabledRules },
           { name: `${pascalCustomName}Disabled`, rules: disabledRules, unadjusted: unadjustedDisabledRules }
         ];
-        for (const item of tokensConfigForFallback) {
-          const isChangedForWcag = item.rules.light !== item.unadjusted.light || item.rules.dark !== item.unadjusted.dark;
-          if (isChangedForWcag) {
-            const fallbackLeafName = item.name.endsWith("Fallback") ? item.name : `${item.name}Fallback`;
-            tokensToCreate.push({
-              name: `Fallback/${fallbackLeafName}`,
-              oldName: [
-                `fallback/${item.name}`,
-                `Fallback/${item.name}`,
-                `fallback/${item.name.toLowerCase()}`,
-                `fallback/${fallbackLeafName}`,
-                `Fallback/${fallbackLeafName}`,
-                `fallback/${fallbackLeafName.toLowerCase()}`
-              ],
-              rules: item.unadjusted,
-              description: `Fallback unadjusted ${item.name} token (without WCAG recalculation).`
-            });
+        if (!isState) {
+          for (const item of tokensConfigForFallback) {
+            const isChangedForWcag = item.rules.light !== item.unadjusted.light || item.rules.dark !== item.unadjusted.dark;
+            if (isChangedForWcag) {
+              const fallbackLeafName = item.name.endsWith("Fallback") ? item.name : `${item.name}Fallback`;
+              tokensToCreate.push({
+                name: `Fallback/${fallbackLeafName}`,
+                oldName: [
+                  `fallback/${item.name}`,
+                  `Fallback/${item.name}`,
+                  `fallback/${item.name.toLowerCase()}`,
+                  `fallback/${fallbackLeafName}`,
+                  `Fallback/${fallbackLeafName}`,
+                  `fallback/${fallbackLeafName.toLowerCase()}`
+                ],
+                rules: item.unadjusted,
+                description: `Fallback unadjusted ${item.name} token (without WCAG recalculation).`
+              });
+            }
           }
         }
         const isStateRole2 = ["action", "success", "warning", "error"].includes(role);
@@ -21254,6 +21297,20 @@ ${usageJsx}
 
   // src/main.ts
   var currentPluginMode = "components";
+  var isSmartSwapDrawerOpen = false;
+  var selectionSyncTimer = null;
+  function scheduleSelectionSync() {
+    if (currentPluginMode !== "components" || areSelectionEventsSuppressed()) return;
+    if (selectionSyncTimer !== null) {
+      clearTimeout(selectionSyncTimer);
+    }
+    selectionSyncTimer = setTimeout(() => {
+      selectionSyncTimer = null;
+      if (currentPluginMode !== "components" || areSelectionEventsSuppressed()) return;
+      sendSelectionToUI();
+      sendSmartSwapSelectionToUI();
+    }, 80);
+  }
   async function sendLibraryStylesCacheCount() {
     try {
       const count = await getLibraryStylesCacheCount();
@@ -21280,22 +21337,16 @@ ${usageJsx}
     } else {
       figma.showUI(html, { width: 640, height: 1024, themeColors: true });
       figma.ui.onmessage = handleUiMessage;
-      sendInitialData();
-      sendSmartSwapSelectionToUI();
+      await sendInitialData();
+      await sendSmartSwapSelectionToUI();
       sendLibraryStylesCacheCount();
     }
   }
   figma.on("selectionchange", () => {
-    if (currentPluginMode === "components") {
-      sendSelectionToUI();
-      sendSmartSwapSelectionToUI();
-    }
+    scheduleSelectionSync();
   });
   figma.on("currentpagechange", () => {
-    if (currentPluginMode === "components") {
-      sendSelectionToUI();
-      sendSmartSwapSelectionToUI();
-    }
+    scheduleSelectionSync();
   });
   function resolveSyncTargetName(selection) {
     if (selection.length === 0) return null;
@@ -21324,7 +21375,7 @@ ${usageJsx}
     }
     return false;
   }
-  async function sendSmartSwapSelectionToUI() {
+  async function sendSmartSwapSelectionToUI(forceMatchStats = false) {
     const selection = figma.currentPage.selection;
     const items = selection.map((n) => ({ id: n.id, name: n.name, type: n.type }));
     const nodeTypes = selection.map((n) => n.type);
@@ -21352,9 +21403,11 @@ ${usageJsx}
       if (templateNode && sourceNodes.length > 0) {
         suggestedTemplate = { id: templateNode.id, name: templateNode.name, type: templateNode.type };
         suggestedSource = { id: sourceNodes[0].id, name: sourceNodes[0].name, type: sourceNodes[0].type };
-        try {
-          matchStats = await calculateMatchStats(sourceNodes[0], templateNode);
-        } catch (e) {
+        if (forceMatchStats || isSmartSwapDrawerOpen) {
+          try {
+            matchStats = await calculateMatchStats(sourceNodes[0], templateNode);
+          } catch (e) {
+          }
         }
       }
     } else if (selection.length === 1) {
@@ -21404,14 +21457,21 @@ ${usageJsx}
       const step1Mode = msg.step1Mode === "set-only" ? "set-only" : "full";
       const step2BindTokens = msg.step2BindTokens !== false;
       const step2Mode = msg.step2Mode === "exact" ? "exact" : "snap";
+      const bindMetrics = msg.bindMetrics !== false;
+      const bindColors = msg.bindColors !== false;
+      const bindTextStyles = msg.bindTextStyles !== false;
       const ignoreFontFamily = msg.ignoreFontFamily !== false;
       const step3Naming = msg.step3Naming !== false;
       const namingMode = msg.namingMode === "ai" ? "ai" : "fast";
       const step4Props = msg.step4Props !== false;
       const reviewAutoProps = Boolean(msg.reviewAutoProps);
+      const moveToComponentsPage = msg.moveToComponentsPage !== false;
       const autoPropsOptions = typeof msg.autoProps === "object" && msg.autoProps !== null ? msg.autoProps : void 0;
       if (step1Setup && step1Mode === "set-only" && !step2BindTokens && !step3Naming && !step4Props) {
         await runSetupComponentSetHorizontalLogic();
+        if (moveToComponentsPage) {
+          await moveSelectedToComponentsPage();
+        }
         await sendSelectionToUI();
         await sendSmartSwapSelectionToUI();
         figma.ui.postMessage({ type: "master-setup-complete", success: true });
@@ -21504,13 +21564,17 @@ ${usageJsx}
             await prepareContainersForMasterPipeline(figma.currentPage.selection);
           }
         }
-        if (step2BindTokens || step1Setup && step1Mode === "full") {
+        const effectiveBindTokens = step2BindTokens && (bindMetrics || bindColors || bindTextStyles);
+        if (effectiveBindTokens || step1Setup && step1Mode === "full") {
           binderStats = await runSmartTokenAutoBinder(figma.currentPage.selection, {
             mode: step2Mode,
             ignoreFontFamily,
             notify: false,
             setupContainers: step1Setup && step1Mode === "full",
-            bindTokens: step2BindTokens
+            bindTokens: effectiveBindTokens,
+            bindMetrics,
+            bindColors,
+            bindTextStyles
           });
         }
       }
@@ -21698,9 +21762,21 @@ ${usageJsx}
           }
         }
       }
+      if (moveToComponentsPage && masterNodesToTransfer.length === 0 && validRoots.length > 0) {
+        for (const r of validRoots) {
+          if (r.removed) continue;
+          if (r.type === "COMPONENT_SET") {
+            if (!masterNodesToTransfer.includes(r)) masterNodesToTransfer.push(r);
+          } else if (r.type === "COMPONENT") {
+            const comp = r;
+            const host = comp.parent && comp.parent.type === "COMPONENT_SET" ? comp.parent : comp;
+            if (!masterNodesToTransfer.includes(host)) masterNodesToTransfer.push(host);
+          }
+        }
+      }
       if (masterNodesToTransfer.length > 0) {
         const isAlreadyOnLib = isLibraryComponentsPage(figma.currentPage);
-        if (isAlreadyOnLib) {
+        if (!moveToComponentsPage || isAlreadyOnLib) {
           for (const master of masterNodesToTransfer) {
             const cleanMasterName = master.name.split(",")[0].trim();
             const matchingItemSets = createdItemSets.filter((is) => is.name.startsWith(cleanMasterName));
@@ -21895,7 +21971,11 @@ ${usageJsx}
   }
   var handleUiMessage = async (msg) => {
     var _a, _b;
-    if (msg.type === "switch-plugin-mode") {
+    if (msg.type === "subview-state-change") {
+      setRetextifierDrawerOpen(!!msg.retextifierOpen);
+      isSmartSwapDrawerOpen = !!msg.smartSwapOpen;
+      return;
+    } else if (msg.type === "switch-plugin-mode") {
       const targetMode = msg.mode === "generator" ? "generator" : "components";
       await launchPluginMode(targetMode);
       return;
@@ -22161,7 +22241,10 @@ ${usageJsx}
       figma.ui.postMessage({
         type: "page-background-scan",
         pages: scan.pages,
-        currentPageHex: scan.currentPageHex
+        currentPageHex: scan.currentPageHex,
+        fileName: scan.fileName,
+        suggestedFileNameTitleCase: scan.suggestedFileNameTitleCase,
+        needsFileTitleCase: scan.needsFileTitleCase
       });
     } else if (msg.type === "apply-pages-background") {
       const applyBackground = msg.applyBackground !== false;
@@ -22186,6 +22269,9 @@ ${usageJsx}
           type: "page-background-applied",
           pages: result.pages,
           currentPageHex: result.currentPageHex,
+          fileName: result.fileName,
+          suggestedFileNameTitleCase: result.suggestedFileNameTitleCase,
+          needsFileTitleCase: result.needsFileTitleCase,
           updatedBackgroundCount: result.updatedBackgroundCount,
           renamedPagesCount: result.renamedPagesCount,
           appliedHex: result.appliedHex
@@ -22456,7 +22542,7 @@ ${usageJsx}
         figma.notify("Google Gemini disconnected.");
       }
     } else if (msg.type === "get-retextifier-layers") {
-      const textLayers = scanDeepTextLayers();
+      const textLayers = await scanDeepTextLayers();
       figma.ui.postMessage({
         type: "retextifier-layers",
         layers: textLayers
@@ -22499,7 +22585,7 @@ ${usageJsx}
         figma.ui.postMessage({
           type: "retextifier-applied",
           updatedCount,
-          layers: scanDeepTextLayers()
+          layers: await scanDeepTextLayers()
         });
       } else if (errorCount > 0) {
         figma.notify("Nie uda\u0142o si\u0119 zaktualizowa\u0107 warstw (brak czcionki lub b\u0142\u0105d warstwy).", { error: true });
@@ -22920,7 +23006,7 @@ ${usageJsx}
     } else if (msg.type === "convert-case") {
       await handleConvertCase(msg.caseType, !!msg.skipInstances);
     } else if (msg.type === "smart-swap-get-selection") {
-      await sendSmartSwapSelectionToUI();
+      await sendSmartSwapSelectionToUI(true);
     } else if (msg.type === "smart-swap-check-match") {
       try {
         const srcNode = await figma.getNodeByIdAsync(msg.sourceId);

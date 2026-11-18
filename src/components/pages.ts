@@ -13,6 +13,9 @@ export interface PageSummaryItem {
 export interface PageScanResult {
   pages: PageSummaryItem[];
   currentPageHex: string;
+  fileName: string;
+  suggestedFileNameTitleCase: string;
+  needsFileTitleCase: boolean;
 }
 
 export interface MultiPageUpdateOptions {
@@ -80,7 +83,15 @@ export async function scanAllPagesSummary(): Promise<PageScanResult> {
   }
 
   const currentPageHex = extractSolidBackgroundHex(figma.currentPage) || '#1E1E1E';
-  return { pages, currentPageHex };
+  const fileName = figma.root?.name || '';
+  const suggestedFileNameTitleCase = convertStringToCase(fileName, 'title');
+  return {
+    pages,
+    currentPageHex,
+    fileName,
+    suggestedFileNameTitleCase,
+    needsFileTitleCase: suggestedFileNameTitleCase !== fileName,
+  };
 }
 
 export async function applyMultiPageBackgroundAndTitleCase(

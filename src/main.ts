@@ -13,7 +13,8 @@ import {
 import {
   scanDeepTextLayers,
   sendInitialData,
-  sendSelectionToUI
+  sendSelectionToUI,
+  setRetextifierDrawerOpen
 } from './retextifier/retextifier';
 import {
   needsSmartSetup,
@@ -53,7 +54,7 @@ import { loadFontsForTextNode, safeLoadFontAndSetCharacters } from './utils/font
 import { calculateMatchStats, executeSmartSwapBatch } from './components/smartSwap';
 import { executeFontSwapRules, FontSwapRule, scanSelectionFonts } from './components/fontReplacer';
 import { sanitizeLayerNameByContext, sanitizeLayerNames } from './renamer/frameClassifier';
-import { isIgnoredName, isSystemOrIgnoredNode, isSystemOrIgnoredPropName, purgeIgnoredPropertiesAndReferences, repairComponentSetVariants, safeGetComponentPropertyDefinitions } from './utils/nodes';
+import { areSelectionEventsSuppressed, isIgnoredName, isSystemOrIgnoredNode, isSystemOrIgnoredPropName, purgeIgnoredPropertiesAndReferences, repairComponentSetVariants, safeGetComponentPropertyDefinitions } from './utils/nodes';
 import { collectDirectInstances, collectDirectTextNodes } from './properties/collectors';
 import { cleanRebuildComponentProperties } from './properties/rebuilder';
 import { reorderComponentSetVariants } from './components/canvas';
@@ -74,6 +75,21 @@ import { handleCreatePalette } from './ds-generator/generator/createPalette';
 declare const __uiFiles__: { components?: string; generator?: string } | undefined;
 
 let currentPluginMode: 'components' | 'generator' = 'components';
+let isSmartSwapDrawerOpen = false;
+let selectionSyncTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleSelectionSync() {
+  if (currentPluginMode !== 'components' || areSelectionEventsSuppressed()) return;
+  if (selectionSyncTimer !== null) {
+    clearTimeout(selectionSyncTimer);
+  }
+  selectionSyncTimer = setTimeout(() => {
+    selectionSyncTimer = null;
+    if (currentPluginMode !== 'components' || areSelectionEventsSuppressed()) return;
+    sendSelectionToUI();
+    sendSmartSwapSelectionToUI();
+  }, 80);
+}
 
 async function sendLibraryStylesCacheCount() {
   try {
@@ -106,24 +122,18 @@ async function launchPluginMode(mode: 'components' | 'generator') {
   } else {
     figma.showUI(html, { width: 640, height: 1024, themeColors: true });
     figma.ui.onmessage = handleUiMessage;
-    sendInitialData();
-    sendSmartSwapSelectionToUI();
+    await sendInitialData();
+    await sendSmartSwapSelectionToUI();
     sendLibraryStylesCacheCount();
   }
 }
 
 figma.on('selectionchange', () => {
-  if (currentPluginMode === 'components') {
-    sendSelectionToUI();
-    sendSmartSwapSelectionToUI();
-  }
+  scheduleSelectionSync();
 });
 
 figma.on('currentpagechange', () => {
-  if (currentPluginMode === 'components') {
-    sendSelectionToUI();
-    sendSmartSwapSelectionToUI();
-  }
+  scheduleSelectionSync();
 });
 
 function resolveSyncTargetName(selection: readonly SceneNode[]): string | null {
@@ -155,7 +165,7 @@ function hasComponentSetInSelection(selection: readonly SceneNode[]): boolean {
   return false;
 }
 
-async function sendSmartSwapSelectionToUI() {
+async function sendSmartSwapSelectionToUI(forceMatchStats: boolean = false) {
   const selection = figma.currentPage.selection;
   const items = selection.map(n => ({ id: n.id, name: n.name, type: n.type }));
   const nodeTypes = selection.map(n => n.type);
@@ -189,9 +199,11 @@ async function sendSmartSwapSelectionToUI() {
     if (templateNode && sourceNodes.length > 0) {
       suggestedTemplate = { id: templateNode.id, name: templateNode.name, type: templateNode.type };
       suggestedSource = { id: sourceNodes[0].id, name: sourceNodes[0].name, type: sourceNodes[0].type };
-      try {
-        matchStats = await calculateMatchStats(sourceNodes[0], templateNode);
-      } catch (e) {}
+      if (forceMatchStats || isSmartSwapDrawerOpen) {
+        try {
+          matchStats = await calculateMatchStats(sourceNodes[0], templateNode);
+        } catch (e) {}
+      }
     }
   } else if (selection.length === 1) {
     const single = selection[0];
@@ -239,17 +251,24 @@ async function runMasterSetup(msg: any) {
     const step1Mode: 'full' | 'set-only' = msg.step1Mode === 'set-only' ? 'set-only' : 'full';
     const step2BindTokens = msg.step2BindTokens !== false;
     const step2Mode: 'snap' | 'exact' = msg.step2Mode === 'exact' ? 'exact' : 'snap';
+    const bindMetrics = msg.bindMetrics !== false;
+    const bindColors = msg.bindColors !== false;
+    const bindTextStyles = msg.bindTextStyles !== false;
     const ignoreFontFamily = msg.ignoreFontFamily !== false;
     const step3Naming = msg.step3Naming !== false;
     const namingMode: 'fast' | 'ai' = msg.namingMode === 'ai' ? 'ai' : 'fast';
     const step4Props = msg.step4Props !== false;
     const reviewAutoProps = Boolean(msg.reviewAutoProps);
+    const moveToComponentsPage = msg.moveToComponentsPage !== false;
     const autoPropsOptions: AutoPropsOptions | undefined =
       typeof msg.autoProps === 'object' && msg.autoProps !== null ? msg.autoProps : undefined;
 
     // Special Fast-Path: Set Only mode configures the COMPONENT_SET wrapper in ~5ms and finishes
     if (step1Setup && step1Mode === 'set-only' && !step2BindTokens && !step3Naming && !step4Props) {
       await runSetupComponentSetHorizontalLogic();
+      if (moveToComponentsPage) {
+        await moveSelectedToComponentsPage();
+      }
       await sendSelectionToUI();
       await sendSmartSwapSelectionToUI();
       figma.ui.postMessage({ type: 'master-setup-complete', success: true });
@@ -350,13 +369,17 @@ async function runMasterSetup(msg: any) {
         }
       }
 
-      if (step2BindTokens || (step1Setup && step1Mode === 'full')) {
+      const effectiveBindTokens = step2BindTokens && (bindMetrics || bindColors || bindTextStyles);
+      if (effectiveBindTokens || (step1Setup && step1Mode === 'full')) {
         binderStats = await runSmartTokenAutoBinder(figma.currentPage.selection, {
           mode: step2Mode,
           ignoreFontFamily,
           notify: false,
           setupContainers: step1Setup && step1Mode === 'full',
-          bindTokens: step2BindTokens
+          bindTokens: effectiveBindTokens,
+          bindMetrics,
+          bindColors,
+          bindTextStyles
         });
       }
     }
@@ -571,14 +594,26 @@ async function runMasterSetup(msg: any) {
     }
 
     // ==========================================
-    // FAZA 4: Transfer Master Componentów na stronę 🔷 Components
+    // FAZA 4: Transfer Master Componentów na stronę 🔷 Components (opcjonalnie)
     // ==========================================
+    if (moveToComponentsPage && masterNodesToTransfer.length === 0 && validRoots.length > 0) {
+      for (const r of validRoots) {
+        if ((r as any).removed) continue;
+        if (r.type === 'COMPONENT_SET') {
+          if (!masterNodesToTransfer.includes(r as ComponentSetNode)) masterNodesToTransfer.push(r as ComponentSetNode);
+        } else if (r.type === 'COMPONENT') {
+          const comp = r as ComponentNode;
+          const host = (comp.parent && comp.parent.type === 'COMPONENT_SET') ? (comp.parent as ComponentSetNode) : comp;
+          if (!masterNodesToTransfer.includes(host)) masterNodesToTransfer.push(host);
+        }
+      }
+    }
+
     if (masterNodesToTransfer.length > 0) {
       const isAlreadyOnLib = isLibraryComponentsPage(figma.currentPage);
 
-      if (isAlreadyOnLib) {
-        // Przypadek 2: Jesteśmy już na stronie 🔷 Components:
-        // Pozostaw Master Component w miejscu wywołania.
+      if (!moveToComponentsPage || isAlreadyOnLib) {
+        // Pozostaw Master Component w miejscu wywołania (brak przenoszenia lub jesteśmy już na stronie 🔷 Components).
         // Jeśli powstał powiązany .../Item Component Set, upewnij się, że leży tuż obok Master Componentu (+64px).
         for (const master of masterNodesToTransfer) {
           const cleanMasterName = master.name.split(',')[0].trim();
@@ -803,7 +838,11 @@ async function runMasterSetup(msg: any) {
 }
 
 const handleUiMessage = async (msg: any) => {
-  if (msg.type === 'switch-plugin-mode') {
+  if (msg.type === 'subview-state-change') {
+    setRetextifierDrawerOpen(!!msg.retextifierOpen);
+    isSmartSwapDrawerOpen = !!msg.smartSwapOpen;
+    return;
+  } else if (msg.type === 'switch-plugin-mode') {
     const targetMode = msg.mode === 'generator' ? 'generator' : 'components';
     await launchPluginMode(targetMode);
     return;
@@ -1077,6 +1116,9 @@ const handleUiMessage = async (msg: any) => {
       type: 'page-background-scan',
       pages: scan.pages,
       currentPageHex: scan.currentPageHex,
+      fileName: scan.fileName,
+      suggestedFileNameTitleCase: scan.suggestedFileNameTitleCase,
+      needsFileTitleCase: scan.needsFileTitleCase,
     });
   } else if (msg.type === 'apply-pages-background') {
     const applyBackground = msg.applyBackground !== false;
@@ -1103,6 +1145,9 @@ const handleUiMessage = async (msg: any) => {
         type: 'page-background-applied',
         pages: result.pages,
         currentPageHex: result.currentPageHex,
+        fileName: result.fileName,
+        suggestedFileNameTitleCase: result.suggestedFileNameTitleCase,
+        needsFileTitleCase: result.needsFileTitleCase,
         updatedBackgroundCount: result.updatedBackgroundCount,
         renamedPagesCount: result.renamedPagesCount,
         appliedHex: result.appliedHex,
@@ -1397,7 +1442,7 @@ const handleUiMessage = async (msg: any) => {
       figma.notify('Google Gemini disconnected.');
     }
   } else if (msg.type === 'get-retextifier-layers') {
-    const textLayers = scanDeepTextLayers();
+    const textLayers = await scanDeepTextLayers();
     figma.ui.postMessage({
       type: 'retextifier-layers',
       layers: textLayers,
@@ -1443,7 +1488,7 @@ const handleUiMessage = async (msg: any) => {
       figma.ui.postMessage({
         type: 'retextifier-applied',
         updatedCount,
-        layers: scanDeepTextLayers(),
+        layers: await scanDeepTextLayers(),
       });
     } else if (errorCount > 0) {
       figma.notify('Nie udało się zaktualizować warstw (brak czcionki lub błąd warstwy).', { error: true });
@@ -1888,7 +1933,7 @@ const handleUiMessage = async (msg: any) => {
   } else if (msg.type === 'convert-case') {
     await handleConvertCase(msg.caseType, !!msg.skipInstances);
   } else if (msg.type === 'smart-swap-get-selection') {
-    await sendSmartSwapSelectionToUI();
+    await sendSmartSwapSelectionToUI(true);
   } else if (msg.type === 'smart-swap-check-match') {
     try {
       const srcNode = await figma.getNodeByIdAsync(msg.sourceId);

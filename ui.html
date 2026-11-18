@@ -542,6 +542,219 @@
       white-space: nowrap;
     }
 
+    /* Unified Master Component Pipeline Studio */
+    .master-pipeline-card {
+      padding: 10px;
+      background: #1B1B20;
+      border: 1px solid rgba(168, 85, 247, 0.25);
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      box-sizing: border-box;
+    }
+
+    .master-pipeline-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .master-pipeline-target {
+      font-size: 10px;
+      color: #A1A1AA;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .pipeline-steps-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .pipeline-step-card {
+      background: #141417;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 8px;
+      padding: 6px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+
+    .pipeline-step-card.is-active {
+      background: rgba(168, 85, 247, 0.07);
+      border-color: rgba(168, 85, 247, 0.34);
+    }
+
+    .pipeline-step-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 22px;
+    }
+
+    .pipeline-step-toggle {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      cursor: pointer;
+      user-select: none;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .pipeline-step-title {
+      font-size: 11px;
+      font-weight: 500;
+      color: #8E8E93;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      transition: color 0.15s ease;
+    }
+
+    .pipeline-step-card.is-active .pipeline-step-title {
+      color: #F4F4F5;
+      font-weight: 600;
+    }
+
+    .pipeline-step-card.is-active .ui3-chip-check {
+      background: #A855F7;
+      border-color: #A855F7;
+    }
+
+    .pipeline-step-card.is-active .ui3-chip-check-icon {
+      display: block;
+    }
+
+    .pipeline-mini-seg {
+      display: inline-flex;
+      background: #0F0F12;
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 6px;
+      padding: 2px;
+      gap: 2px;
+      flex-shrink: 0;
+    }
+
+    .pipeline-mini-btn {
+      border: none;
+      background: transparent;
+      color: #71717A;
+      font-family: inherit;
+      font-size: 9.5px;
+      font-weight: 600;
+      padding: 2.5px 7px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .pipeline-mini-btn:hover {
+      color: #E4E4E7;
+    }
+
+    .pipeline-mini-btn.active {
+      background: #27272E;
+      color: #F4F4F5;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    }
+
+    .pipeline-mini-btn.active.is-emerald {
+      background: rgba(16, 185, 129, 0.2);
+      color: #6EE7B7;
+    }
+
+    .pipeline-mini-btn.active.is-purple {
+      background: rgba(168, 85, 247, 0.24);
+      color: #E9D5FF;
+    }
+
+    .pipeline-token-subpanel {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding-top: 6px;
+      border-top: 1px dashed rgba(255, 255, 255, 0.08);
+    }
+
+    .pipeline-token-kinds {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5px;
+    }
+
+    .pipeline-token-chip {
+      padding: 4.5px 6px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      background: #1B1B20;
+      color: #71717A;
+      font-size: 10px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.15s ease;
+    }
+
+    .pipeline-token-chip:hover {
+      border-color: rgba(255, 255, 255, 0.15);
+      color: #D4D4D8;
+    }
+
+    .pipeline-token-chip.is-checked {
+      background: rgba(16, 185, 129, 0.14);
+      border-color: rgba(16, 185, 129, 0.42);
+      color: #A7F3D0;
+    }
+
+    .pipeline-font-helper {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      transition: opacity 0.15s ease;
+    }
+
+    .pipeline-cta-btn {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(168, 85, 247, 0.5);
+      background: linear-gradient(135deg, rgba(168, 85, 247, 0.24), rgba(16, 185, 129, 0.16));
+      color: #F4F4F5;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      box-sizing: border-box;
+    }
+
+    .pipeline-cta-btn:hover:not(:disabled) {
+      border-color: rgba(192, 132, 252, 0.8);
+      background: linear-gradient(135deg, rgba(168, 85, 247, 0.34), rgba(16, 185, 129, 0.22));
+      box-shadow: 0 3px 12px rgba(168, 85, 247, 0.22);
+    }
+
+    .pipeline-cta-btn:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
     .launcher-section {
       display: flex;
       flex-direction: column;
@@ -3887,211 +4100,261 @@
       <!-- Section 1: ⚡ Master Component Setup & AI -->
       <div class="launcher-section" data-section="ai">
         <div class="launcher-section-header">⚡ Master Component Setup &amp; AI</div>
-        <div class="bento-grid">
-          <!-- Hero Button: Run Master Setup -->
-          <button id="btnRunMasterSetup" class="action-tile action-tile-ai" onclick="handleRunMasterSetup()" data-tool-name="Master Component Setup" data-tool-desc="All-in-One Pipeline: Setup, Tokens, Styles, Naming & Props" title="Uruchom zintegrowany potok Master Component Setup (Single-Pass)">
-            <div class="tile-icon-box" style="background: linear-gradient(135deg, rgba(168, 85, 247, 0.25), rgba(16, 185, 129, 0.25)); border-color: rgba(168, 85, 247, 0.45); color: #E9D5FF;">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-              </svg>
-            </div>
-            <div class="tile-info">
-              <div class="tile-title-row">
-                <span class="tile-title"><span id="masterSetupBtnText">⚡ Run Master Setup</span></span>
-                <span class="ai-badge" id="masterSetupActiveStepsBadge">1-4</span>
-              </div>
-              <span id="masterSetupTargetDesc" class="tile-desc">Target: Auto-detects selection</span>
-            </div>
-          </button>
 
-          <!-- AI Description -->
-          <button id="btnAiDescription" class="action-tile action-tile-ai" onclick="openSubview('ai-description')" data-tool-name="AI Description" data-tool-desc="Generate component docs & specs" title="Generate component docs & specs">
-            <div class="tile-icon-box">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
-                <polyline points="14 2 14 8 20 8"/>
-                <line x1="16" y1="13" x2="8" y2="13"/>
-                <line x1="16" y1="17" x2="8" y2="17"/>
-                <line x1="10" y1="9" x2="8" y2="9"/>
-              </svg>
+        <!-- Unified Master Component Pipeline Studio -->
+        <div class="master-pipeline-card">
+          <div class="master-pipeline-top">
+            <div style="display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1;">
+              <span style="font-size: 11px; font-weight: 700; color: #F4F4F5; white-space: nowrap;">Pipeline</span>
+              <span id="masterSetupTargetDesc" class="master-pipeline-target">Target: Auto-detects selection</span>
             </div>
-            <div class="tile-info">
-              <div class="tile-title-row">
-                <span class="tile-title"><span id="aiBtnIcon" style="display:none;"></span><span id="aiBtnText">AI Description</span></span>
-                <span class="ai-badge">AI</span>
-              </div>
-              <span class="tile-desc">Generate component docs & specs</span>
-            </div>
-          </button>
-        </div>
+            <span class="ai-badge" id="masterSetupActiveStepsBadge">1-4</span>
+          </div>
 
-        <!-- Unified Master Component Pipeline Control Center -->
-        <div class="auto-props-card" style="gap: 8px; padding: 9px 10px;">
-          <!-- Quick Mode Presets (1-Click Pills) -->
-          <div style="display: flex; align-items: center; justify-content: space-between; gap: 5px;">
-            <button type="button" id="presetFullPipeline" class="ui3-config-pill" onclick="selectMasterPreset('full')" style="flex: 1; justify-content: center; font-weight: 600; background: rgba(168, 85, 247, 0.18); border-color: rgba(168, 85, 247, 0.45); color: #E9D5FF;">
-              🔥 Full Pipeline (1-4)
+          <!-- Quick Mode Presets -->
+          <div class="auto-props-segmented">
+            <button type="button" id="presetFullPipeline" class="auto-props-segmented-item active" style="border:none; font-family:inherit;" onclick="selectMasterPreset('full')">
+              🔥 Full (1–4)
             </button>
-            <button type="button" id="presetTokensOnly" class="ui3-config-pill" onclick="selectMasterPreset('tokens')" style="flex: 1; justify-content: center;">
-              🎨 Tokens &amp; Styles Only
+            <button type="button" id="presetTokensOnly" class="auto-props-segmented-item" style="border:none; font-family:inherit;" onclick="selectMasterPreset('tokens')">
+              🎨 Tokens &amp; Styles
             </button>
-            <button type="button" id="presetNamingPropsOnly" class="ui3-config-pill" onclick="selectMasterPreset('naming')" style="flex: 1; justify-content: center;">
-              ⚙️ Naming &amp; Props Only
+            <button type="button" id="presetNamingPropsOnly" class="auto-props-segmented-item" style="border:none; font-family:inherit;" onclick="selectMasterPreset('naming')">
+              ⚙️ Naming &amp; Props
             </button>
           </div>
 
-          <!-- 2x2 Pipeline Steps Grid -->
-          <div class="auto-props-chips-grid" style="gap: 6px;">
-            <!-- Step 1: Container & Set Setup -->
-            <label class="ui3-chip-card is-checked" id="chipStep1Setup" style="justify-content: space-between; padding-right: 6px;">
-              <input type="checkbox" id="chkMasterStep1" checked style="display:none;" onchange="syncMasterPipelineStepsUI()" />
-              <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
-                <div class="ui3-chip-check">
-                  <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
-                  </svg>
+          <!-- Clean 4-Step Pipeline List -->
+          <div class="pipeline-steps-list">
+            <!-- Step 1: Container & Set -->
+            <div class="pipeline-step-card is-active" id="chipStep1Setup">
+              <div class="pipeline-step-row">
+                <label class="pipeline-step-toggle">
+                  <input type="checkbox" id="chkMasterStep1" checked style="display:none;" onchange="syncMasterPipelineStepsUI()" />
+                  <div class="ui3-chip-check">
+                    <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
+                    </svg>
+                  </div>
+                  <span class="pipeline-step-title">1. Container &amp; Set</span>
+                </label>
+                <div class="pipeline-mini-seg" title="Tryb konfiguracji dla Component Set">
+                  <button type="button" id="btnStep1ModeFull" class="pipeline-mini-btn active is-purple" onclick="setSmartSetupSetMode('full')">Full</button>
+                  <button type="button" id="btnStep1ModeSetOnly" class="pipeline-mini-btn" onclick="setSmartSetupSetMode('set-only')">Set Only</button>
                 </div>
-                <span class="ui3-chip-label">1. Container &amp; Set</span>
               </div>
-              <span id="smartSetupModePill" class="smart-setup-pill-toggle" onclick="event.preventDefault(); event.stopPropagation(); toggleSmartSetupSetMode()" title="Przełącz tryb konfiguracji dla Component Set: Full (wraz z wariantami) / Set Only (tylko kontener Setu)">Full</span>
-            </label>
+            </div>
 
-            <!-- Step 2: Bind Tokens & Styles -->
-            <label class="ui3-chip-card is-checked" id="chipStep2Tokens" style="justify-content: space-between; padding-right: 6px;">
-              <input type="checkbox" id="chkMasterStep2" checked style="display:none;" onchange="syncMasterPipelineStepsUI()" />
-              <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
-                <div class="ui3-chip-check">
-                  <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
-                  </svg>
+            <!-- Step 2: Tokens & Styles -->
+            <div class="pipeline-step-card is-active" id="chipStep2Tokens">
+              <div class="pipeline-step-row">
+                <label class="pipeline-step-toggle">
+                  <input type="checkbox" id="chkMasterStep2" checked style="display:none;" onchange="syncMasterPipelineStepsUI()" />
+                  <div class="ui3-chip-check">
+                    <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
+                    </svg>
+                  </div>
+                  <span class="pipeline-step-title">2. Tokens &amp; Styles</span>
+                </label>
+                <div class="pipeline-mini-seg" title="Tryb dopasowania wartości tokenów">
+                  <button type="button" id="btnAutoBindSnap" class="pipeline-mini-btn active is-emerald" onclick="setAutoBindMode('snap')">Snap</button>
+                  <button type="button" id="btnAutoBindExact" class="pipeline-mini-btn" onclick="setAutoBindMode('exact')">Exact</button>
                 </div>
-                <span class="ui3-chip-label">2. Tokens &amp; Styles</span>
               </div>
-              <span id="autoBindModePill" class="smart-setup-pill-toggle is-snap" onclick="event.preventDefault(); event.stopPropagation(); toggleAutoBindMode()" title="Przełącz tryb dopasowania: Snap (dociągnij do najbliższego tokenu) / Exact (1:1)">Snap</span>
-            </label>
 
-            <!-- Step 3: Smart Layer Naming -->
-            <label class="ui3-chip-card is-checked" id="chipStep3Naming" style="justify-content: space-between; padding-right: 6px;">
-              <input type="checkbox" id="chkMasterStep3" checked style="display:none;" onchange="syncMasterPipelineStepsUI()" />
-              <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
-                <div class="ui3-chip-check">
-                  <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
-                  </svg>
+              <div id="tokensSubOptions" class="pipeline-token-subpanel">
+                <div class="pipeline-token-kinds">
+                  <label class="pipeline-token-chip is-checked" id="chipBindMetrics" title="Przypinaj zmienne liczbowe z Metrics (padding, gap, radius, stroke)">
+                    <input type="checkbox" id="chkBindMetrics" checked style="display:none;" onchange="syncTokenSubOptionsUI()" />
+                    <span>📐 Metrics</span>
+                  </label>
+                  <label class="pipeline-token-chip is-checked" id="chipBindColors" title="Przypinaj zmienne kolorów z Schemes (fills, strokes)">
+                    <input type="checkbox" id="chkBindColors" checked style="display:none;" onchange="syncTokenSubOptionsUI()" />
+                    <span>🎨 Colors</span>
+                  </label>
+                  <label class="pipeline-token-chip is-checked" id="chipBindTextStyles" title="Przypinaj style tekstowe (Typography)">
+                    <input type="checkbox" id="chkBindTextStyles" checked style="display:none;" onchange="syncTokenSubOptionsUI()" />
+                    <span>🔤 Fonts</span>
+                  </label>
                 </div>
-                <span class="ui3-chip-label">3. Layer Naming</span>
+
+                <div id="tokensFontHelperRow" class="pipeline-font-helper">
+                  <label style="display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: #a1a1aa; cursor: pointer; user-select: none;" title="Dopasuj style tekstowe po rozmiarze, wadze i interlinii niezależnie od rodziny fontu">
+                    <input type="checkbox" id="chkAutoBindIgnoreFontFamily" checked style="accent-color: #10b981; cursor: pointer; width: 11px; height: 11px;" />
+                    <span>Ignore font family</span>
+                  </label>
+                  <div style="display: inline-flex; align-items: center; gap: 4px;">
+                    <span id="libraryStylesCacheCountBadge" style="font-size: 9px; padding: 1.5px 5px; border-radius: 4px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: #a1a1aa; font-family: monospace; white-space: nowrap;">Cache: Empty</span>
+                    <button type="button" id="btnSyncLibraryStyles" onclick="handleSyncLibraryStyles()" style="font-size: 9px; padding: 2px 6px; background: rgba(56, 189, 248, 0.14); border: 1px solid rgba(56, 189, 248, 0.32); border-radius: 4px; color: #38bdf8; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;" title="Kliknij w pliku biblioteki DS, aby zapisać klucze stylów tekstowych do pamięci podręcznej pluginu">
+                      <span>📥 Cache DS</span>
+                    </button>
+                  </div>
+                </div>
               </div>
-              <span id="namingModePill" class="smart-setup-pill-toggle" onclick="event.preventDefault(); event.stopPropagation(); toggleMasterNamingMode()" title="Przełącz silnik nazywania warstw: Fast TS (0.1s deterministyczny) / AI (LLM)">Fast TS</span>
-            </label>
+            </div>
+
+            <!-- Step 3: Layer Naming -->
+            <div class="pipeline-step-card is-active" id="chipStep3Naming">
+              <div class="pipeline-step-row">
+                <label class="pipeline-step-toggle">
+                  <input type="checkbox" id="chkMasterStep3" checked style="display:none;" onchange="syncMasterPipelineStepsUI()" />
+                  <div class="ui3-chip-check">
+                    <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
+                    </svg>
+                  </div>
+                  <span class="pipeline-step-title">3. Layer Naming</span>
+                </label>
+                <div class="pipeline-mini-seg" title="Silnik nazywania warstw">
+                  <button type="button" id="btnNamingFast" class="pipeline-mini-btn active is-purple" onclick="setMasterNamingMode('fast')">Fast TS</button>
+                  <button type="button" id="btnNamingAi" class="pipeline-mini-btn" onclick="setMasterNamingMode('ai')">AI</button>
+                </div>
+              </div>
+            </div>
 
             <!-- Step 4: Props, Slots & ../Item -->
-            <label class="ui3-chip-card is-checked" id="chipStep4Props" style="justify-content: space-between; padding-right: 6px;">
-              <input type="checkbox" id="chkAutoPropsAndExtract" checked style="display:none;" onchange="syncMasterPipelineStepsUI(); toggleAutoPropsSubOptions()" />
-              <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
-                <div class="ui3-chip-check">
-                  <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
-                  </svg>
-                </div>
-                <span class="ui3-chip-label">4. Props &amp; ../Item</span>
+            <div class="pipeline-step-card is-active" id="chipStep4Props">
+              <div class="pipeline-step-row">
+                <label class="pipeline-step-toggle">
+                  <input type="checkbox" id="chkAutoPropsAndExtract" checked style="display:none;" onchange="syncMasterPipelineStepsUI(); toggleAutoPropsSubOptions()" />
+                  <div class="ui3-chip-check">
+                    <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
+                    </svg>
+                  </div>
+                  <span class="pipeline-step-title">4. Props, Slots &amp; ../Item</span>
+                </label>
+                <button type="button" id="btnToggleAutoPropsDetails" onclick="toggleAutoPropsExpanded()" class="pipeline-mini-btn" style="background: #0F0F12; border: 1px solid rgba(255,255,255,0.08); padding: 3px 8px;" title="Pokaż / ukryj szczegółowe opcje właściwości i Slotów">
+                  ⚙️ Opcje ▾
+                </button>
               </div>
-              <button type="button" id="btnToggleAutoPropsDetails" onclick="event.preventDefault(); event.stopPropagation(); toggleAutoPropsExpanded()" class="smart-setup-pill-toggle" style="border: 1px solid rgba(255,255,255,0.14); cursor: pointer;" title="Pokaż / ukryj szczegółowe opcje właściwości i Slotów">
-                ⚙️ Opcje
-              </button>
-            </label>
-          </div>
 
-          <!-- Compact DS Styles Cache & Font Matching Row -->
-          <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06); gap: 6px;">
-            <label style="display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: #a1a1aa; cursor: pointer; user-select: none;" title="Dopasuj style tekstowe po rozmiarze, wadze i interlinii niezależnie od rodziny fontu">
-              <input type="checkbox" id="chkAutoBindIgnoreFontFamily" checked style="accent-color: #10b981; cursor: pointer; width: 12px; height: 12px;" />
-              <span>Ignore font family</span>
-            </label>
-            <div style="display: inline-flex; align-items: center; gap: 5px;">
-              <span id="libraryStylesCacheCountBadge" style="font-size: 9px; padding: 1.5px 5px; border-radius: 4px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: #a1a1aa; font-family: monospace; white-space: nowrap;">Cache: Empty</span>
-              <button type="button" id="btnSyncLibraryStyles" onclick="handleSyncLibraryStyles()" style="font-size: 9px; padding: 2px 6px; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 4px; color: #38bdf8; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;" title="Kliknij w pliku biblioteki DS, aby zapisać klucze stylów tekstowych do pamięci podręcznej pluginu">
-                <span>📥 Cache DS Styles</span>
-              </button>
+              <div id="autoPropsSubOptions" class="auto-props-sub-options" style="display: none; padding-top: 6px; border-top: 1px dashed rgba(255,255,255,0.08);">
+                <!-- Mode Segmented Control -->
+                <div class="auto-props-segmented">
+                  <label class="auto-props-segmented-item active" id="lblAutoPropsFull" onclick="selectAutoPropsMode('full')">
+                    <input type="radio" name="autoPropsMode" id="radAutoPropsFull" value="full" checked style="display:none;" onchange="syncAutoPropsModeUI()" />
+                    <span>⚡ Pełne Auto</span>
+                  </label>
+                  <label class="auto-props-segmented-item" id="lblAutoPropsReview" onclick="selectAutoPropsMode('review')">
+                    <input type="radio" name="autoPropsMode" id="radAutoPropsReview" value="review" style="display:none;" onchange="syncAutoPropsModeUI()" />
+                    <span>👁️ Zapytaj o decyzje (Review)</span>
+                  </label>
+                </div>
+
+                <!-- 2x3 Chips Grid -->
+                <div class="auto-props-chips-grid">
+                  <label class="ui3-chip-card is-checked" id="chipAutoPropSwap">
+                    <input type="checkbox" id="prop-instance-swap" checked style="display:none;" onchange="syncChipCardUI(this, 'chipAutoPropSwap')" />
+                    <div class="ui3-chip-check">
+                      <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
+                      </svg>
+                    </div>
+                    <span class="ui3-chip-label">Instance Swap</span>
+                  </label>
+
+                  <label class="ui3-chip-card is-checked" id="chipAutoPropShow">
+                    <input type="checkbox" id="prop-instance-show" checked style="display:none;" onchange="syncChipCardUI(this, 'chipAutoPropShow')" />
+                    <div class="ui3-chip-check">
+                      <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
+                      </svg>
+                    </div>
+                    <span class="ui3-chip-label">Widoczność instancji (Show)</span>
+                  </label>
+
+                  <label class="ui3-chip-card is-checked" id="chipAutoPropText">
+                    <input type="checkbox" id="chkAutoPropText" checked style="display:none;" onchange="syncChipCardUI(this, 'chipAutoPropText')" />
+                    <div class="ui3-chip-check">
+                      <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
+                      </svg>
+                    </div>
+                    <span class="ui3-chip-label">Teksty (TEXT)</span>
+                  </label>
+
+                  <label class="ui3-chip-card" id="chipAutoPropTextVisibility">
+                    <input type="checkbox" id="chkAutoPropTextVisibility" style="display:none;" onchange="syncChipCardUI(this, 'chipAutoPropTextVisibility')" />
+                    <div class="ui3-chip-check">
+                      <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
+                      </svg>
+                    </div>
+                    <span class="ui3-chip-label">Widoczność tekstów (Show)</span>
+                  </label>
+
+                  <label class="ui3-chip-card is-checked" id="chipAutoPropSlots">
+                    <input type="checkbox" id="chkAutoPropSlots" checked style="display:none;" onchange="syncChipCardUI(this, 'chipAutoPropSlots')" />
+                    <div class="ui3-chip-check">
+                      <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
+                      </svg>
+                    </div>
+                    <span class="ui3-chip-label">Wydziel .../Item &amp; Slot</span>
+                  </label>
+
+                  <label class="ui3-chip-card" id="chipAutoPropNested">
+                    <input type="checkbox" id="chkAutoPropNested" style="display:none;" onchange="syncChipCardUI(this, 'chipAutoPropNested')" />
+                    <div class="ui3-chip-check">
+                      <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
+                      </svg>
+                    </div>
+                    <span class="ui3-chip-label">Nested Instances (Expose)</span>
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div id="autoPropsSubOptions" class="auto-props-sub-options" style="display: none; padding-top: 6px; border-top: 1px dashed rgba(255,255,255,0.08);">
-            <!-- Mode Segmented Control -->
-            <div class="auto-props-segmented">
-              <label class="auto-props-segmented-item active" id="lblAutoPropsFull" onclick="selectAutoPropsMode('full')">
-                <input type="radio" name="autoPropsMode" id="radAutoPropsFull" value="full" checked style="display:none;" onchange="syncAutoPropsModeUI()" />
-                <span>⚡ Pełne Auto</span>
+          <!-- Post-Setup Placement Choice -->
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <span style="font-size: 10px; color: #A1A1AA; white-space: nowrap;">Po setupie:</span>
+            <div class="auto-props-segmented" style="flex: 1;">
+              <label class="auto-props-segmented-item active" id="lblMasterMoveComponents" onclick="selectMasterMoveToComponentsMode('move')" title="Przenieś Component / Component Set na stronę 🔷 Components i zostaw instancję">
+                <input type="radio" name="masterMoveMode" id="radMasterMoveComponents" value="move" checked style="display:none;" />
+                <span>📦 Move → Components</span>
               </label>
-              <label class="auto-props-segmented-item" id="lblAutoPropsReview" onclick="selectAutoPropsMode('review')">
-                <input type="radio" name="autoPropsMode" id="radAutoPropsReview" value="review" style="display:none;" onchange="syncAutoPropsModeUI()" />
-                <span>👁️ Zapytaj o decyzje (Review)</span>
-              </label>
-            </div>
-
-            <!-- 2x3 Chips Grid -->
-            <div class="auto-props-chips-grid">
-              <label class="ui3-chip-card is-checked" id="chipAutoPropSwap">
-                <input type="checkbox" id="prop-instance-swap" checked style="display:none;" onchange="syncChipCardUI(this, 'chipAutoPropSwap')" />
-                <div class="ui3-chip-check">
-                  <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
-                  </svg>
-                </div>
-                <span class="ui3-chip-label">Instance Swap</span>
-              </label>
-
-              <label class="ui3-chip-card is-checked" id="chipAutoPropShow">
-                <input type="checkbox" id="prop-instance-show" checked style="display:none;" onchange="syncChipCardUI(this, 'chipAutoPropShow')" />
-                <div class="ui3-chip-check">
-                  <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
-                  </svg>
-                </div>
-                <span class="ui3-chip-label">Widoczność instancji (Show)</span>
-              </label>
-
-              <label class="ui3-chip-card is-checked" id="chipAutoPropText">
-                <input type="checkbox" id="chkAutoPropText" checked style="display:none;" onchange="syncChipCardUI(this, 'chipAutoPropText')" />
-                <div class="ui3-chip-check">
-                  <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
-                  </svg>
-                </div>
-                <span class="ui3-chip-label">Teksty (TEXT)</span>
-              </label>
-
-              <label class="ui3-chip-card" id="chipAutoPropTextVisibility">
-                <input type="checkbox" id="chkAutoPropTextVisibility" style="display:none;" onchange="syncChipCardUI(this, 'chipAutoPropTextVisibility')" />
-                <div class="ui3-chip-check">
-                  <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
-                  </svg>
-                </div>
-                <span class="ui3-chip-label">Widoczność tekstów (Show)</span>
-              </label>
-
-              <label class="ui3-chip-card is-checked" id="chipAutoPropSlots">
-                <input type="checkbox" id="chkAutoPropSlots" checked style="display:none;" onchange="syncChipCardUI(this, 'chipAutoPropSlots')" />
-                <div class="ui3-chip-check">
-                  <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
-                  </svg>
-                </div>
-                <span class="ui3-chip-label">Wydziel .../Item &amp; Slot</span>
-              </label>
-
-              <label class="ui3-chip-card" id="chipAutoPropNested">
-                <input type="checkbox" id="chkAutoPropNested" style="display:none;" onchange="syncChipCardUI(this, 'chipAutoPropNested')" />
-                <div class="ui3-chip-check">
-                  <svg class="ui3-chip-check-icon" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="2.5 6 4.5 8.5 9.5 3.5"></polyline>
-                  </svg>
-                </div>
-                <span class="ui3-chip-label">Nested Instances (Expose)</span>
+              <label class="auto-props-segmented-item" id="lblMasterMoveNone" onclick="selectMasterMoveToComponentsMode('none')" title="Zostaw Component / Component Set na obecnej stronie (nic nie przenoś)">
+                <input type="radio" name="masterMoveMode" id="radMasterMoveNone" value="none" style="display:none;" />
+                <span>⏸️ Nic nie rób</span>
               </label>
             </div>
           </div>
+
+          <!-- Primary Action CTA -->
+          <button id="btnRunMasterSetup" class="action-tile pipeline-cta-btn" onclick="handleRunMasterSetup()" data-tool-name="Master Component Setup" data-tool-desc="All-in-One Pipeline: Setup, Tokens, Styles, Naming & Props" title="Uruchom zintegrowany potok Master Component Setup">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#E9D5FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+              </svg>
+              <span id="masterSetupBtnText" style="font-size: 12px; font-weight: 700;">⚡ Run Master Setup</span>
+            </div>
+            <span style="font-size: 10px; color: #D4D4D8; opacity: 0.85;">Uruchom →</span>
+          </button>
         </div>
+
+        <!-- AI Description Tool -->
+        <button id="btnAiDescription" class="action-tile action-tile-ai" onclick="openSubview('ai-description')" data-tool-name="AI Description" data-tool-desc="Generate component docs & specs" title="Generate component docs & specs" style="margin-top: 8px; width: 100%;">
+          <div class="tile-icon-box">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+              <line x1="10" y1="9" x2="8" y2="9"/>
+            </svg>
+          </div>
+          <div class="tile-info">
+            <div class="tile-title-row">
+              <span class="tile-title"><span id="aiBtnIcon" style="display:none;"></span><span id="aiBtnText">AI Description</span></span>
+              <span class="ai-badge">AI</span>
+            </div>
+            <span class="tile-desc">Generate component docs & specs</span>
+          </div>
+        </button>
       </div>
 
       <!-- Section 1.5: 💻 CODE & IDE SYNC -->
@@ -4162,16 +4425,16 @@
             </div>
           </button>
 
-          <!-- Tile 5: Multi-Page Background & Title Case -->
-          <button id="btnMultiPageBg" class="action-tile action-tile-architecture" onclick="openSubview('page-background')" data-tool-name="Multi-Page Background & Title Case" data-tool-desc="Set canvas hex for all pages & normalize names" title="Multi-Page Background Color Picker & Page Name Title Case" style="grid-column: span 2;">
+          <!-- Tile 5: Page Setup -->
+          <button id="btnMultiPageBg" class="action-tile action-tile-architecture" onclick="openSubview('page-background')" data-tool-name="Page Setup" data-tool-desc="Set canvas hex, Title Case pages &amp; file name" title="Page Setup: Canvas Background, Title Case Pages &amp; File Name" style="grid-column: span 2;">
             <div class="tile-icon-box">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
               </svg>
             </div>
             <div class="tile-info">
-              <span class="tile-title">Multi-Page Background</span>
-              <span class="tile-desc">Set canvas hex for all pages &amp; Title Case page names</span>
+              <span class="tile-title">Page Setup</span>
+              <span class="tile-desc">Set canvas hex, Title Case pages &amp; file name</span>
             </div>
           </button>
         </div>
@@ -4852,19 +5115,19 @@
     </div>
   </div>
 
-  <!-- Multi-Page Background & Title Case Drawer -->
+  <!-- Page Setup Drawer -->
   <div id="pageBgDrawer" class="page-bg-drawer">
     <div class="font-replacer-header">
       <div class="font-replacer-title">
         <span>🎨</span>
-        <span>Multi-Page Background</span>
+        <span>Page Setup</span>
         <span id="pageBgCountBadge" class="selection-info-badge">0 pages</span>
       </div>
       <div style="display: flex; align-items: center; gap: 6px;">
         <button type="button" class="font-replacer-rescan-btn" onclick="refreshPageBackgroundScan()" title="Scan all pages again">
           <span>🔄</span> Rescan
         </button>
-        <button class="btn-icon-tiny" onclick="closeCurrentSubview()" title="Close Multi-Page Background">✕</button>
+        <button class="btn-icon-tiny" onclick="closeCurrentSubview()" title="Close Page Setup">✕</button>
       </div>
     </div>
 
@@ -4897,6 +5160,19 @@
         </button>
         <button type="button" class="page-bg-secondary-btn" onclick="applyPageTitleCaseOnly()" title="Only rename pages to Title Case without changing background color">
           <span>🔤 Title Case Only</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="page-bg-card" style="gap: 6px; padding: 10px 12px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+        <div class="page-bg-item-names" style="min-width: 0; flex: 1;">
+          <span style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: #71717A;">Figma File Name (Title Case)</span>
+          <span id="pageSetupFileNamePreview" class="page-bg-item-name" style="margin-top: 2px;">—</span>
+          <span id="pageSetupFileNameSuggested" class="page-bg-item-rename" style="display: none;"></span>
+        </div>
+        <button type="button" id="btnCopyFileNameTitleCase" class="page-bg-secondary-btn" onclick="copyFileNameTitleCase()" title="Figma API nie pozwala zmieniać nazwy pliku automatycznie — skopiuj nazwę w Title Case">
+          <span>📋 Kopiuj</span>
         </button>
       </div>
     </div>
@@ -5455,11 +5731,18 @@
         if (pageBgDrawer) pageBgDrawer.classList.add('open');
         if (btnMultiPageBg) btnMultiPageBg.classList.add('active');
         if (stickyIcon) stickyIcon.textContent = '🎨';
-        if (stickyText) stickyText.textContent = 'Multi-Page Background';
+        if (stickyText) stickyText.textContent = 'Page Setup';
         initPageBackgroundView();
       }
 
       updateWindowSize();
+      parent.postMessage({
+        pluginMessage: {
+          type: 'subview-state-change',
+          retextifierOpen: viewName === 'retextifier',
+          smartSwapOpen: viewName === 'smart-swap'
+        }
+      }, '*');
     }
 
     function closeCurrentSubview() {
@@ -5480,6 +5763,13 @@
       if (compactView) compactView.style.display = 'flex';
 
       updateWindowSize();
+      parent.postMessage({
+        pluginMessage: {
+          type: 'subview-state-change',
+          retextifierOpen: false,
+          smartSwapOpen: false
+        }
+      }, '*');
     }
 
     function openAuditView() {
@@ -5518,6 +5808,13 @@
         smartSwapDrawer.classList.remove('open');
         if (typeof btnSmartSwap !== 'undefined' && btnSmartSwap) btnSmartSwap.classList.remove('active');
       }
+      parent.postMessage({
+        pluginMessage: {
+          type: 'subview-state-change',
+          retextifierOpen: false,
+          smartSwapOpen: false
+        }
+      }, '*');
       if (typeof fontReplacerDrawer !== 'undefined' && fontReplacerDrawer && fontReplacerDrawer.classList.contains('open')) {
         fontReplacerDrawer.classList.remove('open');
         if (typeof btnFontReplacer !== 'undefined' && btnFontReplacer) btnFontReplacer.classList.remove('active');
@@ -5841,6 +6138,64 @@
     const pageBgDrawer = document.getElementById('pageBgDrawer');
     let pageBgCurrentHex = '#1E1E1E';
     let pageBgHasUserEditedHex = false;
+    let pageSetupSuggestedFileName = '';
+
+    function renderPageSetupFileName(fileName, suggestedTitleCase, needsTitleCase) {
+      const currentEl = document.getElementById('pageSetupFileNamePreview');
+      const suggestedEl = document.getElementById('pageSetupFileNameSuggested');
+      const copyBtn = document.getElementById('btnCopyFileNameTitleCase');
+      const cleanName = typeof fileName === 'string' ? fileName : '';
+      const targetName = typeof suggestedTitleCase === 'string' && suggestedTitleCase ? suggestedTitleCase : cleanName;
+      pageSetupSuggestedFileName = targetName;
+
+      if (currentEl) {
+        currentEl.textContent = cleanName || 'Untitled';
+      }
+      if (suggestedEl) {
+        if (needsTitleCase && targetName && targetName !== cleanName) {
+          suggestedEl.textContent = `→ ${targetName}`;
+          suggestedEl.style.display = 'inline';
+        } else {
+          suggestedEl.textContent = '✓ Nazwa pliku jest już w Title Case';
+          suggestedEl.style.display = 'inline';
+        }
+      }
+      if (copyBtn) {
+        copyBtn.disabled = !targetName;
+      }
+    }
+
+    async function copyFileNameTitleCase() {
+      const textToCopy = pageSetupSuggestedFileName;
+      if (!textToCopy) return;
+      let copied = false;
+      try {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          await navigator.clipboard.writeText(textToCopy);
+          copied = true;
+        }
+      } catch (e) {}
+
+      if (!copied) {
+        try {
+          const textarea = document.createElement('textarea');
+          textarea.value = textToCopy;
+          textarea.setAttribute('readonly', '');
+          textarea.style.position = 'fixed';
+          textarea.style.opacity = '0';
+          document.body.appendChild(textarea);
+          textarea.select();
+          copied = document.execCommand('copy');
+          document.body.removeChild(textarea);
+        } catch (e) {}
+      }
+
+      if (copied) {
+        showToast(`📋 Skopiowano nazwę pliku: ${textToCopy}`, false);
+      } else {
+        showToast('Nie udało się skopiować nazwy pliku do schowka.', true);
+      }
+    }
 
     function normalizeUiHex(rawHex) {
       const clean = (rawHex || '').trim().replace(/^#/, '');
@@ -6610,14 +6965,17 @@
       syncTargetName: null
     };
 
-    function toggleSmartSetupSetMode() {
-      smartSetupSetMode = smartSetupSetMode === 'full' ? 'set-only' : 'full';
-      const pill = document.getElementById('smartSetupModePill');
-      if (pill) {
-        pill.textContent = smartSetupSetMode === 'full' ? 'Full' : 'Set Only';
-        pill.classList.toggle('is-set-only', smartSetupSetMode === 'set-only');
-      }
+    function setSmartSetupSetMode(mode) {
+      smartSetupSetMode = mode === 'set-only' ? 'set-only' : 'full';
+      const btnFull = document.getElementById('btnStep1ModeFull');
+      const btnSetOnly = document.getElementById('btnStep1ModeSetOnly');
+      if (btnFull) btnFull.classList.toggle('active', smartSetupSetMode === 'full');
+      if (btnSetOnly) btnSetOnly.classList.toggle('active', smartSetupSetMode === 'set-only');
       updateArchitectureContextDescriptions();
+    }
+
+    function toggleSmartSetupSetMode() {
+      setSmartSetupSetMode(smartSetupSetMode === 'full' ? 'set-only' : 'full');
     }
 
     function updateArchitectureContextDescriptions() {
@@ -6693,23 +7051,52 @@
     }
 
     let autoBindMode = 'snap';
+    function setAutoBindMode(mode) {
+      autoBindMode = mode === 'exact' ? 'exact' : 'snap';
+      const btnSnap = document.getElementById('btnAutoBindSnap');
+      const btnExact = document.getElementById('btnAutoBindExact');
+      if (btnSnap) btnSnap.classList.toggle('active', autoBindMode === 'snap');
+      if (btnExact) btnExact.classList.toggle('active', autoBindMode === 'exact');
+    }
     function toggleAutoBindMode() {
-      autoBindMode = autoBindMode === 'exact' ? 'snap' : 'exact';
-      const pill = document.getElementById('autoBindModePill');
-      if (pill) {
-        pill.textContent = autoBindMode === 'exact' ? 'Exact' : 'Snap';
-        pill.classList.toggle('is-snap', autoBindMode === 'snap');
+      setAutoBindMode(autoBindMode === 'exact' ? 'snap' : 'exact');
+    }
+
+    function syncTokenSubOptionsUI() {
+      const s2 = Boolean(document.getElementById('chkMasterStep2')?.checked);
+      const subPanel = document.getElementById('tokensSubOptions');
+      const mChk = document.getElementById('chkBindMetrics');
+      const cChk = document.getElementById('chkBindColors');
+      const tChk = document.getElementById('chkBindTextStyles');
+
+      const chipM = document.getElementById('chipBindMetrics');
+      const chipC = document.getElementById('chipBindColors');
+      const chipT = document.getElementById('chipBindTextStyles');
+      if (chipM && mChk) chipM.classList.toggle('is-checked', !!mChk.checked);
+      if (chipC && cChk) chipC.classList.toggle('is-checked', !!cChk.checked);
+      if (chipT && tChk) chipT.classList.toggle('is-checked', !!tChk.checked);
+
+      if (subPanel) {
+        subPanel.style.display = s2 ? 'flex' : 'none';
+      }
+
+      const fontHelper = document.getElementById('tokensFontHelperRow');
+      if (fontHelper && tChk) {
+        fontHelper.style.opacity = tChk.checked ? '1' : '0.4';
+        fontHelper.style.pointerEvents = tChk.checked ? 'auto' : 'none';
       }
     }
 
     let masterNamingMode = 'fast'; // 'fast' | 'ai'
+    function setMasterNamingMode(mode) {
+      masterNamingMode = mode === 'ai' ? 'ai' : 'fast';
+      const btnFast = document.getElementById('btnNamingFast');
+      const btnAi = document.getElementById('btnNamingAi');
+      if (btnFast) btnFast.classList.toggle('active', masterNamingMode === 'fast');
+      if (btnAi) btnAi.classList.toggle('active', masterNamingMode === 'ai');
+    }
     function toggleMasterNamingMode() {
-      masterNamingMode = masterNamingMode === 'fast' ? 'ai' : 'fast';
-      const pill = document.getElementById('namingModePill');
-      if (pill) {
-        pill.textContent = masterNamingMode === 'fast' ? 'Fast TS' : 'AI';
-        pill.classList.toggle('is-set-only', masterNamingMode === 'ai');
-      }
+      setMasterNamingMode(masterNamingMode === 'fast' ? 'ai' : 'fast');
     }
 
     function selectMasterPreset(preset) {
@@ -6748,10 +7135,17 @@
       const c2 = document.getElementById('chipStep2Tokens');
       const c3 = document.getElementById('chipStep3Naming');
       const c4 = document.getElementById('chipStep4Props');
-      if (c1) c1.classList.toggle('is-checked', s1);
-      if (c2) c2.classList.toggle('is-checked', s2);
-      if (c3) c3.classList.toggle('is-checked', s3);
-      if (c4) c4.classList.toggle('is-checked', s4);
+      if (c1) c1.classList.toggle('is-active', s1);
+      if (c2) c2.classList.toggle('is-active', s2);
+      if (c3) c3.classList.toggle('is-active', s3);
+      if (c4) c4.classList.toggle('is-active', s4);
+
+      syncTokenSubOptionsUI();
+
+      if (!s4) {
+        const subBox = document.getElementById('autoPropsSubOptions');
+        if (subBox) subBox.style.display = 'none';
+      }
 
       const activeSteps = [];
       if (s1) activeSteps.push(1);
@@ -6770,17 +7164,23 @@
       const pTokens = document.getElementById('presetTokensOnly');
       const pNaming = document.getElementById('presetNamingPropsOnly');
 
-      const applyPresetStyle = (btn, active) => {
-        if (!btn) return;
-        btn.style.background = active ? 'rgba(168, 85, 247, 0.18)' : '';
-        btn.style.borderColor = active ? 'rgba(168, 85, 247, 0.45)' : '';
-        btn.style.color = active ? '#E9D5FF' : '';
-        btn.style.fontWeight = active ? '600' : '';
-      };
+      if (pFull) pFull.classList.toggle('active', s1 && s2 && s3 && s4);
+      if (pTokens) pTokens.classList.toggle('active', s1 && s2 && !s3 && !s4);
+      if (pNaming) pNaming.classList.toggle('active', !s1 && !s2 && s3 && s4);
+    }
 
-      applyPresetStyle(pFull, s1 && s2 && s3 && s4);
-      applyPresetStyle(pTokens, s1 && s2 && !s3 && !s4);
-      applyPresetStyle(pNaming, !s1 && !s2 && s3 && s4);
+    let masterMoveToComponentsMode = 'move'; // 'move' | 'none'
+
+    function selectMasterMoveToComponentsMode(mode) {
+      masterMoveToComponentsMode = mode === 'none' ? 'none' : 'move';
+      const lblMove = document.getElementById('lblMasterMoveComponents');
+      const lblNone = document.getElementById('lblMasterMoveNone');
+      const radMove = document.getElementById('radMasterMoveComponents');
+      const radNone = document.getElementById('radMasterMoveNone');
+      if (radMove) radMove.checked = masterMoveToComponentsMode === 'move';
+      if (radNone) radNone.checked = masterMoveToComponentsMode === 'none';
+      if (lblMove) lblMove.classList.toggle('active', masterMoveToComponentsMode === 'move');
+      if (lblNone) lblNone.classList.toggle('active', masterMoveToComponentsMode === 'none');
     }
 
     function handleRunMasterSetup() {
@@ -6791,8 +7191,17 @@
       const s3 = Boolean(document.getElementById('chkMasterStep3')?.checked);
       const s4 = Boolean(document.getElementById('chkAutoPropsAndExtract')?.checked);
 
+      const bindMetrics = document.getElementById('chkBindMetrics') ? Boolean(document.getElementById('chkBindMetrics').checked) : true;
+      const bindColors = document.getElementById('chkBindColors') ? Boolean(document.getElementById('chkBindColors').checked) : true;
+      const bindTextStyles = document.getElementById('chkBindTextStyles') ? Boolean(document.getElementById('chkBindTextStyles').checked) : true;
+
       if (!s1 && !s2 && !s3 && !s4) {
         showToast('Zaznacz przynajmniej jeden krok potoku Master Setup (1-4).', true);
+        return;
+      }
+
+      if (s2 && !bindMetrics && !bindColors && !bindTextStyles) {
+        showToast('W kroku 2 wybierz przynajmniej jeden typ: Metrics, Colors lub Fonts.', true);
         return;
       }
 
@@ -6839,12 +7248,16 @@
           step1Mode: smartSetupSetMode,
           step2BindTokens: s2,
           step2Mode: autoBindMode,
+          bindMetrics,
+          bindColors,
+          bindTextStyles,
           ignoreFontFamily,
           step3Naming: s3,
           namingMode: masterNamingMode,
           step4Props: s4,
           reviewAutoProps: Boolean(s4 && isReviewMode),
-          autoProps: autoPropsPayload
+          autoProps: autoPropsPayload,
+          moveToComponentsPage: masterMoveToComponentsMode === 'move'
         }
       }, '*');
     }
@@ -11193,9 +11606,11 @@ Instructions:
         if (!pageBgHasUserEditedHex && msg.currentPageHex) {
           setPageBgInputs(msg.currentPageHex);
         }
+        renderPageSetupFileName(msg.fileName, msg.suggestedFileNameTitleCase, msg.needsFileTitleCase);
         renderPageBgList(msg.pages || []);
       } else if (msg.type === 'page-background-applied') {
         pageBgCurrentHex = msg.currentPageHex || pageBgCurrentHex;
+        renderPageSetupFileName(msg.fileName, msg.suggestedFileNameTitleCase, msg.needsFileTitleCase);
         renderPageBgList(msg.pages || []);
         const summaryParts = [];
         if (msg.appliedHex) {
@@ -11420,16 +11835,31 @@ Instructions:
     let currentAutoPropsPreviewData = null;
 
     function toggleAutoPropsExpanded() {
+      const masterChk = document.getElementById('chkAutoPropsAndExtract');
       const box = document.getElementById('autoPropsSubOptions');
+      const toggleBtn = document.getElementById('btnToggleAutoPropsDetails');
       if (!box) return;
       const isHidden = box.style.display === 'none';
+      if (isHidden && masterChk && !masterChk.checked) {
+        masterChk.checked = true;
+        syncMasterPipelineStepsUI();
+        toggleAutoPropsSubOptions();
+      }
       box.style.display = isHidden ? 'flex' : 'none';
+      if (toggleBtn) {
+        toggleBtn.textContent = isHidden ? '⚙️ Opcje ▴' : '⚙️ Opcje ▾';
+      }
     }
 
     function toggleAutoPropsSubOptions() {
       const masterChk = document.getElementById('chkAutoPropsAndExtract');
       const box = document.getElementById('autoPropsSubOptions');
+      const toggleBtn = document.getElementById('btnToggleAutoPropsDetails');
       if (!masterChk || !box) return;
+      if (!masterChk.checked) {
+        box.style.display = 'none';
+        if (toggleBtn) toggleBtn.textContent = '⚙️ Opcje ▾';
+      }
       box.style.opacity = masterChk.checked ? '1' : '0.35';
       box.style.pointerEvents = masterChk.checked ? 'auto' : 'none';
     }

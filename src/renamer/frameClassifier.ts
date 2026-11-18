@@ -285,8 +285,16 @@ export function sanitizeLayerNameByContext(rawNewName: string, node: SceneNode, 
 }
 
 
-export async function sanitizeLayerNames(node: BaseNode, isPascalCaseOnly: boolean = false) {
+export async function sanitizeLayerNames(
+  node: BaseNode,
+  isPascalCaseOnly: boolean = false,
+  options?: { recursive?: boolean; visited?: Set<string> }
+) {
   if (!node) return;
+  if (options?.visited) {
+    if (options.visited.has(node.id)) return;
+    options.visited.add(node.id);
+  }
   if (isSystemOrIgnoredNode(node as any)) {
     return;
   }
@@ -358,9 +366,9 @@ export async function sanitizeLayerNames(node: BaseNode, isPascalCaseOnly: boole
     }
   }
 
-  if ('children' in node && (node as any).children) {
+  if (options?.recursive !== false && 'children' in node && (node as any).children) {
     for (const child of (node as any).children) {
-      await sanitizeLayerNames(child, isPascalCaseOnly);
+      await sanitizeLayerNames(child, isPascalCaseOnly, options);
     }
   }
 }

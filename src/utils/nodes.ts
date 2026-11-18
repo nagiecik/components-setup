@@ -495,3 +495,23 @@ export function purgeIgnoredPropertiesAndReferencesSync(propertyHost: ComponentN
 
   return deletedProps;
 }
+
+/**
+ * Yields control back to Figma's event loop so heavy batch operations stay responsive.
+ */
+export function yieldToMain(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+let selectionEventsSuppressedUntil = 0;
+
+export function suppressSelectionEvents(durationMs: number = 200): void {
+  const targetUntil = Date.now() + Math.max(0, durationMs);
+  if (targetUntil > selectionEventsSuppressedUntil) {
+    selectionEventsSuppressedUntil = targetUntil;
+  }
+}
+
+export function areSelectionEventsSuppressed(): boolean {
+  return Date.now() < selectionEventsSuppressedUntil;
+}

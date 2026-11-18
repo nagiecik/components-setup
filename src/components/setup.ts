@@ -1,4 +1,4 @@
-import { safeGetComponentPropertyDefinitions } from '../utils/nodes';
+import { safeGetComponentPropertyDefinitions, suppressSelectionEvents, yieldToMain } from '../utils/nodes';
 import {
   resolveComponentSetConflicts,
   sanitizeComponentProperties,
@@ -807,13 +807,26 @@ export async function runRenamePascalCaseLogic() {
     }
   }
 
-  // 2. Collect selected nodes and all their descendants (recursively, skipping instances)
-  function collectSubtree(n: BaseNode) {
-    if (!n) return;
+  // 2. Collect selected nodes and all their descendants iteratively (skipping instances)
+  const visitedCollect = new Set<string>();
+  const stack: BaseNode[] = [...selection];
+  let collectSteps = 0;
+
+  while (stack.length > 0) {
+    const n = stack.pop()!;
+    if (!n || (n.id && visitedCollect.has(n.id))) continue;
+    if (n.id) visitedCollect.add(n.id);
+
     if (n.type === 'INSTANCE') {
       // "oprócz instancji komponentów" - do not rename instances or traverse inside them
-      return;
+      continue;
     }
+
+    collectSteps++;
+    if (collectSteps % 250 === 0) {
+      await yieldToMain();
+    }
+
     nodesToSanitize.add(n);
 
     if (n.type === 'COMPONENT_SET') {
@@ -826,12 +839,12 @@ export async function runRenamePascalCaseLogic() {
           nodesToSanitize.add(child);
           if ('children' in child && (child as any).children) {
             for (const sub of (child as any).children) {
-              collectSubtree(sub);
+              stack.push(sub);
             }
           }
         }
       }
-      return;
+      continue;
     }
 
     if (n.type === 'COMPONENT') {
@@ -846,42 +859,42 @@ export async function runRenamePascalCaseLogic() {
 
     if ('children' in n && (n as any).children) {
       for (const child of (n as any).children) {
-        collectSubtree(child);
+        stack.push(child);
       }
     }
   }
 
-  for (const n of selection) {
-    collectSubtree(n);
-  }
-
-  // 3. Sanitize component properties on all affected components and component sets
-  for (const cs of componentSets) {
+  // 3. Sanitize component properties in a single deduplicated batch
+  const allComponentTargets = Array.from(new Set([...componentSets, ...componentTargets]));
+  if (allComponentTargets.length > 0) {
     try {
-      await sanitizeComponentProperties(cs);
-    } catch (_) {}
-  }
-  for (const target of componentTargets) {
-    try {
-      await sanitizeComponentProperties(target);
+      await sanitizeComponentProperties(allComponentTargets);
     } catch (_) {}
   }
 
-  // 4. Sanitize layer names on all collected nodes (ancestors: sections, frames; descendants: components, shapes, text...)
-  // Using isPascalCaseOnly = true to convert all layer and frame names (with or without auto layout) to PascalCase
+  // 4. Sanitize layer names once per collected node (O(N) without redundant recursive re-walks)
+  let renamedSteps = 0;
   for (const node of nodesToSanitize) {
-    await sanitizeLayerNames(node, true);
+    if ((node as any).removed) continue;
+    await sanitizeLayerNames(node, true, { recursive: false });
+    renamedSteps++;
+    if (renamedSteps % 35 === 0) {
+      await yieldToMain();
+    }
   }
 
   // 5. Sanitize instance property overrides if any instances are inside selection
+  const visitedInstances = new Set<string>();
+  const instanceProgress = { count: 0 };
   for (const n of selection) {
-    await sanitizeInstanceProperties(n);
+    await sanitizeInstanceProperties(n, visitedInstances, instanceProgress);
   }
 
-  // Force Figma inspector & layer panel to refresh names immediately
+  // Force Figma inspector & layer panel to refresh names without firing redundant UI rescans
   try {
     const currentSelection = [...figma.currentPage.selection];
     if (currentSelection.length > 0) {
+      suppressSelectionEvents(250);
       figma.currentPage.selection = [];
       figma.currentPage.selection = currentSelection;
     }

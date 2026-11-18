@@ -1,7 +1,7 @@
 import { toCamelCase, toPascalCase } from '../utils/strings';
 import { cleanRebuildComponentProperties } from './rebuilder';
 import { reorderComponentSetVariants } from '../components/canvas';
-import { purgeIgnoredPropertiesAndReferences, safeGetComponentPropertyDefinitions } from '../utils/nodes';
+import { purgeIgnoredPropertiesAndReferences, safeGetComponentPropertyDefinitions, yieldToMain } from '../utils/nodes';
 
 export function collectComponentTargets(nodes: readonly BaseNode[]): Set<ComponentNode | ComponentSetNode> {
   const targets = new Set<ComponentNode | ComponentSetNode>();
@@ -244,8 +244,13 @@ export async function sanitizeComponentProperties(root: BaseNode | readonly Base
   const targets = collectComponentTargets(nodes);
 
   let totalRenamed = 0;
+  let targetIdx = 0;
   for (const target of targets) {
     if (!target) continue;
+    if (targetIdx > 0 && targetIdx % 3 === 0) {
+      await yieldToMain();
+    }
+    targetIdx++;
 
     try {
       // 1. If it's a ComponentSetNode, resolve conflicts and sanitize variant keys and values in all child variant names to PascalCase
@@ -427,8 +432,17 @@ export async function sanitizeComponentProperties(root: BaseNode | readonly Base
   return totalRenamed;
 }
 
-export async function sanitizeInstanceProperties(node: BaseNode) {
-  if (!node) return;
+export async function sanitizeInstanceProperties(
+  node: BaseNode,
+  visited: Set<string> = new Set<string>(),
+  progress: { count: number } = { count: 0 }
+) {
+  if (!node || !node.id || visited.has(node.id)) return;
+  visited.add(node.id);
+  progress.count++;
+  if (progress.count % 40 === 0) {
+    await yieldToMain();
+  }
 
   if (node.type === 'INSTANCE') {
     const inst = node as InstanceNode;
@@ -456,7 +470,7 @@ export async function sanitizeInstanceProperties(node: BaseNode) {
 
   if ('children' in node && (node as any).children) {
     for (const child of (node as any).children) {
-      await sanitizeInstanceProperties(child);
+      await sanitizeInstanceProperties(child, visited, progress);
     }
   }
 }

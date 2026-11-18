@@ -1,7 +1,14 @@
 import { RetextifierLayerInfo } from '../types/retextifier';
 import { getSelectionData } from '../export/exporter';
 import { loadFontsForTextNode } from '../utils/fonts';
-import { getSafeNodeChildren, isNodeEffectivelyVisible } from '../utils/geometry';
+import { getSafeNodeChildren } from '../utils/geometry';
+import { yieldToMain } from '../utils/nodes';
+
+let isRetextifierDrawerOpen = false;
+
+export function setRetextifierDrawerOpen(open: boolean): void {
+  isRetextifierDrawerOpen = open;
+}
 
 export function buildRetextifierLayerPath(node: BaseNode, rootNode: BaseNode): string {
   try {
@@ -83,14 +90,15 @@ function compareNodesInLayersPanelOrder(a: SceneNode, b: SceneNode): number {
   return 0;
 }
 
-export function scanDeepTextLayers(): RetextifierLayerInfo[] {
+export async function scanDeepTextLayers(): Promise<RetextifierLayerInfo[]> {
   const selection = [...figma.currentPage.selection].sort(compareNodesInLayersPanelOrder);
   const result: RetextifierLayerInfo[] = [];
   const visited = new Set<string>();
+  let visitedCount = 0;
 
   function registerTextNode(textNode: TextNode, rootNode: SceneNode, pathPrefix?: string) {
     if (!textNode || !textNode.id || visited.has(textNode.id)) return;
-    if (!isNodeEffectivelyVisible(textNode)) return;
+    if ('visible' in textNode && textNode.visible === false) return;
     visited.add(textNode.id);
 
     const layerPath = pathPrefix
@@ -109,43 +117,6 @@ export function scanDeepTextLayers(): RetextifierLayerInfo[] {
     });
   }
 
-  function traverseNode(node: SceneNode, rootNode: SceneNode, pathPrefix: string) {
-    if (!node) return;
-    if ('visible' in node && node.visible === false) return;
-
-    if (node.type === 'TEXT') {
-      registerTextNode(node as TextNode, rootNode, pathPrefix);
-      return;
-    }
-
-    const currentPath = pathPrefix ? `${pathPrefix} > ${node.name}` : node.name;
-
-    // 1. Traverse children in exact Figma Layers Inspector top-to-bottom order
-    const orderedChildren = getChildrenInLayersPanelOrder(node);
-    if (orderedChildren.length > 0) {
-      for (const child of orderedChildren) {
-        try {
-          traverseNode(child, rootNode, currentPath);
-        } catch (err) {
-          console.warn('[Retextifier] Error traversing child node:', err);
-        }
-      }
-      return;
-    }
-
-    // 2. Fallback for special container nodes (e.g. SlotNode) if children were not directly iterable
-    if ('findAllWithCriteria' in node && typeof (node as any).findAllWithCriteria === 'function') {
-      try {
-        const found = ((node as any).findAllWithCriteria({ types: ['TEXT'] }) as TextNode[]).sort(
-          compareNodesInLayersPanelOrder
-        );
-        for (const tn of found) {
-          registerTextNode(tn, rootNode);
-        }
-      } catch (e) {}
-    }
-  }
-
   for (const rootNode of selection) {
     try {
       if ('visible' in rootNode && rootNode.visible === false) {
@@ -157,19 +128,45 @@ export function scanDeepTextLayers(): RetextifierLayerInfo[] {
         continue;
       }
 
-      // Traverse hierarchy in exact Figma Layers Inspector top-to-bottom order
-      traverseNode(rootNode, rootNode, '');
+      // Iterative top-to-bottom Layers Inspector traversal (yielding periodically for deep trees)
+      const stack: Array<{ node: SceneNode; pathPrefix: string }> = [{ node: rootNode, pathPrefix: '' }];
 
-      // Safeguard for any deeply nested slot text nodes not reached via standard children
-      if ('findAllWithCriteria' in rootNode && typeof (rootNode as any).findAllWithCriteria === 'function') {
-        try {
-          const textNodes = ((rootNode as any).findAllWithCriteria({ types: ['TEXT'] }) as TextNode[]).sort(
-            compareNodesInLayersPanelOrder
-          );
-          for (const tn of textNodes) {
-            registerTextNode(tn, rootNode);
+      while (stack.length > 0) {
+        const { node, pathPrefix } = stack.pop()!;
+        if (!node) continue;
+        if ('visible' in node && node.visible === false) continue;
+
+        visitedCount++;
+        if (visitedCount % 120 === 0) {
+          await yieldToMain();
+        }
+
+        if (node.type === 'TEXT') {
+          registerTextNode(node as TextNode, rootNode, pathPrefix);
+          continue;
+        }
+
+        const currentPath = pathPrefix ? `${pathPrefix} > ${node.name}` : node.name;
+        const orderedChildren = getChildrenInLayersPanelOrder(node);
+        if (orderedChildren.length > 0) {
+          // Push in reverse so pop() visits children[0]..children[n-1] in top-to-bottom order
+          for (let i = orderedChildren.length - 1; i >= 0; i--) {
+            stack.push({ node: orderedChildren[i], pathPrefix: currentPath });
           }
-        } catch (e) {}
+          continue;
+        }
+
+        // Fallback only when a container (e.g. SlotNode) exposes no direct iterable children
+        if ('findAllWithCriteria' in node && typeof (node as any).findAllWithCriteria === 'function') {
+          try {
+            const found = ((node as any).findAllWithCriteria({ types: ['TEXT'] }) as TextNode[]).sort(
+              compareNodesInLayersPanelOrder
+            );
+            for (const tn of found) {
+              registerTextNode(tn, rootNode);
+            }
+          } catch (e) {}
+        }
       }
     } catch (err) {
       console.warn('[Retextifier] Error scanning selection node:', err);
@@ -180,14 +177,16 @@ export function scanDeepTextLayers(): RetextifierLayerInfo[] {
 }
 
 
-export async function sendSelectionToUI() {
+export async function sendSelectionToUI(forceTextLayers: boolean = false) {
   const selectionData = await getSelectionData();
-  const textLayers = scanDeepTextLayers();
-  figma.ui.postMessage({
+  const payload: Record<string, any> = {
     type: 'selection-change',
     selection: selectionData,
-    textLayers,
-  });
+  };
+  if (forceTextLayers || isRetextifierDrawerOpen) {
+    payload.textLayers = await scanDeepTextLayers();
+  }
+  figma.ui.postMessage(payload);
 }
 
 
@@ -209,7 +208,7 @@ export async function sendInitialData() {
   const organizeLayoutModeRaw = await figma.clientStorage.getAsync('organize_layout_mode');
   const organizeLayoutMode = organizeLayoutModeRaw === 'rows' ? 'rows' : 'columns';
 
-  figma.ui.postMessage({
+  const payload: Record<string, any> = {
     type: 'init-data',
     provider,
     groqApiKey,
@@ -219,7 +218,10 @@ export async function sendInitialData() {
     promptTone,
     organizeLayoutMode,
     selection: await getSelectionData(),
-    textLayers: scanDeepTextLayers(),
-  });
+  };
+  if (isRetextifierDrawerOpen) {
+    payload.textLayers = await scanDeepTextLayers();
+  }
+  figma.ui.postMessage(payload);
 }
 
